@@ -21,6 +21,7 @@ from backend.intelligence.nova_router import (
 from backend.intelligence.consultants.registry import get_service_label
 from backend.schemas.service import CONSULTANT_IDS
 from backend.summarizer.summary_generator import get_summary_generator
+from backend.integrations.tatva_users import register_tatva_user_for_session
 from backend.utils.logger import log_event
 
 OFF_TOPIC_KEYWORDS = [
@@ -99,6 +100,8 @@ class ConversationController:
             session, user_message,
             button_text=button_text, button_payload=button_payload, list_id=list_id,
         )
+        if handled and session.flow_state.pop("register_tatva_user", False):
+            await register_tatva_user_for_session(session)
         if handled and hybrid_reply:
             session.add_message(MessageRole.ASSISTANT, hybrid_reply)
             return AgentResponse(text=hybrid_reply, session=session)
