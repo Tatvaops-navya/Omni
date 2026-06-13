@@ -4,6 +4,7 @@ Configuration via environment variables (Pydantic Settings)
 """
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import List
@@ -81,13 +82,23 @@ class Settings(BaseSettings):
     # App
     environment: str = "development"
     log_level: str = "INFO"
+    host: str = "0.0.0.0"
     port: int = 8000
+    # Hot-reload for `python -m backend` — defaults on when ENVIRONMENT=development
+    reload_override: bool | None = Field(default=None, validation_alias="RELOAD")
     # Public-facing base URL — used by Vapi to self-reference the webhook URL
     # Set this to your deployed domain, e.g. https://aadhya.onrender.com
     base_url: str = "http://localhost:8000"
     # Allowed CORS origins — comma-separated, e.g. https://omni-rho-snowy.vercel.app
     # Must be origin only (scheme + host + port). Do NOT append paths like /krsna.
     cors_origins: str = "*"
+
+    @property
+    def uvicorn_reload(self) -> bool:
+        """Hot-reload when running via python -m backend (default: on in development)."""
+        if self.reload_override is not None:
+            return self.reload_override
+        return self.environment == "development"
 
     @property
     def cors_origins_list(self) -> List[str]:
