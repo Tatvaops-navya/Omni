@@ -3,7 +3,6 @@
     "id": "q1_interior_type",
     "type": "mcq",
     "field": "service_q1",
-    "twilio_content_sid": "HX02f90dcded88254d350a15410e5527ff",
     "prompt": "What type of interior project do you need?",
     "options": [
       { "label": "Full Home Interiors", "value": "full_home_interiors" },
@@ -17,7 +16,6 @@
     "id": "q2_style_preference",
     "type": "mcq",
     "field": "service_q2",
-    "twilio_content_sid": "HXcddcdf255b29661f08f8fdf0f6433959",
     "prompt": "What is your style preference?",
     "options": [
       { "label": "Contemporary / Modern", "value": "contemporary_modern" },
@@ -31,7 +29,6 @@
     "id": "q3_budget_range",
     "type": "mcq",
     "field": "service_q3",
-    "twilio_content_sid": "HX23a3a2f2100f1177227c98337821041b",
     "prompt": "What is your estimated budget range for interiors?",
     "options": [
       { "label": "Under INR 5 Lakhs", "value": "under_5_lakhs" },
