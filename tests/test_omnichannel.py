@@ -377,6 +377,31 @@ def test_project_declined_no_ends_chat():
     assert not se.needs_service_selection(session)
 
 
+def test_project_declined_reconcile_does_not_advance_to_service_selection():
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Navya"),
+        ("city", "Hyderabad"),
+        ("property_location", "Bengaluru, hsr layout"),
+        ("email", "skipped"),
+        ("preferred_contact_time", "afternoon"),
+    ):
+        se.mark_field_validated(session, field, value)
+
+    hybrid_flow.process_hybrid_turn(session, "no")
+    se.reconcile_session(session)
+
+    assert session.flow_state.get("project_declined") is True
+    assert se.fs_current_stage(session) == "client_details"
+    assert not se.needs_service_selection(session)
+
+
 def test_project_declined_yes_continues_flow():
     session = Session(
         session_id="t",
