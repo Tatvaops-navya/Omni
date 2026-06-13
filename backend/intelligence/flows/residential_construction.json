@@ -4,13 +4,13 @@
     "type": "mcq",
     "field": "service_q1",
     "twilio_content_sid": "HX86e98c0937363a1921e78bcf56524c5b",
-    "prompt": "What type of residential construction project are you planning?",
+    "prompt": "What type ?",
     "options": [
-      { "label": "New Home Build", "value": "new_home_build" },
-      { "label": "Floor Addition / Extension", "value": "floor_addition_extension" },
-      { "label": "Structural Repair / Retrofit", "value": "structural_repair_retrofit" },
-      { "label": "Farmhouse / Villa Construction", "value": "farmhouse_villa_construction" },
-      { "label": "Commercial", "value": "commercial" }
+      { "label": "1", "value": "new_home_build" },
+      { "label": "2", "value": "floor_addition_extension" },
+      { "label": "3", "value": "structural_repair_retrofit" },
+      { "label": "4", "value": "farmhouse_villa_construction" },
+      { "label": "5", "value": "commercial" }
     ]
   },
   {
