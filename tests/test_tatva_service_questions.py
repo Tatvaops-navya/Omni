@@ -6,6 +6,7 @@ from backend.integrations.tatva_service_questions import (
     required_fields_from_steps,
     transform_api_question,
     load_questionnaire_for_session,
+    ensure_questionnaire_loaded,
 )
 from backend.schemas.service import ServiceCategory
 from backend.schemas.session import Session, ConversationStage
@@ -119,14 +120,14 @@ async def test_load_questionnaire_for_session_from_api(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_service_selection_loads_dynamic_questionnaire(monkeypatch):
-    async def fake_load(session, category):
+    async def fake_load(session):
         steps = build_steps_from_api_questions(RESIDENTIAL_API_QUESTIONS)
         from backend.integrations.tatva_service_questions import sync_questionnaire_state
         sync_questionnaire_state(session, steps, source="tatva_api")
         return steps
 
     monkeypatch.setattr(
-        "backend.intelligence.conversation_controller.load_questionnaire_for_session",
+        "backend.intelligence.conversation_controller.ensure_questionnaire_loaded",
         fake_load,
     )
 
@@ -191,3 +192,37 @@ async def test_dynamic_mcq_answer_advances_to_next_question(monkeypatch):
     next_step = hybrid_flow.get_current_step(session)
     assert next_step["field"] == "order_2"
     assert "budget" in reply.lower() or next_step["prompt"].lower().startswith("what is your")
+
+
+@pytest.mark.asyncio
+async def test_ensure_questionnaire_loaded_retries_after_static_fallback(monkeypatch):
+    calls = {"count": 0}
+
+    async def fake_fetch(service_id, *, session_id="unknown"):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return None
+        return {
+            "success": True,
+            "data": {
+                "serviceId": service_id,
+                "serviceName": "Residential Construction",
+                "questions": RESIDENTIAL_API_QUESTIONS,
+            },
+        }
+
+    monkeypatch.setattr(
+        "backend.integrations.tatva_service_questions.fetch_service_questions",
+        fake_fetch,
+    )
+
+    session = Session(session_id="retry-test", phone_number="whatsapp:+91999", channel="whatsapp")
+    se.on_service_selected(session, ServiceCategory.RESIDENTIAL_CONSTRUCTION)
+
+    first = await load_questionnaire_for_session(session, ServiceCategory.RESIDENTIAL_CONSTRUCTION)
+    assert session.flow_state["questionnaire_source"] == "static_fallback"
+    assert first[0]["field"] == "service_q1"
+
+    second = await ensure_questionnaire_loaded(session)
+    assert session.flow_state["questionnaire_source"] == "tatva_api"
+    assert second[0]["field"] == "order_1"

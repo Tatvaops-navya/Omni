@@ -1,5 +1,5 @@
 """
-TatvaOps service categories and consultant mapping (TatvaOps Enquiry Form).
+TatvaOps service categories and consultant mapping  (TatvaOps Enquiry Form).
 """
 from __future__ import annotations
 from enum import Enum
