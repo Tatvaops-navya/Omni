@@ -158,6 +158,13 @@ def reconcile_session(session: Session) -> str:
     """
     ensure_flow_state(session)
 
+    if session.flow_state.get("project_declined"):
+        session.flow_state["current_stage"] = "client_details"
+        session.flow_state.pop("current_step_id", None)
+        set_current_question(session, None)
+        sync_pending_fields(session)
+        return fs_current_stage(session)
+
     session.completed_fields = [
         f for f in session.completed_fields if field_is_complete(session, f)
     ]
@@ -335,6 +342,8 @@ def qualification_completion_pct(session: Session) -> int:
 
 def needs_client_details(session: Session) -> bool:
     reconcile_session(session)
+    if session.flow_state.get("project_declined"):
+        return False
     return not is_stage_complete(session, "client_details")
 
 

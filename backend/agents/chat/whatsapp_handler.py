@@ -370,6 +370,12 @@ async def _handle_whatsapp_message_impl(
             await send_whatsapp_message(to=phone_number, body=reply)
         return
 
+    if session_out.flow_state.get("project_declined"):
+        reply = (agent_response.text or "").strip()
+        if reply:
+            await send_whatsapp_message(to=phone_number, body=reply)
+        return
+
     reply = (agent_response.text or "").strip()
     if not reply:
         print(f"[WhatsApp] Empty reply for message={user_message!r}")
