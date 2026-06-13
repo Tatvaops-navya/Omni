@@ -121,6 +121,9 @@ def _complete_field(session: Session, field: str, value: Any) -> Optional[str]:
     if field == "willing_to_create_project" and _is_project_declined(value):
         return _end_after_project_declined(session)
 
+    if field == "willing_to_create_project" and not _is_project_declined(value):
+        session.flow_state["register_tatva_user"] = True
+
     session.flow_state.pop("current_step_id", None)
     se.maybe_advance_current_stage(session)
 

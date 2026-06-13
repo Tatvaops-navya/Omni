@@ -68,3 +68,30 @@ CONSULTANT_IDS = {
     ServiceCategory.FARM_INFRASTRUCTURE: "anil",
     ServiceCategory.IRRIGATION_AUTOMATION: "deepak",
 }
+
+# TatvaOps MongoDB service _id values (services collection)
+SERVICE_MONGO_IDS: dict[ServiceCategory, str] = {
+    ServiceCategory.RESIDENTIAL_CONSTRUCTION: "6926b7865c6d9f597ae41693",
+    ServiceCategory.HOME_INTERIORS: "6926b1978ba6a3cfc5a191ce",
+    ServiceCategory.PAINTING_WATERPROOFING: "6926a8308ba6a3cfc5a19114",
+    ServiceCategory.ELECTRICAL: "6982f2e19397ea98d6f9600c",
+    ServiceCategory.PLUMBING: "6982f37d9397ea98d6f96019",
+    ServiceCategory.SOLAR: "6926a8928ba6a3cfc5a1911b",
+    ServiceCategory.EVENT_MANAGEMENT: "6926b4b35c6d9f597ae41670",
+    ServiceCategory.PROPERTY_DEVELOPMENT: "6926b24a8ba6a3cfc5a191d5",
+    ServiceCategory.HOME_AUTOMATION: "6926a7728ba6a3cfc5a19104",
+    ServiceCategory.FARM_INFRASTRUCTURE: "6926b3888ba6a3cfc5a191e6",
+    ServiceCategory.IRRIGATION_AUTOMATION: "6926aa018ba6a3cfc5a19122",
+}
+
+MONGO_ID_TO_SERVICE: dict[str, ServiceCategory] = {
+    mongo_id: category for category, mongo_id in SERVICE_MONGO_IDS.items()
+}
+
+
+def get_service_mongo_id(category: ServiceCategory) -> str:
+    return SERVICE_MONGO_IDS[category]
+
+
+def service_from_mongo_id(mongo_id: str) -> ServiceCategory | None:
+    return MONGO_ID_TO_SERVICE.get(mongo_id.strip())

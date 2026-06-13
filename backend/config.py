@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
 
+    # Tatva user API (register-phone on project willingness = yes)
+    tatva_users_api_base_url: str = "https://api.withtatva.ai"
+
     # Admin
     admin_password: str = "changeme"
     admin_api_key: str = "changeme"
