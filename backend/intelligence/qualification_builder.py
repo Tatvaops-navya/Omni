@@ -69,7 +69,13 @@ def _resolve_mcq_twilio_sid(step: dict) -> str | None:
         return CONTACT_TIME_TWILIO_CONTENT_SID
     if field == "willing_to_create_project":
         return _variable_mcq_list_sid(2)
-    if field.startswith("service_q") or field.startswith("__edit_") or field == "__final_review__":
+    if (
+        field.startswith("service_q")
+        or field.startswith("order_")
+        or field.startswith("file_order_")
+        or field.startswith("__edit_")
+        or field == "__final_review__"
+    ):
         return _variable_mcq_list_sid(_mcq_option_count(step))
     return None
 
@@ -86,6 +92,8 @@ def _attach_mcq_list_delivery(out: dict, sid: str, step: dict) -> dict:
     if (
         sid == CONTACT_TIME_TWILIO_CONTENT_SID
         or field.startswith("service_q")
+        or field.startswith("order_")
+        or field.startswith("file_order_")
         or field.startswith("__edit_")
         or field == "__final_review__"
         or field == "willing_to_create_project"
@@ -179,6 +187,19 @@ def _service_questionnaire_steps(category: ServiceCategory) -> list[dict]:
     }
     return [q1, q2, q3, q4, q5]
 
+
+def get_service_questionnaire_steps(session) -> list[dict]:
+    """Return cached Tatva API steps when present, else static JSON fallback."""
+    from backend.integrations.tatva_service_questions import get_cached_steps
+
+    cached = get_cached_steps(session)
+    if cached:
+        return cached
+    if session.service_category:
+        return _service_questionnaire_steps(session.service_category)
+    return []
+
+
 def build_client_details_steps() -> list[dict]:
     return [
         {"id": "cd_name", "stage": "client_details", "type": "descriptive", "field": "client_name", "prompt": "What is your full name?"},
@@ -223,7 +244,7 @@ def get_steps_for_stage(session, stage: str) -> list[dict]:
         return []
     if stage != "service_questionnaire" or not session.service_category:
         return []
-    return _service_questionnaire_steps(session.service_category)
+    return get_service_questionnaire_steps(session)
 
 
 def build_qualification_flow(category: ServiceCategory) -> list[dict]:
@@ -234,9 +255,9 @@ def build_qualification_flow(category: ServiceCategory) -> list[dict]:
     return steps
 
 
-def required_fields_for_summary() -> list[str]:
+def required_fields_for_summary(session) -> list[str]:
     from backend.intelligence.stage_engine import required_fields_for_summary as _rfs
-    return _rfs()
+    return _rfs(session)
 
 
 def is_qualification_complete(session) -> bool:
@@ -317,14 +338,13 @@ def format_final_review(session, *, include_footer: bool | None = None) -> str:
         f"- Specialist: {_humanize('assigned_consultant', consultant, service_category=service_key)}",
         "",
         "*Requirements Shared*",
-        f"- Requirement 1: {_humanize('service_q1', ef.get('service_q1'), service_category=service_key)}",
-        f"- Requirement 2: {_humanize('service_q2', ef.get('service_q2'), service_category=service_key)}",
-        f"- Requirement 3: {_humanize('service_q3', ef.get('service_q3'), service_category=service_key)}",
-        f"- Additional notes: {_humanize('service_q4', ef.get('service_q4'), service_category=service_key)}",
+    ]
+    blocks.extend(_format_requirements_review(session, service_key=service_key))
+    blocks.extend([
         "",
         "*Files*",
-        f"- {_humanize('attachments', ef.get('attachments', 'none'), service_category=service_key)}",
-    ]
+        f"- {_format_attachments_review(session, service_key=service_key)}",
+    ])
     if include_footer is None:
         include_footer = not (session.flow_state or {}).get("final_review_outbound_step")
     if include_footer:
@@ -333,6 +353,45 @@ def format_final_review(session, *, include_footer: bool | None = None) -> str:
             "Does everything look correct? Reply *Confirm & Submit* to finish.",
         ])
     return "\n".join(blocks)
+
+
+def _question_review_label(step: dict) -> str:
+    prompt = str(step.get("prompt") or "").strip()
+    if prompt:
+        return prompt.split("\n")[0].strip()
+    return str(step.get("field") or "").replace("_", " ").title()
+
+
+def _format_requirements_review(session, *, service_key: str = "") -> list[str]:
+    ef = session.extracted_fields
+    lines: list[str] = []
+    for step in get_service_questionnaire_steps(session):
+        field = step.get("field")
+        stype = step.get("type")
+        if not field or stype == "file_request":
+            continue
+        label = _question_review_label(step)
+        value = _humanize(field, ef.get(field), service_category=service_key)
+        lines.append(f"- {label}: {value}")
+    if lines:
+        return lines
+    return [
+        f"- Requirement 1: {_humanize('service_q1', ef.get('service_q1'), service_category=service_key)}",
+        f"- Requirement 2: {_humanize('service_q2', ef.get('service_q2'), service_category=service_key)}",
+        f"- Requirement 3: {_humanize('service_q3', ef.get('service_q3'), service_category=service_key)}",
+        f"- Additional notes: {_humanize('service_q4', ef.get('service_q4'), service_category=service_key)}",
+    ]
+
+
+def _format_attachments_review(session, *, service_key: str = "") -> str:
+    ef = session.extracted_fields
+    for step in get_service_questionnaire_steps(session):
+        if step.get("type") != "file_request":
+            continue
+        field = step.get("field")
+        if field:
+            return _humanize(field, ef.get(field, "none"), service_category=service_key)
+    return _humanize("attachments", ef.get("attachments", "none"), service_category=service_key)
 
 
 # Alias

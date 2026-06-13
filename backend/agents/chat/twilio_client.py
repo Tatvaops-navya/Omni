@@ -244,6 +244,8 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
         if (
             out.get("require_content_variables")
             or field.startswith("service_q")
+            or field.startswith("order_")
+            or field.startswith("file_order_")
             or field.startswith("__edit_")
             or field == "__final_review__"
             or field == "preferred_contact_time"
@@ -361,6 +363,8 @@ async def _send_interactive_options(
         or step.get("use_dynamic_list")
         or str(step.get("field", "")) == "service_category"
         or str(step.get("field", "")).startswith("service_q")
+        or str(step.get("field", "")).startswith("order_")
+        or str(step.get("field", "")).startswith("file_order_")
     )
     try:
         import asyncio

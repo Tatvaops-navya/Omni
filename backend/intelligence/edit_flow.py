@@ -238,13 +238,17 @@ def _fields_for_section(section: str, session: Session) -> list[dict]:
     if section == "project_requirements":
         if not session.service_category:
             return []
-        steps = qb._service_questionnaire_steps(session.service_category)
+        steps = qb.get_service_questionnaire_steps(session)
         return [
             {"label": _requirement_label(s), "value": s["field"]}
             for s in steps
-            if s.get("field") in ("service_q1", "service_q2", "service_q3")
+            if s.get("type") == "mcq"
         ]
     if section == "additional_notes":
+        steps = qb.get_service_questionnaire_steps(session)
+        for s in steps:
+            if s.get("type") == "descriptive":
+                return [{"label": _requirement_label(s), "value": s["field"]}]
         return [{"label": "Additional Notes", "value": "service_q4"}]
     if section == "uploaded_files":
         return list(_FILE_ACTION_OPTIONS)
@@ -363,8 +367,8 @@ def _step_for_field(session: Session, field: str) -> Optional[dict]:
         for s in qb.build_client_details_steps():
             if s.get("field") == field:
                 return s
-    if session.service_category and field.startswith("service_"):
-        for s in qb._service_questionnaire_steps(session.service_category):
+    if session.service_category:
+        for s in qb.get_service_questionnaire_steps(session):
             if s.get("field") == field:
                 return s
     return None

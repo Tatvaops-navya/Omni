@@ -45,13 +45,26 @@ OPTIONAL_FIELDS = frozenset({"email", "req_functional_needs", "req_inspiration_n
 INVALID_VALUES = frozenset({"", "—", "-", "null", "none", "undefined", "n/a", "na", "skip", "skipped"})
 
 
+def _is_file_upload_field(field: str) -> bool:
+    return field == "attachments" or field.startswith("file_")
+
+
+def required_fields_for_stage(session: Session, stage: str) -> list[str]:
+    if stage == "service_questionnaire":
+        custom = (session.flow_state or {}).get("service_questionnaire_required_fields")
+        if custom:
+            return list(custom)
+    return list(STAGE_REQUIRED_FIELDS.get(stage, []))
+
+
 def is_valid_field_value(value: Any, *, field: str = "") -> bool:
     if value is None:
         return False
     if field in OPTIONAL_FIELDS and value in ("", None):
         return True
-    if field == "attachments" and str(value).lower() in ("skipped", "skip", "none"):
-        return True
+    if field == "attachments" or _is_file_upload_field(field):
+        if str(value).lower() in ("skipped", "skip", "none"):
+            return True
     if isinstance(value, list):
         return len(value) > 0
     s = str(value).strip()
@@ -78,7 +91,7 @@ def ensure_flow_state(session: Session) -> None:
     fs.setdefault("selected_service", session.service_category.value if session.service_category else "")
     fs.setdefault("assigned_consultant", session.active_consultant or "")
     fs.setdefault("completed_questions", [])
-    fs.setdefault("pending_questions", ["service_q1", "service_q2", "service_q3", "service_q4", "attachments"])
+    fs.setdefault("pending_questions", [])
     fs.setdefault("answers", {})
     fs.setdefault("attachments", [])
 
@@ -89,7 +102,7 @@ def sync_pending_fields(session: Session) -> list[str]:
     if stage == "final_review":
         session.flow_state["pending_fields"] = []
         return []
-    required = STAGE_REQUIRED_FIELDS.get(stage, [])
+    required = required_fields_for_stage(session, stage)
     pending = [f for f in required if not field_is_complete(session, f)]
     session.flow_state["pending_fields"] = pending
     return pending
@@ -109,7 +122,7 @@ def is_stage_complete(session: Session, stage: str) -> bool:
         if not session.service_category:
             return False
         return field_is_complete(session, "service_category")
-    for f in STAGE_REQUIRED_FIELDS.get(stage, []):
+    for f in required_fields_for_stage(session, stage):
         if not field_is_complete(session, f):
             return False
     return True
@@ -317,12 +330,12 @@ def reset_for_edit_details(session: Session) -> None:
     reconcile_session(session)
 
 
-def required_fields_for_summary() -> list[str]:
+def required_fields_for_summary(session: Session) -> list[str]:
     fields: list[str] = []
     for stage in STAGE_ORDER:
         if stage == "final_review":
             continue
-        for f in STAGE_REQUIRED_FIELDS.get(stage, []):
+        for f in required_fields_for_stage(session, stage):
             if f not in fields:
                 fields.append(f)
     return fields
@@ -333,7 +346,7 @@ def is_qualification_complete(session: Session) -> bool:
 
 
 def qualification_completion_pct(session: Session) -> int:
-    required = required_fields_for_summary()
+    required = required_fields_for_summary(session)
     if not required:
         return 0
     done = sum(1 for f in required if field_is_complete(session, f))
@@ -372,7 +385,7 @@ def missing_fields_report(session: Session) -> list[str]:
     for stage in STAGE_ORDER:
         if stage == "final_review":
             break
-        for f in STAGE_REQUIRED_FIELDS.get(stage, []):
+        for f in required_fields_for_stage(session, stage):
             if not field_is_complete(session, f):
                 missing.append(f)
     return missing

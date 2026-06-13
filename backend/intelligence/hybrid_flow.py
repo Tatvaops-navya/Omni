@@ -113,10 +113,14 @@ def _complete_field(session: Session, field: str, value: Any) -> Optional[str]:
     answers = session.flow_state.setdefault("answers", {})
     answers[field] = value
     completed_q = session.flow_state.setdefault("completed_questions", [])
-    if field not in completed_q and field.startswith("service_q"):
+    if field not in completed_q and se.fs_current_stage(session) == "service_questionnaire":
         completed_q.append(field)
-    pending_q = ["service_q1", "service_q2", "service_q3", "service_q4", "attachments"]
-    session.flow_state["pending_questions"] = [q for q in pending_q if q not in completed_q and not se.field_is_complete(session, q)]
+    required_q = session.flow_state.get("service_questionnaire_required_fields") or [
+        "service_q1", "service_q2", "service_q3", "service_q4", "attachments",
+    ]
+    session.flow_state["pending_questions"] = [
+        q for q in required_q if q not in completed_q and not se.field_is_complete(session, q)
+    ]
 
     if field == "willing_to_create_project" and _is_project_declined(value):
         return _end_after_project_declined(session)
@@ -369,8 +373,9 @@ def process_hybrid_turn(
         return (format_step_message(step), True)
 
     if stype == "file_request":
+        upload_field = field or "attachments"
         if normalized_text.lower() in _SKIP_WORDS | {"skip", "later"}:
-            msg = _complete_field(session, field or "attachments", "skipped")
+            msg = _complete_field(session, upload_field, "skipped")
             return (msg or _prompt_continue(session), True)
         return (format_step_message(step), True)
 
@@ -456,12 +461,14 @@ def advance_step(session: Session) -> None:
 
 def complete_attachment_upload(session: Session) -> str:
     """
-    Called after WhatsApp media is saved. Completes Q5 and moves to final review.
+    Called after WhatsApp media is saved. Completes the current file step and advances.
     """
     se.reconcile_session(session)
+    step = get_current_step(session)
+    field = (step or {}).get("field") or "attachments"
     count = len(session.attachments)
     value = f"{count} file(s) uploaded" if count else "skipped"
-    se.mark_field_validated(session, "attachments", value)
+    se.mark_field_validated(session, field, value)
     session.flow_state.pop("current_step_id", None)
     se.maybe_advance_current_stage(session)
     if se.can_enter_final_review(session):
@@ -474,8 +481,6 @@ def complete_attachment_upload(session: Session) -> str:
 
 def pending_file_upload(session: Session) -> bool:
     se.reconcile_session(session)
-    if se.fs_current_stage(session) == "service_questionnaire":
-        return True
     step = get_current_step(session)
     return bool(step and step.get("type") == "file_request")
 
