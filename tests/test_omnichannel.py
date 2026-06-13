@@ -402,6 +402,42 @@ def test_project_declined_reconcile_does_not_advance_to_service_selection():
     assert not se.needs_service_selection(session)
 
 
+@pytest.mark.asyncio
+async def test_persist_terminal_enquiry_saves_declined_lead(monkeypatch):
+    from backend.storage import supabase_store
+
+    session = Session(
+        session_id="wa_declined",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Navya"),
+        ("city", "Hyderabad"),
+        ("property_location", "Bengaluru, hsr layout"),
+        ("email", "skipped"),
+        ("preferred_contact_time", "afternoon"),
+    ):
+        se.mark_field_validated(session, field, value)
+    hybrid_flow.process_hybrid_turn(session, "no")
+
+    saved = []
+
+    async def mock_save(s):
+        saved.append(s)
+        return True
+
+    monkeypatch.setattr(supabase_store, "save_enquiry", mock_save)
+    monkeypatch.setattr(supabase_store, "is_configured", lambda: True)
+
+    assert await supabase_store.persist_terminal_enquiry(session) is True
+    assert len(saved) == 1
+    assert saved[0].extracted_fields.get("willing_to_create_project") == "no"
+    assert saved[0].extracted_fields.get("client_name") == "Navya"
+
+
 def test_project_declined_yes_continues_flow():
     session = Session(
         session_id="t",

@@ -45,7 +45,10 @@ async def get_dashboard(auth=Depends(require_admin)):
     now = datetime.utcnow()
 
     active = [s for s in sessions if s.conversation_stage != ConversationStage.SUMMARY_GENERATED]
-    completed = [s for s in sessions if s.summary_generated]
+    completed = [
+        s for s in sessions
+        if s.summary_generated or s.flow_state.get("project_declined")
+    ]
 
     whatsapp_today = sum(1 for s in sessions if s.channel == "whatsapp")
     voice_today = sum(1 for s in sessions if s.channel == "voice")

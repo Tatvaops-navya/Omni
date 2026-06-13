@@ -121,6 +121,15 @@ async def save_enquiry(session) -> bool:
         return False
 
 
+async def persist_terminal_enquiry(session) -> bool:
+    """Persist enquiry when the client submitted or declined to start a project."""
+    if session.flow_state.get("project_declined"):
+        return await save_enquiry(session)
+    if session.summary_generated and session.summary:
+        return await save_enquiry(session)
+    return False
+
+
 async def save_summary(summary, phone_number: str = "") -> bool:
     """Insert a generated project summary."""
     if not is_configured():
