@@ -44,7 +44,14 @@ def get_consultant_id(category: ServiceCategory) -> str:
 
 
 def get_primary_parameters(category: ServiceCategory) -> list[str]:
-    return se.required_fields_for_summary()
+    fields: list[str] = []
+    for stage in se.STAGE_ORDER:
+        if stage == "final_review":
+            continue
+        for f in se.STAGE_REQUIRED_FIELDS.get(stage, []):
+            if f not in fields:
+                fields.append(f)
+    return fields
 
 
 def get_secondary_parameters(category: ServiceCategory) -> list[str]:
@@ -111,7 +118,7 @@ def get_next_fields(session: Session) -> list[str]:
         return ["client_name"]
     if hybrid_flow.has_active_flow(session):
         return []
-    required = se.required_fields_for_summary()
+    required = se.required_fields_for_summary(session)
     missing = [f for f in required if f not in session.completed_fields]
     return missing[:3] if missing else []
 

@@ -520,7 +520,7 @@ def test_lead_scorer():
         conversation_stage=ConversationStage.SUMMARY_GENERATED,
         summary_generated=True,
     )
-    session.completed_fields = se.required_fields_for_summary()
+    session.completed_fields = se.required_fields_for_summary(session)
     score, tier = score_lead(session)
     assert 0 <= score <= 100
     assert tier in ("hot", "warm", "cold")

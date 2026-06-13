@@ -73,7 +73,7 @@ class Session(BaseModel):
     def primary_parameters(self) -> List[str]:
         from backend.intelligence.stage_engine import required_fields_for_summary
         if self.service_category:
-            return required_fields_for_summary()
+            return required_fields_for_summary(self)
         return [
             "client_name", "phone_number", "city", "property_location",
             "preferred_contact_time", "willing_to_create_project", "overview_property_type",
