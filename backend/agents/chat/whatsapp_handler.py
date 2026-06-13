@@ -344,7 +344,7 @@ async def _handle_whatsapp_message_impl(
     await supabase_store.upsert_session_log(agent_response.session)
 
     if agent_response.summary_generated and agent_response.session.summary:
-        await supabase_store.save_enquiry(agent_response.session)
+        await supabase_store.persist_terminal_enquiry(agent_response.session)
         try:
             from backend.schemas.summary import ProjectSummary
             summary_obj = ProjectSummary.model_validate(agent_response.session.summary)
@@ -371,9 +371,15 @@ async def _handle_whatsapp_message_impl(
         return
 
     if session_out.flow_state.get("project_declined"):
+        await supabase_store.persist_terminal_enquiry(session_out)
         reply = (agent_response.text or "").strip()
         if reply:
             await send_whatsapp_message(to=phone_number, body=reply)
+        await log_event(
+            "CONVERSATION_ENDED",
+            session_id=session_id,
+            data={"reason": "project_declined", "channel": "whatsapp"},
+        )
         return
 
     reply = (agent_response.text or "").strip()

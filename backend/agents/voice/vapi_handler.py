@@ -182,8 +182,11 @@ async def vapi_chat_completions(request: Request):
     await save_session(agent_response.session)
     await supabase_store.upsert_session_log(agent_response.session)
 
+    if agent_response.session.flow_state.get("project_declined"):
+        await supabase_store.persist_terminal_enquiry(agent_response.session)
+
     if agent_response.summary_generated and agent_response.session.summary:
-        await supabase_store.save_enquiry(agent_response.session)
+        await supabase_store.persist_terminal_enquiry(agent_response.session)
         try:
             from backend.schemas.summary import ProjectSummary
             summary_obj = ProjectSummary.model_validate(agent_response.session.summary)
