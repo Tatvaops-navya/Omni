@@ -3,13 +3,13 @@
     "id": "q1_project_type",
     "type": "mcq",
     "field": "service_q1",
-    "prompt": "What type ?",
+    "prompt": "What type of residential construction project are you planning?",
     "options": [
-      { "label": "1", "value": "new_home_build" },
-      { "label": "2", "value": "floor_addition_extension" },
-      { "label": "3", "value": "structural_repair_retrofit" },
-      { "label": "4", "value": "farmhouse_villa_construction" },
-      { "label": "5", "value": "commercial" }
+      { "label": "New Home Build", "value": "new_home_build" },
+      { "label": "Floor Addition / Extension", "value": "floor_addition_extension" },
+      { "label": "Structural Repair / Retrofit", "value": "structural_repair_retrofit" },
+      { "label": "Farmhouse / Villa Construction", "value": "farmhouse_villa_construction" },
+      { "label": "Commercial", "value": "commercial" }
     ]
   },
   {

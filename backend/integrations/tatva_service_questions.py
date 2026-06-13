@@ -13,6 +13,7 @@ from backend.schemas.session import Session
 from backend.utils.logger import log_event
 
 SERVICE_QUESTIONS_PATH = "/users/api/service-questions"
+TATVA_HTTP_HEADERS = {"User-Agent": "TatvaOps-Omni/1.0", "Accept": "application/json"}
 
 TATVA_TYPE_MAP = {
     "mcq": "mcq",
@@ -114,11 +115,35 @@ async def fetch_service_questions(
         return None
 
     url = f"{base_url}{SERVICE_QUESTIONS_PATH}"
+    await log_event(
+        "TATVA_SERVICE_QUESTIONS_FETCH",
+        session_id=session_id,
+        data={
+            "api": "tatva_service_questions",
+            "url": url,
+            "service_id": service_id,
+        },
+    )
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, headers=TATVA_HTTP_HEADERS) as client:
             response = await client.get(url, params={"serviceId": service_id})
             response.raise_for_status()
             payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        body_preview = (exc.response.text or "")[:500]
+        await log_event(
+            "API_ERROR",
+            session_id=session_id,
+            data={
+                "api": "tatva_service_questions",
+                "error": str(exc),
+                "status_code": exc.response.status_code,
+                "service_id": service_id,
+                "url": url,
+                "response_body": body_preview,
+            },
+        )
+        return None
     except Exception as exc:
         await log_event(
             "API_ERROR",
@@ -126,7 +151,9 @@ async def fetch_service_questions(
             data={
                 "api": "tatva_service_questions",
                 "error": str(exc),
+                "error_type": type(exc).__name__,
                 "service_id": service_id,
+                "url": url,
             },
         )
         return None
@@ -139,9 +166,25 @@ async def fetch_service_questions(
                 "api": "tatva_service_questions",
                 "error": payload.get("message") or "unsuccessful_response",
                 "service_id": service_id,
+                "url": url,
+                "response_success": payload.get("success"),
             },
         )
         return None
+
+    data = payload.get("data") or {}
+    questions = data.get("questions") or []
+    await log_event(
+        "TATVA_SERVICE_QUESTIONS_OK",
+        session_id=session_id,
+        data={
+            "api": "tatva_service_questions",
+            "service_id": service_id,
+            "service_name": data.get("serviceName"),
+            "question_count": len(questions),
+            "url": url,
+        },
+    )
 
     return payload
 
@@ -174,12 +217,36 @@ async def load_questionnaire_for_session(session: Session, category: ServiceCate
                 session_id=session.session_id,
                 data={
                     "service_id": service_id,
+                    "service_category": category.value,
                     "question_count": len(steps),
+                    "fields": [s.get("field") for s in steps],
                     "source": "tatva_api",
                 },
             )
             return steps
+        await log_event(
+            "API_ERROR",
+            session_id=session.session_id,
+            data={
+                "api": "tatva_service_questions",
+                "error": "api_returned_no_usable_questions",
+                "service_id": service_id,
+                "service_category": category.value,
+                "raw_question_count": len(questions),
+            },
+        )
 
+    await log_event(
+        "API_ERROR",
+        session_id=session.session_id,
+        data={
+            "api": "tatva_service_questions",
+            "error": "falling_back_to_static_json",
+            "service_id": service_id,
+            "service_category": category.value,
+            "fallback_file": f"{category.value}.json",
+        },
+    )
     steps = _static_fallback_steps(category)
     sync_questionnaire_state(session, steps, source="static_fallback")
     await log_event(
@@ -187,8 +254,27 @@ async def load_questionnaire_for_session(session: Session, category: ServiceCate
         session_id=session.session_id,
         data={
             "service_id": service_id,
+            "service_category": category.value,
             "question_count": len(steps),
+            "fields": [s.get("field") for s in steps],
             "source": "static_fallback",
         },
     )
     return steps
+
+
+async def ensure_questionnaire_loaded(session: Session) -> list[dict]:
+    """
+    Load Tatva questionnaire when missing or still on static fallback.
+    Re-fetches from the API so resumed sessions and transient API failures recover.
+    """
+    category = session.service_category
+    if not category:
+        return []
+
+    cached = get_cached_steps(session)
+    source = (session.flow_state or {}).get("questionnaire_source")
+    if cached and source == "tatva_api":
+        return cached
+
+    return await load_questionnaire_for_session(session, category)

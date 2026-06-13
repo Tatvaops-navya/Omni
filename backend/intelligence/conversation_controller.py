@@ -22,7 +22,7 @@ from backend.intelligence.consultants.registry import get_service_label
 from backend.schemas.service import CONSULTANT_IDS
 from backend.summarizer.summary_generator import get_summary_generator
 from backend.integrations.tatva_users import register_tatva_user_for_session
-from backend.integrations.tatva_service_questions import load_questionnaire_for_session
+from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
 from backend.utils.logger import log_event
 
 OFF_TOPIC_KEYWORDS = [
@@ -255,7 +255,7 @@ class ConversationController:
             service_label = get_service_label(category)
             session.active_consultant = consultant_id
             se.on_service_selected(session, category)
-            await load_questionnaire_for_session(session, category)
+            await ensure_questionnaire_loaded(session)
             se.reconcile_session(session)
 
             client_name = (session.extracted_fields.get("client_name") or "").strip()
@@ -275,6 +275,9 @@ class ConversationController:
 
         if se.is_collecting_qualification(session):
             session.conversation_stage = ConversationStage.DETAIL_COLLECTION
+            if session.service_category:
+                await ensure_questionnaire_loaded(session)
+                se.reconcile_session(session)
             resp = await self._run_hybrid(session, user_message,
                                         button_text=button_text, button_payload=button_payload, list_id=list_id)
             if resp:
