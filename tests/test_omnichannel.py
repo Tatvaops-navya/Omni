@@ -316,12 +316,17 @@ def test_handoff_excludes_first_farm_question_when_interactive_list(monkeypatch)
     assert "Anil Reddy" in handoff
 
 
-def test_home_interiors_keeps_own_twilio_templates():
+def test_home_interiors_mcq_uses_shared_dynamic_list(monkeypatch):
+    from backend.config import get_settings
     from backend.intelligence.qualification_builder import _service_questionnaire_steps
+
+    monkeypatch.setenv("TWILIO_MCQ_LIST_5_CONTENT_SID", "HXe51472b177c7bf1f3f2b0899b62af29f")
+    get_settings.cache_clear()
 
     steps = _service_questionnaire_steps(ServiceCategory.HOME_INTERIORS)
     q1 = next(s for s in steps if s["field"] == "service_q1")
-    assert q1["twilio_content_sid"] == "HX02f90dcded88254d350a15410e5527ff"
+    assert q1["twilio_content_sid"] == "HXe51472b177c7bf1f3f2b0899b62af29f"
+    assert q1.get("twilio_list_slots") == 5
     assert "interior project" in q1["prompt"].lower()
 
 

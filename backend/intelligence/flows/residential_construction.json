@@ -3,7 +3,6 @@
     "id": "q1_project_type",
     "type": "mcq",
     "field": "service_q1",
-    "twilio_content_sid": "HX86e98c0937363a1921e78bcf56524c5b",
     "prompt": "What type ?",
     "options": [
       { "label": "1", "value": "new_home_build" },
@@ -17,7 +16,6 @@
     "id": "q2_budget_range",
     "type": "mcq",
     "field": "service_q2",
-    "twilio_content_sid": "HXcd860e8ab8f8db78aa3522cf9ead6b15",
     "prompt": "What is your estimated project budget range?",
     "options": [
       { "label": "Under INR 25 Lakhs", "value": "under_25_lakhs" },
@@ -31,7 +29,6 @@
     "id": "q3_approvals",
     "type": "mcq",
     "field": "service_q3",
-    "twilio_content_sid": "HX18d025af139070c915a58bf9372406b6",
     "prompt": "Do you already have approved drawings or permits?",
     "options": [
       { "label": "Yes, fully approved", "value": "yes_fully_approved" },

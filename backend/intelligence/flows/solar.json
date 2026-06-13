@@ -3,7 +3,6 @@
     "id": "q1_installation_connectivity",
     "type": "mcq",
     "field": "service_q1",
-    "twilio_content_sid": "HX62ce77c490cdcd537343dfcede624e3e",
     "prompt": "What is the installation type and connectivity requirement?",
     "options": [
       { "label": "On-Grid (Grid-Tied)", "value": "on_grid_grid_tied" },
@@ -16,7 +15,6 @@
     "id": "q2_primary_use_case",
     "type": "mcq",
     "field": "service_q2",
-    "twilio_content_sid": "HX2c75cf2a0e8486dc70e29283c55fcd49",
     "prompt": "What is the primary use case?",
     "options": [
       { "label": "Residential Home", "value": "residential_home" },
@@ -30,7 +28,6 @@
     "id": "q3_monthly_bill",
     "type": "mcq",
     "field": "service_q3",
-    "twilio_content_sid": "HX3ac7277c5b6413d9d6a4ac37db793969",
     "prompt": "What is your average monthly electricity bill?",
     "options": [
       { "label": "Under INR 1,500", "value": "under_1500" },

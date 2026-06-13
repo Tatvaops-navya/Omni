@@ -3,7 +3,6 @@
     "id": "q1_automation_systems",
     "type": "mcq",
     "field": "service_q1",
-    "twilio_content_sid": "HXf93d89220d2080e194b5bec2c5ce5e9a",
     "prompt": "Which automation systems are you interested in?",
     "options": [
       { "label": "Smart Lighting & Scenes", "value": "smart_lighting_scenes" },
@@ -17,7 +16,6 @@
     "id": "q2_new_or_existing",
     "type": "mcq",
     "field": "service_q2",
-    "twilio_content_sid": "HX98ab08763bba72aba1039ea5c6389955",
     "prompt": "Is this for a new or existing property?",
     "options": [
       { "label": "New construction / under-build", "value": "new_construction_under_build" },
@@ -31,7 +29,6 @@
     "id": "q3_control_mode",
     "type": "mcq",
     "field": "service_q3",
-    "twilio_content_sid": "HXca88741e7bfefea27eead2c2e5cbc456",
     "prompt": "What is your preferred control mode?",
     "options": [
       { "label": "App control (smartphone)", "value": "app_control_smartphone" },
