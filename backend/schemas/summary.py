@@ -6,6 +6,7 @@ from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 from datetime import datetime
 from backend.intelligence.display_labels import display_label
+from backend.integrations.tatva_enquiry_submit import format_tatva_enquiry_summary_whatsapp
 
 
 class ProjectSummary(BaseModel):
@@ -127,34 +128,46 @@ class ProjectSummary(BaseModel):
             return text[: max_chars - 40] + "\n\n_(Full brief saved for our team.)_"
         return text
 
-    def client_confirmation_text(self) -> str:
-        """Branded client-facing confirmation — no internal CRM/summary details."""
-        snap = self.enquiry_snapshot or {}
-        service_key = str(snap.get("service_category") or "").strip()
-
-        service = display_label("service_category", service_key or "your selected service")
-        consultant = display_label(
-            "assigned_consultant",
-            snap.get("assigned_consultant") or "our specialist",
-        )
-        city = display_label(
-            "city",
-            snap.get("city") or "—",
-            service_category=service_key,
-        )
-        property_location = display_label(
-            "property_location",
-            snap.get("property_location") or "—",
-            service_category=service_key,
-        )
-
-        return (
+    def client_confirmation_text(
+        self,
+        *,
+        tatva_enquiry_summary: dict | None = None,
+    ) -> str:
+        """Branded client-facing confirmation — Tatva API summary when available."""
+        header = (
             "🏡 TatvaOps\n\n"
             "Your enquiry has been successfully received.\n\n"
-            f"📍 Location: {city}\n"
-            f"📍 Property location: {property_location}\n"
-            f"🏠 Service: {service}\n"
-            f"👨‍💼 Assigned Specialist: {consultant}\n\n"
+        )
+
+        if tatva_enquiry_summary:
+            body = format_tatva_enquiry_summary_whatsapp(tatva_enquiry_summary)
+        else:
+            snap = self.enquiry_snapshot or {}
+            service_key = str(snap.get("service_category") or "").strip()
+            service = display_label("service_category", service_key or "your selected service")
+            consultant = display_label(
+                "assigned_consultant",
+                snap.get("assigned_consultant") or "our specialist",
+            )
+            city = display_label(
+                "city",
+                snap.get("city") or "—",
+                service_category=service_key,
+            )
+            property_location = display_label(
+                "property_location",
+                snap.get("property_location") or "—",
+                service_category=service_key,
+            )
+            body = (
+                f"📍 Location: {city}\n"
+                f"📍 Property location: {property_location}\n"
+                f"🏠 Service: {service}\n"
+                f"👨‍💼 Assigned Specialist: {consultant}"
+            )
+
+        return (
+            f"{header}{body}\n\n"
             "Our team is reviewing your requirements and will contact you "
             "during your preferred time.\n\n"
             "Thank you for choosing TatvaOps.\n\n"

@@ -6,6 +6,7 @@ import pytest
 from backend.integrations.tatva_enquiry_submit import (
     build_questionnaire_form_fields,
     build_questionnaire_summary,
+    format_tatva_enquiry_summary_whatsapp,
     submit_service_questionnaire,
 )
 from backend.integrations.tatva_service_questions import (
@@ -57,7 +58,58 @@ def _session_with_residential_answers() -> Session:
     return session
 
 
-def test_build_questionnaire_summary_groups_by_type():
+def test_format_tatva_enquiry_summary_whatsapp():
+    summary = {
+        "projectOverview": "The client submitted a Residential Construction enquiry",
+        "scopeOfWork": "Scope for Residential Construction is based on the client's written requirements",
+        "clientRequirements": "sdffdsds",
+        "technicalSpecs": "Project type = New Home Build = Drawings or permits = Yes, fully approved",
+        "timeline": "12 months",
+        "specialConsiderations": "No special considerations noted",
+        "estimatedScope": "Budget = ₹25 Lakhs",
+    }
+    text = format_tatva_enquiry_summary_whatsapp(summary)
+    assert "*Project Overview*" in text
+    assert "Residential Construction enquiry" in text
+    assert "*Client Requirements*" in text
+    assert "sdffdsds" in text
+    assert "*Estimated Scope*" in text
+    assert "₹25 Lakhs" in text
+
+
+def test_client_confirmation_uses_tatva_api_summary():
+    from datetime import datetime
+    from backend.schemas.summary import ProjectSummary
+
+    tatva_summary = {
+        "projectOverview": "The client submitted a Residential Construction enquiry",
+        "clientRequirements": "sdffdsds",
+        "timeline": "12 months",
+        "estimatedScope": "Budget = ₹25 Lakhs",
+    }
+    summary = ProjectSummary(
+        session_id="wa_test",
+        generated_at=datetime.utcnow(),
+        next_step="Call client",
+        project_overview="internal",
+        scope_of_work=[],
+        client_requirements="internal",
+        technical_specs="",
+        timeline="internal",
+        special_considerations="",
+        estimated_scope="",
+        design_direction="",
+        execution_readiness="",
+        enquiry_snapshot={"city": "hsr", "service_category": "residential_construction"},
+    )
+    text = summary.client_confirmation_text(tatva_enquiry_summary=tatva_summary)
+    assert "Your enquiry has been successfully received" in text
+    assert "*Project Overview*" in text
+    assert "sdffdsds" in text
+    assert "Location:" not in text
+    assert "Assigned Specialist:" not in text
+
+
     session = _session_with_residential_answers()
     steps = build_steps_from_api_questions(RESIDENTIAL_API_QUESTIONS)
     summary = build_questionnaire_summary(session, steps)
@@ -95,7 +147,20 @@ async def test_submit_service_questionnaire_posts_multipart(monkeypatch):
             return None
 
         def json(self):
-            return {"success": True, "message": "Enquiry created"}
+            return {
+                "success": True,
+                "message": "Enquiry created",
+                "data": {
+                    "enquiry": {
+                        "_id": "6a2fcf4acb6f548d14911a49",
+                        "summary": {
+                            "projectOverview": "The client submitted a Residential Construction enquiry",
+                            "clientRequirements": "scd",
+                            "timeline": "12 months",
+                        },
+                    }
+                },
+            }
 
     class FakeClient:
         async def __aenter__(self):
@@ -119,9 +184,11 @@ async def test_submit_service_questionnaire_posts_multipart(monkeypatch):
         lambda **kwargs: FakeClient(),
     )
 
-    ok = await submit_service_questionnaire(session)
-    assert ok is True
+    result = await submit_service_questionnaire(session)
+    assert result is not None
+    assert result["projectOverview"].startswith("The client submitted")
     assert session.flow_state.get("tatva_enquiry_submitted") is True
+    assert session.flow_state.get("tatva_enquiry_summary")["clientRequirements"] == "scd"
     assert captured["url"].endswith("/users/api/enquiries/service-questionnaire")
     assert captured["data"]["userId"] == "698045af7d79fe3c880dab0f"
     assert captured["data"]["serviceId"] == "6926b7865c6d9f597ae41693"
@@ -139,7 +206,11 @@ async def test_confirm_submit_triggers_tatva_enquiry(monkeypatch):
     async def fake_submit(session):
         called["count"] += 1
         session.flow_state["tatva_enquiry_submitted"] = True
-        return True
+        session.flow_state["tatva_enquiry_summary"] = {
+            "projectOverview": "The client submitted a Residential Construction enquiry",
+            "clientRequirements": "sdffdsds",
+        }
+        return session.flow_state["tatva_enquiry_summary"]
 
     async def fake_summary(self, session):
         from backend.schemas.summary import ProjectSummary
@@ -183,3 +254,5 @@ async def test_confirm_submit_triggers_tatva_enquiry(monkeypatch):
     )
     assert called["count"] == 1
     assert resp.summary_generated is True
+    assert "*Project Overview*" in resp.text
+    assert "sdffdsds" in resp.text

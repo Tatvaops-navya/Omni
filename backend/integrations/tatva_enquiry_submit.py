@@ -25,6 +25,30 @@ _SUMMARY_SECTIONS: dict[str, str] = {
     "files": "FILES PROVIDED",
 }
 
+_TATVA_ENQUIRY_SUMMARY_LABELS: list[tuple[str, str]] = [
+    ("projectOverview", "Project Overview"),
+    ("scopeOfWork", "Scope of Work"),
+    ("clientRequirements", "Client Requirements"),
+    ("technicalSpecs", "Technical Specs"),
+    ("timeline", "Timeline"),
+    ("specialConsiderations", "Special Considerations"),
+    ("estimatedScope", "Estimated Scope"),
+]
+
+
+def format_tatva_enquiry_summary_whatsapp(summary: dict[str, Any]) -> str:
+    """Format Tatva API enquiry.summary object for WhatsApp confirmation."""
+    lines: list[str] = []
+    for key, label in _TATVA_ENQUIRY_SUMMARY_LABELS:
+        value = summary.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        lines.append(f"*{label}*\n{text}")
+    return "\n\n".join(lines)
+
 
 def _submit_key(step: dict) -> str:
     return str(step.get("submit_key") or step.get("field") or step.get("id") or "")
@@ -191,13 +215,15 @@ def _file_upload_prompts(steps: list[dict]) -> list[str]:
     ]
 
 
-async def submit_service_questionnaire(session: Session) -> bool:
+async def submit_service_questionnaire(session: Session) -> Optional[dict[str, Any]]:
     """
     POST enquiry answers to Tatva service-questionnaire API.
     Uses tatva_user_id from session (register-phone) and dynamic questionnaire steps.
+    Returns enquiry.summary from the API response on success.
     """
     if session.flow_state.get("tatva_enquiry_submitted"):
-        return True
+        stored = session.flow_state.get("tatva_enquiry_summary")
+        return stored if isinstance(stored, dict) else None
 
     await register_tatva_user_for_session(session)
     user_id = str(session.extracted_fields.get("tatva_user_id") or "").strip()
@@ -331,6 +357,13 @@ async def submit_service_questionnaire(session: Session) -> bool:
         return False
 
     session.flow_state["tatva_enquiry_submitted"] = True
+    enquiry = (payload.get("data") or {}).get("enquiry") or {}
+    tatva_summary = enquiry.get("summary") or {}
+    if isinstance(tatva_summary, dict) and tatva_summary:
+        session.flow_state["tatva_enquiry_summary"] = tatva_summary
+    enquiry_id = enquiry.get("_id") or enquiry.get("id")
+    if enquiry_id:
+        session.flow_state["tatva_enquiry_id"] = str(enquiry_id)
     await log_event(
         "TATVA_ENQUIRY_SUBMIT_OK",
         session_id=session.session_id,
@@ -339,6 +372,8 @@ async def submit_service_questionnaire(session: Session) -> bool:
             "user_id": user_id,
             "service_id": service_id,
             "message": payload.get("message"),
+            "enquiry_id": enquiry_id,
+            "has_summary": bool(tatva_summary),
         },
     )
-    return True
+    return tatva_summary if isinstance(tatva_summary, dict) and tatva_summary else None
