@@ -14,6 +14,12 @@ from backend.utils.logger import log_event
 
 REGISTER_PHONE_PATH = "/users/api/users/register-phone"
 
+VENDOR_BLOCKED_MESSAGE = (
+    "Sorry, this phone number is already registered as a TatvaOps vendor.\n\n"
+    "Please connect with us using a different mobile number to submit a customer enquiry.\n\n"
+    "Thank you for your understanding."
+)
+
 
 def normalize_phone_for_tatva(phone: str) -> str:
     """Strip WhatsApp/E.164 prefixes and return a 10-digit Indian mobile number."""
@@ -33,6 +39,10 @@ def _extract_user_id(payload: dict[str, Any]) -> Optional[str]:
     user = data.get("user") or {}
     user_id = user.get("_id")
     return str(user_id) if user_id else None
+
+
+def is_vendor_register_response(payload: dict[str, Any]) -> bool:
+    return bool((payload.get("data") or {}).get("isVendor"))
 
 
 async def register_phone_user(
@@ -93,10 +103,21 @@ async def register_phone_user(
     return payload
 
 
-async def register_tatva_user_for_session(session: Session) -> None:
-    """Call register-phone and persist Tatva user _id on the session."""
+async def register_tatva_user_for_session(session: Session) -> Optional[str]:
+    """
+    Call register-phone once per session and persist Tatva user _id.
+    Returns VENDOR_BLOCKED_MESSAGE when isVendor is true, else None.
+    """
+    if session.flow_state.get("vendor_blocked"):
+        return VENDOR_BLOCKED_MESSAGE
+
     if session.extracted_fields.get("tatva_user_id"):
-        return
+        return None
+
+    if session.flow_state.get("tatva_register_attempted"):
+        return None
+
+    session.flow_state["tatva_register_attempted"] = True
 
     phone = (
         session.extracted_fields.get("phone_number")
@@ -105,7 +126,20 @@ async def register_tatva_user_for_session(session: Session) -> None:
     )
     payload = await register_phone_user(phone, session_id=session.session_id)
     if not payload:
-        return
+        return None
+
+    if is_vendor_register_response(payload):
+        session.flow_state["vendor_blocked"] = True
+        session.flow_state["conversation_ended"] = True
+        await log_event(
+            "TATVA_VENDOR_BLOCKED",
+            session_id=session.session_id,
+            data={
+                "phone": normalize_phone_for_tatva(phone),
+                "message": payload.get("message"),
+            },
+        )
+        return VENDOR_BLOCKED_MESSAGE
 
     user_id = _extract_user_id(payload)
     if not user_id:
@@ -114,7 +148,7 @@ async def register_tatva_user_for_session(session: Session) -> None:
             session_id=session.session_id,
             data={"api": "tatva_register_phone", "error": "missing_user_id"},
         )
-        return
+        return None
 
     session.extracted_fields["tatva_user_id"] = user_id
     session.flow_state["tatva_user_registered"] = True
@@ -127,6 +161,8 @@ async def register_tatva_user_for_session(session: Session) -> None:
         data={
             "tatva_user_id": user_id,
             "created": (payload.get("data") or {}).get("created"),
+            "is_vendor": False,
             "message": payload.get("message"),
         },
     )
+    return None

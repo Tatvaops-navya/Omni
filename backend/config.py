@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_key: str = ""
 
-    # Tatva user API (register-phone on project willingness = yes)
+    # Tatva user API (register-phone on first WhatsApp message / EVA intro)
     tatva_users_api_base_url: str = "https://api.withtatva.ai"
 
     # Admin
