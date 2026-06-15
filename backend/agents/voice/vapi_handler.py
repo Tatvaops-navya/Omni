@@ -142,6 +142,7 @@ async def vapi_chat_completions(request: Request):
         session
         and last_user_msg
         and not session.summary_generated
+        and not session.flow_state.get("project_declined")
         and is_greeting_message(last_user_msg)
         and had_conversation_progress(session)
     ):

@@ -44,6 +44,8 @@ def test_client_confirmation_excludes_internal_summary_fields():
     assert "Whitefield" in text
     assert "Location:" in text
     assert "Property location:" in text
+    assert "https://tatvaops.com/" in text
+    assert "add your address" in text.lower()
 
 
 def test_client_confirmation_separate_city_and_property_location():

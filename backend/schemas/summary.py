@@ -8,6 +8,15 @@ from datetime import datetime
 from backend.intelligence.display_labels import display_label
 from backend.integrations.tatva_enquiry_submit import format_tatva_enquiry_summary_whatsapp
 
+TATVAOPS_PLATFORM_URL = "https://tatvaops.com/"
+
+CLIENT_PLATFORM_ADDRESS_CTA = (
+    "📍 *Next step for you*\n\n"
+    "Please add your address on the TatvaOps platform:\n"
+    f"{TATVAOPS_PLATFORM_URL}\n\n"
+    "Open the link above to visit TatvaOps and complete your profile."
+)
+
 
 class ProjectSummary(BaseModel):
     """Project Summary – Ready to Initiate"""
@@ -128,15 +137,49 @@ class ProjectSummary(BaseModel):
             return text[: max_chars - 40] + "\n\n_(Full brief saved for our team.)_"
         return text
 
-    def client_confirmation_text(
-        self,
-        *,
-        tatva_enquiry_summary: dict | None = None,
-    ) -> str:
+    def client_confirmation_text(self, *, tatva_enquiry_summary: dict | None = None) -> str:
         """Branded client-facing confirmation — Tatva API summary when available."""
         header = (
             "🏡 TatvaOps\n\n"
             "Your enquiry has been successfully received.\n\n"
+        )
+
+        if tatva_enquiry_summary:
+            try:
+                from backend.integrations.tatva_enquiry_submit import format_tatva_enquiry_summary_whatsapp
+                body = format_tatva_enquiry_summary_whatsapp(tatva_enquiry_summary)
+            except ImportError:
+                body = self._client_confirmation_snapshot_body()
+        else:
+            body = self._client_confirmation_snapshot_body()
+
+        return (
+            f"{header}{body}\n\n"
+            "Our team is reviewing your requirements and will contact you "
+            "during your preferred time.\n\n"
+            "Thank you for choosing TatvaOps.\n\n"
+            "Building Better. Together.\n\n"
+            f"{CLIENT_PLATFORM_ADDRESS_CTA}"
+        )
+
+    def _client_confirmation_snapshot_body(self) -> str:
+        snap = self.enquiry_snapshot or {}
+        service_key = str(snap.get("service_category") or "").strip()
+
+        service = display_label("service_category", service_key or "your selected service")
+        consultant = display_label(
+            "assigned_consultant",
+            snap.get("assigned_consultant") or "our specialist",
+        )
+        city = display_label(
+            "city",
+            snap.get("city") or "—",
+            service_category=service_key,
+        )
+        property_location = display_label(
+            "property_location",
+            snap.get("property_location") or "—",
+            service_category=service_key,
         )
 
         if tatva_enquiry_summary:
@@ -167,9 +210,8 @@ class ProjectSummary(BaseModel):
             )
 
         return (
-            f"{header}{body}\n\n"
-            "Our team is reviewing your requirements and will contact you "
-            "during your preferred time.\n\n"
-            "Thank you for choosing TatvaOps.\n\n"
-            "Building Better. Together."
+            f"📍 Location: {city}\n"
+            f"📍 Property location: {property_location}\n"
+            f"🏠 Service: {service}\n"
+            f"👨‍💼 Assigned Specialist: {consultant}"
         )

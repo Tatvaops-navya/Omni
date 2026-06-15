@@ -40,10 +40,11 @@ def main() -> None:
     for i in range(1, row_count + 1):
         variables[f"option_{i}_label"] = f"{{{{option_{i}_label}}}}"
         variables[f"option_{i}_value"] = f"{{{{option_{i}_value}}}}"
+        variables[f"option_{i}_description"] = f"{{{{option_{i}_description}}}}"
         items.append({
             "id": f"{{{{option_{i}_value}}}}",
             "item": f"{{{{option_{i}_label}}}}",
-            "description": "",
+            "description": f"{{{{option_{i}_description}}}}",
         })
 
     payload = {

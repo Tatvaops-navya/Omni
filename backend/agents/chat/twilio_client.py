@@ -237,9 +237,10 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
         label = str(opt.get("label") or "")
         enriched_options.append({
             **opt,
-            "whatsapp_label": _twilio_list_label(label),
+            "whatsapp_label": label,
         })
     out["options"] = enriched_options
+    long_labels = any(len(str(o.get("label") or "")) > WHATSAPP_LIST_TITLE_MAX for o in quick_opts)
 
     if out.get("twilio_content_sid"):
         field = str(out.get("field", ""))
@@ -254,6 +255,10 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
             or field == "willing_to_create_project"
         ):
             out["require_content_variables"] = True
+        if _template_supports_row_descriptions(out):
+            out["twilio_list_use_descriptions"] = True
+        elif long_labels:
+            out["force_plain_mcq"] = True
         return out
 
     variable_sid = _variable_mcq_list_sid(len(quick_opts))
@@ -262,6 +267,7 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
         out["twilio_content_sid"] = variable_sid
         out["require_content_variables"] = True
         out["twilio_list_slots"] = len(quick_opts)
+        out["twilio_list_use_descriptions"] = True
         return out
 
     dynamic_sid = (
@@ -277,6 +283,7 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
     out["require_content_variables"] = True
     out["twilio_content_sid"] = dynamic_sid
     out["twilio_list_slots"] = WHATSAPP_SERVICE_LIST_ROWS
+    out["twilio_list_use_descriptions"] = True
     return out
 
 
@@ -300,15 +307,51 @@ async def _send_plain(to: str, body: str) -> bool:
         return False
 
 
-WHATSAPP_LIST_LABEL_MAX = 24
+WHATSAPP_LIST_TITLE_MAX = 24
+WHATSAPP_LIST_DESCRIPTION_MAX = 72
+# Back-compat alias
+WHATSAPP_LIST_LABEL_MAX = WHATSAPP_LIST_TITLE_MAX
+
+
+def _variable_mcq_content_sids() -> set[str]:
+    sids = {
+        str(getattr(settings, "twilio_mcq_list_5_content_sid", "") or "").strip(),
+        str(getattr(settings, "twilio_mcq_list_4_content_sid", "") or "").strip(),
+        str(getattr(settings, "twilio_mcq_list_2_content_sid", "") or "").strip(),
+        str(getattr(settings, "twilio_mcq_list_1_content_sid", "") or "").strip(),
+        str(getattr(settings, "twilio_whatsapp_interactive_content_sid", "") or "").strip(),
+        str(getattr(settings, "twilio_service_selection_content_sid", "") or "").strip(),
+    }
+    return {s for s in sids if s}
+
+
+def _template_supports_row_descriptions(step: dict[str, Any]) -> bool:
+    if step.get("twilio_list_use_descriptions"):
+        return True
+    sid = _resolve_content_sid(step)
+    return bool(sid and sid in _variable_mcq_content_sids())
+
+
+def _twilio_list_row(text: str) -> tuple[str, str]:
+    """
+    WhatsApp list rows: title max 24 chars; use description (max 72) for full option text.
+    """
+    full = (text or "").strip() or "Option"
+    if len(full) <= WHATSAPP_LIST_TITLE_MAX:
+        return full, ""
+    description = full[:WHATSAPP_LIST_DESCRIPTION_MAX]
+    title = full[:WHATSAPP_LIST_TITLE_MAX]
+    if " " in title:
+        trimmed = title.rsplit(" ", 1)[0]
+        if len(trimmed) >= 10:
+            title = trimmed
+    return title, description
 
 
 def _twilio_list_label(text: str) -> str:
-    """WhatsApp list-picker row titles are limited to 24 characters."""
-    s = (text or "").strip()
-    if len(s) <= WHATSAPP_LIST_LABEL_MAX:
-        return s or "Option"
-    return s[: WHATSAPP_LIST_LABEL_MAX - 1] + "…"
+    """Short row title only — prefer _twilio_list_row when building Twilio variables."""
+    title, _ = _twilio_list_row(text)
+    return title
 
 
 def _twilio_list_prompt(step: dict[str, Any]) -> str:
@@ -340,9 +383,12 @@ def _build_content_variables(step: dict[str, Any], options: list[dict[str, Any]]
         if i > len(quick_opts):
             break
         opt = quick_opts[i - 1]
-        label_src = opt.get("whatsapp_label") or opt.get("label") or ""
-        variables[f"option_{i}_label"] = _twilio_list_label(str(label_src))
+        label_src = str(opt.get("whatsapp_label") or opt.get("label") or "")
+        title, description = _twilio_list_row(label_src)
+        variables[f"option_{i}_label"] = title
         variables[f"option_{i}_value"] = str(opt.get("value") or opt.get("label") or f"opt_{i}").strip()
+        if step.get("twilio_list_use_descriptions") or step.get("use_dynamic_list"):
+            variables[f"option_{i}_description"] = description
     return variables
 
 

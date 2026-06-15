@@ -25,6 +25,7 @@ from backend.integrations.tatva_users import register_tatva_user_for_session
 from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
 from backend.integrations.tatva_enquiry_submit import submit_service_questionnaire
 from backend.utils.logger import log_event
+from backend.utils.session_idle import is_greeting_message, had_conversation_progress
 
 OFF_TOPIC_KEYWORDS = [
     "stock", "crypto", "bitcoin", "recipe", "weather", "cricket", "movie",
@@ -55,11 +56,34 @@ def _should_skip_off_topic_guardrail(session: Session) -> bool:
 
 
 def _should_send_eva_intro_for_greeting(session: Session, user_message: str) -> bool:
-    """Only greetings before any bot reply — show EVA welcome instead of treating as an answer."""
-    if any(m.role == MessageRole.ASSISTANT for m in session.conversation_history):
+    """Greetings start (or restart) with the full EVA welcome — never treat as an answer."""
+    if not is_greeting_message(user_message):
         return False
-    from backend.utils.session_idle import is_greeting_message
-    return is_greeting_message(user_message)
+    if session.summary_generated or session.flow_state.get("project_declined"):
+        return False
+    return True
+
+
+def _reset_session_to_eva_start(session: Session) -> None:
+    """Clear in-progress qualification so the user can restart from EVA welcome."""
+    phone = (session.phone_number or "").strip()
+    if phone.lower().startswith("whatsapp:"):
+        phone = phone.split(":", 1)[-1]
+    session.conversation_history = []
+    session.extracted_fields = {}
+    session.completed_fields = []
+    session.attachments = []
+    session.service_category = None
+    session.active_consultant = None
+    session.conversation_stage = ConversationStage.ROUTING
+    session.summary_generated = False
+    session.summary = None
+    session.flow_state = {}
+    edit_flow.clear_edit_mode(session)
+    hybrid_flow.init_flow(session)
+    se.start_client_stage(session)
+    if phone:
+        se.mark_field_validated(session, "phone_number", phone)
 
 
 def _end_conversation(session: Session) -> None:
@@ -155,6 +179,17 @@ class ConversationController:
             session.add_message(MessageRole.ASSISTANT, hold)
             return AgentResponse(text=hold, session=session)
 
+        if (
+            _should_send_eva_intro_for_greeting(session, user_message)
+            and had_conversation_progress(session)
+        ):
+            session.add_message(MessageRole.USER, user_message)
+            _reset_session_to_eva_start(session)
+            intro = hybrid_flow.first_client_message()
+            session.add_message(MessageRole.ASSISTANT, intro)
+            session.flow_state["last_stage_shown"] = "client_details"
+            return AgentResponse(text=intro, session=session)
+
         in_review = (
             se.is_in_final_review(session)
             or (
@@ -218,8 +253,6 @@ class ConversationController:
 
         if se.needs_client_details(session) and not session.flow_state.get("final_review_shown"):
             se.start_client_stage(session)
-            # Greeting as the very first user message — EVA welcome + name question;
-            # do not treat Hi/Hello as client_name. Answers like a name proceed normally.
             if _should_send_eva_intro_for_greeting(session, user_message):
                 intro = hybrid_flow.first_client_message()
                 session.add_message(MessageRole.ASSISTANT, intro)
