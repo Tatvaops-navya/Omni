@@ -36,6 +36,7 @@ from backend.utils.session_idle import (
     build_idle_fresh_start_reply,
     start_fresh_session,
 )
+from backend.integrations.tatva_users import register_tatva_user_for_session, VENDOR_BLOCKED_MESSAGE
 
 router = APIRouter()
 _settings = get_settings()
@@ -277,7 +278,12 @@ async def _handle_whatsapp_message_impl(
                         data={"phone": phone_number, "channel": "whatsapp"})
         await save_session(session)
         if not user_message and num_media == 0:
-            await send_whatsapp_message(to=phone_number, body=hybrid_flow.first_client_message())
+            se.start_client_stage(session)
+            vendor_msg = await register_tatva_user_for_session(session)
+            body = vendor_msg or hybrid_flow.first_client_message()
+            session.add_message(MessageRole.ASSISTANT, body)
+            await save_session(session)
+            await send_whatsapp_message(to=phone_number, body=body)
             return
 
     # Media upload handling (stage 9 — attachments, or edit-details file update)
@@ -380,6 +386,17 @@ async def _handle_whatsapp_message_impl(
             "CONVERSATION_ENDED",
             session_id=session_id,
             data={"reason": "project_declined", "channel": "whatsapp"},
+        )
+        return
+
+    if session_out.flow_state.get("vendor_blocked"):
+        reply = (agent_response.text or VENDOR_BLOCKED_MESSAGE).strip()
+        if reply:
+            await send_whatsapp_message(to=phone_number, body=reply)
+        await log_event(
+            "CONVERSATION_ENDED",
+            session_id=session_id,
+            data={"reason": "vendor_blocked", "channel": "whatsapp"},
         )
         return
 

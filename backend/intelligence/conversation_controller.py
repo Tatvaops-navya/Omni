@@ -21,7 +21,7 @@ from backend.intelligence.nova_router import (
 from backend.intelligence.consultants.registry import get_service_label
 from backend.schemas.service import CONSULTANT_IDS
 from backend.summarizer.summary_generator import get_summary_generator
-from backend.integrations.tatva_users import register_tatva_user_for_session
+from backend.integrations.tatva_users import register_tatva_user_for_session, VENDOR_BLOCKED_MESSAGE
 from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
 from backend.integrations.tatva_enquiry_submit import submit_service_questionnaire
 from backend.utils.logger import log_event
@@ -126,8 +126,6 @@ class ConversationController:
             session, user_message,
             button_text=button_text, button_payload=button_payload, list_id=list_id,
         )
-        if handled and session.flow_state.pop("register_tatva_user", False):
-            await register_tatva_user_for_session(session)
         if handled and hybrid_reply:
             session.add_message(MessageRole.ASSISTANT, hybrid_reply)
             return AgentResponse(text=hybrid_reply, session=session)
@@ -179,12 +177,21 @@ class ConversationController:
             session.add_message(MessageRole.ASSISTANT, hold)
             return AgentResponse(text=hold, session=session)
 
+        if session.flow_state.get("vendor_blocked"):
+            session.add_message(MessageRole.USER, user_message)
+            session.add_message(MessageRole.ASSISTANT, VENDOR_BLOCKED_MESSAGE)
+            return AgentResponse(text=VENDOR_BLOCKED_MESSAGE, session=session)
+
         if (
             _should_send_eva_intro_for_greeting(session, user_message)
             and had_conversation_progress(session)
         ):
             session.add_message(MessageRole.USER, user_message)
             _reset_session_to_eva_start(session)
+            vendor_msg = await register_tatva_user_for_session(session)
+            if vendor_msg:
+                session.add_message(MessageRole.ASSISTANT, vendor_msg)
+                return AgentResponse(text=vendor_msg, session=session)
             intro = hybrid_flow.first_client_message()
             session.add_message(MessageRole.ASSISTANT, intro)
             session.flow_state["last_stage_shown"] = "client_details"
@@ -253,6 +260,11 @@ class ConversationController:
 
         if se.needs_client_details(session) and not session.flow_state.get("final_review_shown"):
             se.start_client_stage(session)
+            if not session.flow_state.get("tatva_register_attempted"):
+                vendor_msg = await register_tatva_user_for_session(session)
+                if vendor_msg:
+                    session.add_message(MessageRole.ASSISTANT, vendor_msg)
+                    return AgentResponse(text=vendor_msg, session=session)
             if _should_send_eva_intro_for_greeting(session, user_message):
                 intro = hybrid_flow.first_client_message()
                 session.add_message(MessageRole.ASSISTANT, intro)
@@ -263,7 +275,9 @@ class ConversationController:
             if resp:
                 return resp
             session.flow_state["last_stage_shown"] = "client_details"
-            return AgentResponse(text=hybrid_flow.first_client_message(), session=session)
+            intro = hybrid_flow.first_client_message()
+            session.add_message(MessageRole.ASSISTANT, intro)
+            return AgentResponse(text=intro, session=session)
 
         if se.needs_service_selection(session) and not session.flow_state.get("final_review_shown"):
             # Prefer interactive payload signals when present (WhatsApp list/button taps)
