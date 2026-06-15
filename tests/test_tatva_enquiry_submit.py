@@ -1,0 +1,185 @@
+"""Tests for Tatva service-questionnaire submission."""
+import json
+
+import pytest
+
+from backend.integrations.tatva_enquiry_submit import (
+    build_questionnaire_form_fields,
+    build_questionnaire_summary,
+    submit_service_questionnaire,
+)
+from backend.integrations.tatva_service_questions import (
+    build_steps_from_api_questions,
+    sync_questionnaire_state,
+)
+from backend.schemas.service import ServiceCategory
+from backend.schemas.session import Session, ConversationStage, AttachmentMeta
+from backend.intelligence import stage_engine as se
+from backend.intelligence.conversation_controller import ConversationController
+from tests.test_tatva_service_questions import RESIDENTIAL_API_QUESTIONS
+
+
+def _session_with_residential_answers() -> Session:
+    session = Session(
+        session_id="submit-test",
+        phone_number="whatsapp:+919876543210",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.CONFIRMATION,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Test User"),
+        ("city", "Bengaluru"),
+        ("property_location", "HSR Layout"),
+        ("preferred_contact_time", "afternoon"),
+        ("willing_to_create_project", "yes"),
+    ):
+        se.mark_field_validated(session, field, value)
+
+    se.on_service_selected(session, ServiceCategory.RESIDENTIAL_CONSTRUCTION)
+    steps = build_steps_from_api_questions(RESIDENTIAL_API_QUESTIONS)
+    sync_questionnaire_state(session, steps, source="tatva_api")
+    session.flow_state["tatva_service_id"] = "6926b7865c6d9f597ae41693"
+    session.extracted_fields["tatva_service_name"] = "Residential Construction"
+    session.extracted_fields["tatva_user_id"] = "698045af7d79fe3c880dab0f"
+
+    se.mark_field_validated(session, "order_1", "new home build")
+    se.mark_field_validated(session, "order_2", "under ₹25 lakhs")
+    se.mark_field_validated(session, "order_4", "scd")
+    se.mark_field_validated(session, "file_order_5", "1 file(s) uploaded")
+    session.attachments.append(
+        AttachmentMeta(
+            file_name="Screenshot 2026-04-13 at 10.38.22 PM.png",
+            file_url="https://example.com/file.png",
+            mime_type="image/png",
+        )
+    )
+    return session
+
+
+def test_build_questionnaire_summary_groups_by_type():
+    session = _session_with_residential_answers()
+    steps = build_steps_from_api_questions(RESIDENTIAL_API_QUESTIONS)
+    summary = build_questionnaire_summary(session, steps)
+
+    assert len(summary) == 3
+    assert summary[0]["id"] == "project-details"
+    assert summary[0]["items"][0]["value"] == "New Home Build"
+    assert summary[1]["id"] == "description"
+    assert summary[1]["items"][0]["value"] == "scd"
+    assert summary[2]["id"] == "files"
+    assert "Screenshot" in summary[2]["items"][0]["value"]
+
+
+def test_build_questionnaire_form_fields_use_question_prompts():
+    session = _session_with_residential_answers()
+    steps = build_steps_from_api_questions(RESIDENTIAL_API_QUESTIONS)
+    fields = build_questionnaire_form_fields(session, steps)
+
+    assert fields["What type of residential construction project are you planning?"] == "New Home Build"
+    assert fields["Describe your project."] == "scd"
+    assert "Upload supporting documents." not in fields
+
+
+@pytest.mark.asyncio
+async def test_submit_service_questionnaire_posts_multipart(monkeypatch):
+    session = _session_with_residential_answers()
+    steps = build_steps_from_api_questions(RESIDENTIAL_API_QUESTIONS)
+    captured: dict = {}
+
+    async def fake_download(meta):
+        return b"png-bytes", meta.file_name, meta.mime_type
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"success": True, "message": "Enquiry created"}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, data=None, files=None):
+            captured["url"] = url
+            captured["data"] = data
+            captured["files"] = files
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "backend.integrations.tatva_enquiry_submit._download_attachment",
+        fake_download,
+    )
+    monkeypatch.setattr(
+        "backend.integrations.tatva_enquiry_submit.httpx.AsyncClient",
+        lambda **kwargs: FakeClient(),
+    )
+
+    ok = await submit_service_questionnaire(session)
+    assert ok is True
+    assert session.flow_state.get("tatva_enquiry_submitted") is True
+    assert captured["url"].endswith("/users/api/enquiries/service-questionnaire")
+    assert captured["data"]["userId"] == "698045af7d79fe3c880dab0f"
+    assert captured["data"]["serviceId"] == "6926b7865c6d9f597ae41693"
+    assert captured["data"]["serviceName"] == "Residential Construction"
+    summary = json.loads(captured["data"]["summary"])
+    assert summary[0]["title"] == "PROJECT DETAILS"
+    assert captured["files"] is not None
+    assert len(captured["files"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_submit_triggers_tatva_enquiry(monkeypatch):
+    called = {"count": 0}
+
+    async def fake_submit(session):
+        called["count"] += 1
+        session.flow_state["tatva_enquiry_submitted"] = True
+        return True
+
+    async def fake_summary(self, session):
+        from backend.schemas.summary import ProjectSummary
+        from datetime import datetime
+
+        return ProjectSummary(
+            session_id=session.session_id,
+            generated_at=datetime.utcnow(),
+            next_step="Call client",
+            project_overview="Test overview",
+            scope_of_work=["Scope"],
+            client_requirements="Req",
+            technical_specs="Specs",
+            timeline="Soon",
+            special_considerations="None",
+            estimated_scope="Budget",
+            design_direction="Modern",
+            execution_readiness="Ready",
+            enquiry_snapshot=session.extracted_fields,
+        )
+
+    monkeypatch.setattr(
+        "backend.intelligence.conversation_controller.submit_service_questionnaire",
+        fake_submit,
+    )
+    monkeypatch.setattr(
+        "backend.summarizer.summary_generator.SummaryGenerator.generate",
+        fake_summary,
+    )
+
+    session = _session_with_residential_answers()
+    se.enter_final_review(session)
+    session.flow_state["final_review_shown"] = True
+
+    controller = ConversationController()
+    resp = await controller.process_message(
+        session,
+        "confirm_submit",
+        channel="whatsapp",
+        list_id="confirm_submit",
+    )
+    assert called["count"] == 1
+    assert resp.summary_generated is True

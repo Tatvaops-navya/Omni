@@ -252,6 +252,29 @@ def test_no_sqft_in_technical_stage():
     assert "tech_room_configuration" in fields
 
 
+def test_three_option_mcq_uses_three_row_list(monkeypatch):
+    from backend.config import get_settings
+    from backend.intelligence.qualification_builder import enrich_mcq_step_for_whatsapp
+
+    monkeypatch.setenv("TWILIO_MCQ_LIST_3_CONTENT_SID", "HX3row000000000000000000000000001")
+    monkeypatch.setenv("TWILIO_MCQ_LIST_4_CONTENT_SID", "HX2def478cef646e98b157b87d5998c433")
+    get_settings.cache_clear()
+
+    step = {
+        "type": "mcq",
+        "field": "service_q1",
+        "prompt": "What type of event?",
+        "options": [
+            {"label": "Wedding", "value": "wedding"},
+            {"label": "Birthday Party", "value": "birthday"},
+            {"label": "Corporate Event", "value": "corporate"},
+        ],
+    }
+    enriched = enrich_mcq_step_for_whatsapp(step)
+    assert enriched["twilio_content_sid"] == "HX3row000000000000000000000000001"
+    assert enriched.get("twilio_list_slots") == 3
+
+
 def test_farm_infrastructure_four_option_mcq_uses_clickable_list(monkeypatch):
     from backend.config import get_settings
     from backend.intelligence.qualification_builder import _service_questionnaire_steps

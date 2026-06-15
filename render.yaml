@@ -34,6 +34,8 @@ services:
         sync: false
       - key: TWILIO_MCQ_LIST_4_CONTENT_SID
         sync: false
+      - key: TWILIO_MCQ_LIST_3_CONTENT_SID
+        sync: false
       - key: TWILIO_MCQ_LIST_1_CONTENT_SID
         sync: false
       - key: TWILIO_MCQ_LIST_2_CONTENT_SID
