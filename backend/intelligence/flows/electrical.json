@@ -3,7 +3,6 @@
     "id": "q1_electrical_work_type",
     "type": "mcq",
     "field": "service_q1",
-    "twilio_content_sid": "HX414b0b14035d4698a472ec0b37945937",
     "prompt": "What type of electrical work do you need?",
     "options": [
       { "label": "New Wiring / Rewiring", "value": "new_wiring_rewiring" },
@@ -17,7 +16,6 @@
     "id": "q2_property_type_scale",
     "type": "mcq",
     "field": "service_q2",
-    "twilio_content_sid": "HX33638ea66befc4f52be2c7d463ee9662",
     "prompt": "What is the property type and scale?",
     "options": [
       { "label": "Residential - Apartment", "value": "residential_apartment" },
@@ -31,7 +29,6 @@
     "id": "q3_urgency",
     "type": "mcq",
     "field": "service_q3",
-    "twilio_content_sid": "HX8beb0cfe38c1eb29e20def644b3d986b",
     "prompt": "Is this an urgent / breakdown situation or a planned installation?",
     "options": [
       { "label": "Urgent - breakdown or hazard", "value": "urgent_breakdown_hazard" },

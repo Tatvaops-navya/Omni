@@ -6,6 +6,7 @@ from typing import Dict, Any, List
 from pydantic import BaseModel, Field
 from datetime import datetime
 from backend.intelligence.display_labels import display_label
+from backend.integrations.tatva_enquiry_submit import format_tatva_enquiry_summary_whatsapp
 
 TATVAOPS_PLATFORM_URL = "https://tatvaops.com/"
 
@@ -180,6 +181,33 @@ class ProjectSummary(BaseModel):
             snap.get("property_location") or "—",
             service_category=service_key,
         )
+
+        if tatva_enquiry_summary:
+            body = format_tatva_enquiry_summary_whatsapp(tatva_enquiry_summary)
+        else:
+            snap = self.enquiry_snapshot or {}
+            service_key = str(snap.get("service_category") or "").strip()
+            service = display_label("service_category", service_key or "your selected service")
+            consultant = display_label(
+                "assigned_consultant",
+                snap.get("assigned_consultant") or "our specialist",
+            )
+            city = display_label(
+                "city",
+                snap.get("city") or "—",
+                service_category=service_key,
+            )
+            property_location = display_label(
+                "property_location",
+                snap.get("property_location") or "—",
+                service_category=service_key,
+            )
+            body = (
+                f"📍 Location: {city}\n"
+                f"📍 Property location: {property_location}\n"
+                f"🏠 Service: {service}\n"
+                f"👨‍💼 Assigned Specialist: {consultant}"
+            )
 
         return (
             f"📍 Location: {city}\n"

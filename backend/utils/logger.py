@@ -47,6 +47,9 @@ def _print_log(entry: dict):
         "SUMMARY_GENERATED": "\033[92m",  # Green bold
         "GUARDRAIL_TRIGGERED": "\033[91m",# Red
         "API_ERROR": "\033[91m",          # Red
+        "TATVA_SERVICE_QUESTIONS_FETCH": "\033[96m",  # Cyan
+        "TATVA_SERVICE_QUESTIONS_OK": "\033[92m",     # Green
+        "SERVICE_QUESTIONS_LOADED": "\033[93m",       # Yellow
     }
     color = colors.get(event, "\033[0m")
     reset = "\033[0m"

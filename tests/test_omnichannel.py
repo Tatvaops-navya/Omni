@@ -274,6 +274,29 @@ def test_no_sqft_in_technical_stage():
     assert "tech_room_configuration" in fields
 
 
+def test_three_option_mcq_uses_three_row_list(monkeypatch):
+    from backend.config import get_settings
+    from backend.intelligence.qualification_builder import enrich_mcq_step_for_whatsapp
+
+    monkeypatch.setenv("TWILIO_MCQ_LIST_3_CONTENT_SID", "HX3row000000000000000000000000001")
+    monkeypatch.setenv("TWILIO_MCQ_LIST_4_CONTENT_SID", "HX2def478cef646e98b157b87d5998c433")
+    get_settings.cache_clear()
+
+    step = {
+        "type": "mcq",
+        "field": "service_q1",
+        "prompt": "What type of event?",
+        "options": [
+            {"label": "Wedding", "value": "wedding"},
+            {"label": "Birthday Party", "value": "birthday"},
+            {"label": "Corporate Event", "value": "corporate"},
+        ],
+    }
+    enriched = enrich_mcq_step_for_whatsapp(step)
+    assert enriched["twilio_content_sid"] == "HX3row000000000000000000000000001"
+    assert enriched.get("twilio_list_slots") == 3
+
+
 def test_farm_infrastructure_four_option_mcq_uses_clickable_list(monkeypatch):
     from backend.config import get_settings
     from backend.intelligence.qualification_builder import _service_questionnaire_steps
@@ -338,12 +361,17 @@ def test_handoff_excludes_first_farm_question_when_interactive_list(monkeypatch)
     assert "Anil Reddy" in handoff
 
 
-def test_home_interiors_keeps_own_twilio_templates():
+def test_home_interiors_mcq_uses_shared_dynamic_list(monkeypatch):
+    from backend.config import get_settings
     from backend.intelligence.qualification_builder import _service_questionnaire_steps
+
+    monkeypatch.setenv("TWILIO_MCQ_LIST_5_CONTENT_SID", "HXe51472b177c7bf1f3f2b0899b62af29f")
+    get_settings.cache_clear()
 
     steps = _service_questionnaire_steps(ServiceCategory.HOME_INTERIORS)
     q1 = next(s for s in steps if s["field"] == "service_q1")
-    assert q1["twilio_content_sid"] == "HX02f90dcded88254d350a15410e5527ff"
+    assert q1["twilio_content_sid"] == "HXe51472b177c7bf1f3f2b0899b62af29f"
+    assert q1.get("twilio_list_slots") == 5
     assert "interior project" in q1["prompt"].lower()
 
 
@@ -537,7 +565,7 @@ def test_lead_scorer():
         conversation_stage=ConversationStage.SUMMARY_GENERATED,
         summary_generated=True,
     )
-    session.completed_fields = se.required_fields_for_summary()
+    session.completed_fields = se.required_fields_for_summary(session)
     score, tier = score_lead(session)
     assert 0 <= score <= 100
     assert tier in ("hot", "warm", "cold")

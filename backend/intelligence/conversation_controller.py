@@ -22,6 +22,8 @@ from backend.intelligence.consultants.registry import get_service_label
 from backend.schemas.service import CONSULTANT_IDS
 from backend.summarizer.summary_generator import get_summary_generator
 from backend.integrations.tatva_users import register_tatva_user_for_session
+from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
+from backend.integrations.tatva_enquiry_submit import submit_service_questionnaire
 from backend.utils.logger import log_event
 from backend.utils.session_idle import is_greeting_message, had_conversation_progress
 
@@ -220,7 +222,11 @@ class ConversationController:
                 session.conversation_stage = ConversationStage.SUMMARY_GENERATED
                 apply_lead_score(session)
                 _end_conversation(session)
-                confirmation_text = summary.client_confirmation_text()
+                await submit_service_questionnaire(session)
+                tatva_summary = session.flow_state.get("tatva_enquiry_summary")
+                confirmation_text = summary.client_confirmation_text(
+                    tatva_enquiry_summary=tatva_summary if isinstance(tatva_summary, dict) else None,
+                )
                 session.add_message(MessageRole.ASSISTANT, confirmation_text)
                 await log_event("SUMMARY_GENERATED", session_id=session.session_id,
                                 data={"lead_score": session.lead_score, "channel": channel})
@@ -287,6 +293,8 @@ class ConversationController:
             service_label = get_service_label(category)
             session.active_consultant = consultant_id
             se.on_service_selected(session, category)
+            await ensure_questionnaire_loaded(session)
+            se.reconcile_session(session)
 
             client_name = (session.extracted_fields.get("client_name") or "").strip()
             greet = f"Perfect, {client_name} ✨" if client_name else "Perfect ✨"
@@ -305,6 +313,9 @@ class ConversationController:
 
         if se.is_collecting_qualification(session):
             session.conversation_stage = ConversationStage.DETAIL_COLLECTION
+            if session.service_category:
+                await ensure_questionnaire_loaded(session)
+                se.reconcile_session(session)
             resp = await self._run_hybrid(session, user_message,
                                         button_text=button_text, button_payload=button_payload, list_id=list_id)
             if resp:

@@ -3,7 +3,6 @@
     "id": "q1_painting_type",
     "type": "mcq",
     "field": "service_q1",
-    "twilio_content_sid": "HX32268c4f0d7502bdf2af631c44707127",
     "prompt": "What type of painting service do you require?",
     "options": [
       { "label": "Interior Painting (Walls / Ceiling)", "value": "interior_painting" },
@@ -17,7 +16,6 @@
     "id": "q2_paintable_area",
     "type": "mcq",
     "field": "service_q2",
-    "twilio_content_sid": "HX1f6cec10f7b76c3d1ae01a6a379b88d8",
     "prompt": "What is the approximate paintable area?",
     "options": [
       { "label": "Under 500 sq ft", "value": "under_500_sqft" },
@@ -31,7 +29,6 @@
     "id": "q3_finish_type",
     "type": "mcq",
     "field": "service_q3",
-    "twilio_content_sid": "HX675e39f670f0193a6e03ba2cd545c4f5",
     "prompt": "What finish type are you looking for?",
     "options": [
       { "label": "Matt / Flat", "value": "matt_flat" },

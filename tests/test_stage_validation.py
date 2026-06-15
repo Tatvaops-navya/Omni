@@ -51,7 +51,7 @@ def test_complete_attachment_upload_moves_to_review():
         service_category=ServiceCategory.ELECTRICAL,
         conversation_stage=ConversationStage.DETAIL_COLLECTION,
     )
-    for field in se.required_fields_for_summary():
+    for field in se.required_fields_for_summary(session):
         if field == "attachments":
             continue
         se.mark_field_validated(session, field, "test_value")
