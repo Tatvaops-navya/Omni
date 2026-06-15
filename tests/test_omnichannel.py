@@ -131,13 +131,17 @@ def test_greeting_detection_not_name_false_positive():
     assert is_greeting_message("Hiiii")
     assert is_greeting_message("Hello")
     assert is_greeting_message("Hi there")
+    assert is_greeting_message("Hii bro")
+    assert is_greeting_message("Hii anna")
+    assert is_greeting_message("Namaste")
+    assert is_greeting_message("Good Morning")
     assert not is_greeting_message("Hitesh")
     assert not is_greeting_message("Vidya")
 
 
 @pytest.mark.asyncio
-async def test_greeting_mid_flow_restarts_from_eva_intro():
-    from backend.utils.session_idle import start_fresh_session, had_conversation_progress
+async def test_greeting_mid_flow_restarts_with_eva_intro():
+    from backend.utils.session_idle import start_fresh_session
     from backend.storage.redis_store import save_session, get_session
 
     session_id = "wa_whatsapp:+919888877777"
@@ -149,22 +153,40 @@ async def test_greeting_mid_flow_restarts_from_eva_intro():
         conversation_stage=ConversationStage.DETAIL_COLLECTION,
     )
     se.start_client_stage(session)
+    session.add_message(MessageRole.ASSISTANT, hybrid_flow.first_client_message())
     se.mark_field_validated(session, "client_name", "Vidya")
-    se.mark_field_validated(session, "city", "Mysore")
-    se.mark_field_validated(session, "property_location", "Mysore, kuvemunagar")
     await save_session(session)
-    assert had_conversation_progress(session)
-    step = hybrid_flow.get_current_step(session)
-    assert step is not None
-    assert step["field"] == "email"
 
     await start_fresh_session(session_id, phone, reason="greeting_restart")
     session = await get_session(session_id)
     controller = ConversationController()
-    resp = await controller.process_message(session, "Hiiii", channel="whatsapp")
+    resp = await controller.process_message(session, "Hii bro", channel="whatsapp")
     assert "I'm EVA" in resp.text
     assert "What is your full name?" in resp.text
-    assert session.extracted_fields.get("client_name") != "Hiiii"
+    assert session.extracted_fields.get("client_name") != "Hii bro"
+    assert "client_name" not in session.completed_fields
+
+    resp2 = await controller.process_message(session, "Namaste", channel="whatsapp")
+    assert "I'm EVA" in resp2.text
+    assert "What is your full name?" in resp2.text
+
+
+@pytest.mark.asyncio
+async def test_greeting_mid_flow_does_not_advance_on_casual_hi():
+    session = Session(
+        session_id="wa_whatsapp:+919888877777",
+        phone_number="whatsapp:+919888877777",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+    )
+    se.start_client_stage(session)
+    session.add_message(MessageRole.ASSISTANT, hybrid_flow.first_client_message())
+
+    controller = ConversationController()
+    resp = await controller.process_message(session, "Hii bro", channel="whatsapp")
+    assert "I'm EVA" in resp.text
+    assert "What is your full name?" in resp.text
+    assert "client_name" not in session.completed_fields
 
 
 @pytest.mark.asyncio

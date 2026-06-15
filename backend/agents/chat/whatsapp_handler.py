@@ -251,11 +251,12 @@ async def _handle_whatsapp_message_impl(
         await start_fresh_session(session_id, phone_number, reason="new_enquiry_after_submit")
         session = await get_session(session_id)
 
-    # Mid-flow greeting (Hi/Hello) — start over from EVA intro, same as a new chat.
+    # Greeting mid-flow (Hi bro, Namaste, etc.) — restart with full EVA welcome + qualification flow.
     if (
         session
         and user_message
         and not _session_is_submitted(session)
+        and not session.flow_state.get("project_declined")
         and is_greeting_message(user_message)
         and had_conversation_progress(session)
     ):

@@ -42,13 +42,20 @@ _GREETING_EXACT = frozenset({
     "HEY", "HEYY", "HEYYY", "HEYA",
     "HLO", "HLW", "HOWDY", "YO",
     "HITHERE", "HELLOTHERE", "HEYTHERE",
+    "NAMASTE", "NAMASKAR", "NAMASKARAM",
     "NEWENQUIRY", "NEWPROJECT", "STARTOVER", "STARTAGAIN",
 })
 
+_CASUAL_GREETING_SUFFIXES = frozenset({
+    "BRO", "ANNA", "BABY", "DUDE", "BHAI", "SIS", "MATE", "YAAR", "DEAR",
+})
 
-def is_greeting_message(message: str) -> bool:
-    """Hi/Hello-style openers — restart at EVA intro (whole-message match, not names like Hitesh)."""
-    norm = _normalize_msg(message)
+_CASUAL_GREETING_WORDS = frozenset({
+    "bro", "anna", "baby", "dude", "bhai", "sis", "mate", "yaar", "dear", "there",
+})
+
+
+def _greeting_stem(norm: str) -> bool:
     if not norm:
         return False
     if norm in _GREETING_EXACT:
@@ -59,9 +66,40 @@ def is_greeting_message(message: str) -> bool:
         return True
     if re.fullmatch(r"HEY+", norm):
         return True
+    if norm.startswith("NAMASTE") or norm.startswith("NAMASKAR"):
+        return True
+    return False
+
+
+def is_greeting_message(message: str) -> bool:
+    """Hi/Hello/Namaste-style openers — not names like Hitesh or Vidya."""
+    raw = (message or "").strip()
+    if not raw:
+        return False
+    norm = _normalize_msg(raw)
+    if _greeting_stem(norm):
+        return True
     if norm.startswith("GOOD") and any(
         part in norm for part in ("MORNING", "EVENING", "AFTERNOON", "NIGHT")
     ):
+        return True
+    for suffix in _CASUAL_GREETING_SUFFIXES:
+        if norm.endswith(suffix):
+            base = norm[: -len(suffix)]
+            if _greeting_stem(base):
+                return True
+    words = re.sub(r"[^\w\s]", "", raw.lower()).split()
+    if not words:
+        return False
+    first = words[0]
+    rest = words[1:]
+    if re.fullmatch(r"h+i+", first) or first in ("hello", "hey", "hi", "hlo", "hlw"):
+        if not rest or all(w in _CASUAL_GREETING_WORDS for w in rest):
+            return True
+    if first in ("namaste", "namaskar", "namaskaram"):
+        if not rest or all(w in _CASUAL_GREETING_WORDS for w in rest):
+            return True
+    if first == "good" and any(w in rest for w in ("morning", "evening", "afternoon", "night")):
         return True
     return False
 

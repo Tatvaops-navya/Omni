@@ -7,6 +7,15 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from backend.intelligence.display_labels import display_label
 
+TATVAOPS_PLATFORM_URL = "https://tatvaops.com/"
+
+CLIENT_PLATFORM_ADDRESS_CTA = (
+    "📍 *Next step for you*\n\n"
+    "Please add your address on the TatvaOps platform:\n"
+    f"{TATVAOPS_PLATFORM_URL}\n\n"
+    "Open the link above to visit TatvaOps and complete your profile."
+)
+
 
 class ProjectSummary(BaseModel):
     """Project Summary – Ready to Initiate"""
@@ -127,8 +136,32 @@ class ProjectSummary(BaseModel):
             return text[: max_chars - 40] + "\n\n_(Full brief saved for our team.)_"
         return text
 
-    def client_confirmation_text(self) -> str:
-        """Branded client-facing confirmation — no internal CRM/summary details."""
+    def client_confirmation_text(self, *, tatva_enquiry_summary: dict | None = None) -> str:
+        """Branded client-facing confirmation — Tatva API summary when available."""
+        header = (
+            "🏡 TatvaOps\n\n"
+            "Your enquiry has been successfully received.\n\n"
+        )
+
+        if tatva_enquiry_summary:
+            try:
+                from backend.integrations.tatva_enquiry_submit import format_tatva_enquiry_summary_whatsapp
+                body = format_tatva_enquiry_summary_whatsapp(tatva_enquiry_summary)
+            except ImportError:
+                body = self._client_confirmation_snapshot_body()
+        else:
+            body = self._client_confirmation_snapshot_body()
+
+        return (
+            f"{header}{body}\n\n"
+            "Our team is reviewing your requirements and will contact you "
+            "during your preferred time.\n\n"
+            "Thank you for choosing TatvaOps.\n\n"
+            "Building Better. Together.\n\n"
+            f"{CLIENT_PLATFORM_ADDRESS_CTA}"
+        )
+
+    def _client_confirmation_snapshot_body(self) -> str:
         snap = self.enquiry_snapshot or {}
         service_key = str(snap.get("service_category") or "").strip()
 
@@ -149,14 +182,8 @@ class ProjectSummary(BaseModel):
         )
 
         return (
-            "🏡 TatvaOps\n\n"
-            "Your enquiry has been successfully received.\n\n"
             f"📍 Location: {city}\n"
             f"📍 Property location: {property_location}\n"
             f"🏠 Service: {service}\n"
-            f"👨‍💼 Assigned Specialist: {consultant}\n\n"
-            "Our team is reviewing your requirements and will contact you "
-            "during your preferred time.\n\n"
-            "Thank you for choosing TatvaOps.\n\n"
-            "Building Better. Together."
+            f"👨‍💼 Assigned Specialist: {consultant}"
         )
