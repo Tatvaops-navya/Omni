@@ -23,6 +23,7 @@ from backend.schemas.service import CONSULTANT_IDS
 from backend.summarizer.summary_generator import get_summary_generator
 from backend.integrations.tatva_users import register_tatva_user_for_session
 from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
+from backend.integrations.tatva_enquiry_submit import submit_service_questionnaire
 from backend.utils.logger import log_event
 
 OFF_TOPIC_KEYWORDS = [
@@ -186,6 +187,7 @@ class ConversationController:
                 session.conversation_stage = ConversationStage.SUMMARY_GENERATED
                 apply_lead_score(session)
                 _end_conversation(session)
+                await submit_service_questionnaire(session)
                 confirmation_text = summary.client_confirmation_text()
                 session.add_message(MessageRole.ASSISTANT, confirmation_text)
                 await log_event("SUMMARY_GENERATED", session_id=session.session_id,

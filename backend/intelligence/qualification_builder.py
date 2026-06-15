@@ -47,7 +47,9 @@ def _variable_mcq_list_sid(option_count: int) -> str | None:
     elif option_count == 2:
         # Never use the 4-row template for 2 options — empty rows show {{option_3_label}} placeholders.
         sid = (cfg.twilio_mcq_list_2_content_sid or "").strip()
-    elif option_count in (3, 4):
+    elif option_count == 3:
+        sid = (cfg.twilio_mcq_list_3_content_sid or "").strip()
+    elif option_count == 4:
         sid = (cfg.twilio_mcq_list_4_content_sid or fallback).strip()
     else:
         sid = ""
@@ -59,7 +61,7 @@ def _resolve_mcq_twilio_sid(step: dict) -> str | None:
     Twilio list template for MCQ steps.
     - Flow JSON may define a service-specific SID (home_interiors, electrical, …).
     - Contact time uses its dedicated template.
-    - Other service_q steps use variable 4/5-row MCQ templates (Choose option).
+    - Other service_q steps use variable 2/3/4/5-row MCQ templates (Choose option).
     """
     explicit = step.get("twilio_content_sid")
     if explicit:

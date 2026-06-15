@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     # Variable MCQ list pickers — see scripts/create_mcq_list_content.py
     twilio_mcq_list_1_content_sid: str = ""
     twilio_mcq_list_2_content_sid: str = ""
+    twilio_mcq_list_3_content_sid: str = ""
     twilio_mcq_list_4_content_sid: str = ""
     twilio_mcq_list_5_content_sid: str = ""
     # Variable-based list picker for service menu (no AVA welcome). See scripts/create_service_list_content.py
