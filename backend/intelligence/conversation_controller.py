@@ -188,7 +188,10 @@ class ConversationController:
                 apply_lead_score(session)
                 _end_conversation(session)
                 await submit_service_questionnaire(session)
-                confirmation_text = summary.client_confirmation_text()
+                tatva_summary = session.flow_state.get("tatva_enquiry_summary")
+                confirmation_text = summary.client_confirmation_text(
+                    tatva_enquiry_summary=tatva_summary if isinstance(tatva_summary, dict) else None,
+                )
                 session.add_message(MessageRole.ASSISTANT, confirmation_text)
                 await log_event("SUMMARY_GENERATED", session_id=session.session_id,
                                 data={"lead_score": session.lead_score, "channel": channel})
