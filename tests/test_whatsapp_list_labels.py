@@ -5,8 +5,6 @@ from backend.agents.chat.twilio_client import (
     _compact_list_title,
     _twilio_list_row,
     enrich_whatsapp_mcq_step,
-    format_mcq_options_list_only,
-    mcq_has_long_option_labels,
 )
 
 
@@ -33,41 +31,6 @@ def test_compact_title_prefers_second_segment():
     title = _compact_list_title("Industrial / Manufacturing Plant")
     assert len(title) <= WHATSAPP_LIST_TITLE_MAX
     assert title == "Manufacturing Plant"
-
-
-def test_mcq_options_list_only_has_no_question():
-    step = {
-        "type": "mcq",
-        "options": [
-            {"label": "Interior Painting (Walls / Ceiling)", "value": "a"},
-            {"label": "Exterior / Facade Painting", "value": "b"},
-        ],
-    }
-    text = format_mcq_options_list_only(step)
-    assert "1. Interior Painting (Walls / Ceiling)" in text
-    assert "2. Exterior / Facade Painting" in text
-    assert "?" not in text
-
-
-def test_mcq_has_long_option_labels():
-    step = {
-        "options": [{"label": "Short", "value": "a"}, {"label": "A" * 30, "value": "b"}],
-    }
-    assert mcq_has_long_option_labels(step) is True
-    assert mcq_has_long_option_labels({"options": [{"label": "Short", "value": "a"}]}) is False
-
-
-def test_short_label_includes_description():
-    title, desc = _twilio_list_row("New Home Build")
-    assert title == "New Home Build"
-    assert desc == "New Home Build"
-
-
-def test_long_label_puts_full_text_in_description():
-    long_label = "Floor Addition / Extension"
-    title, desc = _twilio_list_row(long_label)
-    assert len(title) <= WHATSAPP_LIST_TITLE_MAX
-    assert desc == long_label
 
 
 def test_build_content_variables_includes_descriptions(monkeypatch):

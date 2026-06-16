@@ -70,19 +70,6 @@ async def send_whatsapp_message(to: str, body: str) -> bool:
     return ok
 
 
-async def _send_mcq_options_preview_if_needed(to: str, step: dict[str, Any]) -> None:
-    """Send numbered full option labels before list-picker when titles would be truncated."""
-    if not mcq_has_long_option_labels(step):
-        return
-    preview = format_mcq_options_list_only(step)
-    if not preview:
-        return
-    import asyncio
-
-    await _send_plain(to, preview)
-    await asyncio.sleep(0.5)
-
-
 async def send_context_then_mcq_list(
     to: str,
     context_body: str,
@@ -137,7 +124,6 @@ async def send_whatsapp_flow(to: str, body: str, step: Optional[dict[str, Any]] 
             quick_opts = quick_opts[:opt_cap]
         min_opts = 1 if str(step.get("field", "")) == "__final_review__" else 2
         if min_opts <= len(quick_opts) <= 10:
-            await _send_mcq_options_preview_if_needed(to, step)
             sent = await _send_interactive_options(to, body, quick_opts, step=step)
             if sent:
                 return True
@@ -161,22 +147,6 @@ def _format_mcq_plain_fallback(body: str, step: dict[str, Any]) -> str:
     if any(_is_other_option(o) for o in step.get("options") or []):
         lines.extend(["", "Or type *Other* and describe your requirement."])
     return "\n".join(lines)
-
-
-def format_mcq_options_list_only(step: dict[str, Any]) -> str:
-    """Numbered options only — full labels for a preview before list-picker."""
-    options = [o for o in (step.get("options") or []) if not _is_other_option(o)]
-    if not options:
-        return ""
-    return "\n".join(f"{i}. {opt.get('label', '')}" for i, opt in enumerate(options, 1))
-
-
-def mcq_has_long_option_labels(step: dict[str, Any]) -> bool:
-    return any(
-        len(str(o.get("label") or "")) > WHATSAPP_LIST_TITLE_MAX
-        for o in (step.get("options") or [])
-        if not _is_other_option(o)
-    )
 
 
 def format_mcq_options_display(step: dict[str, Any]) -> str:
@@ -285,7 +255,6 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
             "whatsapp_label": label,
         })
     out["options"] = enriched_options
-    long_labels = any(len(str(o.get("label") or "")) > WHATSAPP_LIST_TITLE_MAX for o in quick_opts)
 
     if out.get("twilio_content_sid"):
         field = str(out.get("field", ""))
