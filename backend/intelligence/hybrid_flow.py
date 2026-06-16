@@ -214,11 +214,11 @@ def invalid_choice_reply(step: dict) -> str:
     if stype == "multi_select":
         hint = "Please reply with one or more option numbers or names from the list below."
 
-    from backend.agents.chat.twilio_client import mcq_uses_interactive_delivery, format_mcq_options_display
+    from backend.agents.chat.twilio_client import mcq_uses_interactive_delivery
 
     if mcq_uses_interactive_delivery(step):
-        options_body = format_mcq_options_display(step)
-        return f"{apology}\n\n{options_body}\n\n{hint}"
+        prompt = str(step.get("prompt") or "Please choose one option.").strip()
+        return f"{apology}\n\n{prompt}\n\n{hint}"
 
     question_body = format_step_message(step, include_stage=False)
     return f"{apology}\n\n{question_body}\n\n{hint}"
