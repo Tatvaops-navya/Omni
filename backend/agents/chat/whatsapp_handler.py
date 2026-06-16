@@ -454,8 +454,9 @@ async def _handle_whatsapp_message_impl(
     if uses_interactive_list:
         prompt_text = str(outbound_step.get("prompt", "")).strip()
         list_prompt = str(outbound_step.get("twilio_list_prompt", "")).strip()
+        field_name = outbound_step.get("field")
         is_service_selection_list = (
-            outbound_step.get("field") == "service_category"
+            field_name == "service_category"
             or outbound_step.get("stage") == "service_selection"
         )
         if is_service_selection_list:
@@ -470,6 +471,20 @@ async def _handle_whatsapp_message_impl(
             await send_whatsapp_flow(
                 to=phone_number,
                 body=list_prompt or prompt_text or "Choose your service",
+                step=outbound_step,
+            )
+            return
+        if field_name in {"preferred_contact_time", "willing_to_create_project"}:
+            # For these client-detail MCQs, only send the interactive template without
+            # repeating the question and numbered options as plain text.
+            fallback_body = (
+                "Preferred contact time?"
+                if field_name == "preferred_contact_time"
+                else "Would you like to proceed with creating your project?"
+            )
+            await send_whatsapp_flow(
+                to=phone_number,
+                body=list_prompt or prompt_text or fallback_body,
                 step=outbound_step,
             )
             return
