@@ -63,6 +63,35 @@ RESIDENTIAL_API_QUESTIONS = [
 ]
 
 
+def test_build_steps_enriches_order_mcq_with_descriptions(monkeypatch):
+    from backend.config import get_settings
+
+    monkeypatch.setenv("TWILIO_MCQ_LIST_5_CONTENT_SID", "HXtest5row")
+    get_settings.cache_clear()
+
+    five_option_question = {
+        "_id": "q1",
+        "questionText": "What type of residential construction project are you planning?",
+        "type": "mcq",
+        "options": [
+            {"label": "New Home Build", "value": "new home build"},
+            {"label": "Floor Addition / Extension", "value": "floor addition"},
+            {"label": "Structural Repair / Retrofit", "value": "structural repair"},
+            {"label": "Farmhouse / Villa Construction", "value": "farmhouse"},
+            {"label": "Commercial", "value": "commercial"},
+        ],
+        "isRequired": True,
+        "isActive": True,
+        "displayOrder": 1,
+        "submitKey": "order_1",
+    }
+    steps = build_steps_from_api_questions([five_option_question])
+    step = steps[0]
+    assert step["twilio_content_sid"] == "HXtest5row"
+    assert step.get("twilio_list_slots") == 5
+    assert step.get("twilio_list_use_descriptions") is True
+
+
 def test_transform_api_question_mcq():
     step = transform_api_question(RESIDENTIAL_API_QUESTIONS[0])
     assert step["type"] == "mcq"

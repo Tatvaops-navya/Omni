@@ -81,3 +81,72 @@ def test_stage_advances_one_at_a_time():
     after = se.fs_current_stage(session)
     assert before == "client_details"
     assert after == "client_details"
+
+
+def test_valid_gmail_address_accepted():
+    assert se.is_valid_gmail_address("vidya@gmail.com")
+    assert se.is_valid_gmail_address("Vidya.Moolehatty@gmail.com")
+    assert se.mark_field_validated(
+        Session(session_id="t", phone_number="+1", conversation_stage=ConversationStage.ROUTING),
+        "email",
+        "vidya@gmail.com",
+    )
+
+
+def test_invalid_email_rejected():
+    assert not se.is_valid_gmail_address("vidyajdnuhh")
+    assert not se.is_valid_gmail_address("name@yahoo.com")
+    assert not se.is_valid_gmail_address("@gmail.com")
+    session = Session(session_id="t", phone_number="+1", conversation_stage=ConversationStage.ROUTING)
+    assert not se.mark_field_validated(session, "email", "vidyajdnuhh")
+
+
+def test_email_skip_still_allowed():
+    session = Session(session_id="t", phone_number="+1", conversation_stage=ConversationStage.ROUTING)
+    assert se.mark_field_validated(session, "email", "")
+    assert session.extracted_fields.get("email") == ""
+
+
+def test_random_text_at_email_step_does_not_advance():
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+919999999999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Vidya"),
+        ("city", "Mysore"),
+        ("property_location", "Mysore, Kuvempunagar"),
+    ):
+        se.mark_field_validated(session, field, value)
+    se.reconcile_session(session)
+
+    reply, handled = hybrid_flow.process_hybrid_turn(session, "vidyajdnuhh")
+    assert handled is True
+    assert reply is not None
+    assert "valid Gmail address" in reply
+    assert not se.field_is_complete(session, "email")
+
+
+def test_gmail_at_email_step_is_accepted():
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+919999999999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Vidya"),
+        ("city", "Mysore"),
+        ("property_location", "Mysore, Kuvempunagar"),
+    ):
+        se.mark_field_validated(session, field, value)
+    se.reconcile_session(session)
+
+    reply, handled = hybrid_flow.process_hybrid_turn(session, "vidya@gmail.com")
+    assert handled is True
+    assert se.field_is_complete(session, "email")
+    assert session.extracted_fields.get("email") == "vidya@gmail.com"

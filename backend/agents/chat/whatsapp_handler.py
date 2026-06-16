@@ -22,6 +22,7 @@ from backend.storage import supabase_store
 from backend.storage.media_store import save_attachment
 from backend.agents.chat.twilio_client import (
     enrich_whatsapp_mcq_step,
+    format_mcq_options_display,
     send_context_then_mcq_list,
     send_whatsapp_message,
     send_whatsapp_flow,
@@ -472,7 +473,7 @@ async def _handle_whatsapp_message_impl(
                 step=outbound_step,
             )
             return
-        # Other interactive lists: transition text first, then the list-picker body.
+        # Other interactive lists: transition, full options text, then list-picker.
         if reply:
             cleaned = reply
             for chunk in (prompt_text, list_prompt):
@@ -480,7 +481,12 @@ async def _handle_whatsapp_message_impl(
                     cleaned = cleaned.replace(chunk, "").strip()
             if cleaned:
                 await send_whatsapp_message(to=phone_number, body=cleaned)
-        reply = list_prompt or prompt_text or "Please choose one option."
+                await asyncio.sleep(1.0)
+        options_display = format_mcq_options_display(outbound_step)
+        if options_display:
+            await send_whatsapp_message(to=phone_number, body=options_display)
+            await asyncio.sleep(1.0)
+        reply = "Tap *Choose option* below to select your answer."
     await send_whatsapp_flow(
         to=phone_number,
         body=reply,

@@ -101,6 +101,8 @@ def _attach_mcq_list_delivery(out: dict, sid: str, step: dict) -> dict:
         or field == "willing_to_create_project"
     ):
         out["twilio_list_slots"] = count
+        if sid != CONTACT_TIME_TWILIO_CONTENT_SID:
+            out["twilio_list_use_descriptions"] = True
     return out
 
 
@@ -207,7 +209,7 @@ def build_client_details_steps() -> list[dict]:
         {"id": "cd_name", "stage": "client_details", "type": "descriptive", "field": "client_name", "prompt": "What is your full name?"},
         {"id": "cd_city", "stage": "client_details", "type": "descriptive", "field": "city", "prompt": "Which city are you located in?"},
         {"id": "cd_property_loc", "stage": "client_details", "type": "descriptive", "field": "property_location", "prompt": "Where is your property located? (City, Locality)"},
-        {"id": "cd_email", "stage": "client_details", "type": "descriptive", "field": "email", "prompt": "Email address (optional). You can type *skip*.", "optional": True},
+        {"id": "cd_email", "stage": "client_details", "type": "descriptive", "field": "email", "prompt": "Email address (optional). Enter your *@gmail.com* email or reply *skip*.", "optional": True},
         _enrich_mcq_step({
             "id": "cd_contact_time",
             "stage": "client_details",
@@ -226,11 +228,14 @@ def build_client_details_steps() -> list[dict]:
             "stage": "client_details",
             "type": "mcq",
             "field": "willing_to_create_project",
-            "prompt": "Are you willing to create a project?",
-            "twilio_list_prompt": "Are you willing to create a project?",
+            "prompt": (
+                "Would you like to proceed with creating your project? "
+                "Once created, a dedicated Relationship Manager will guide you through every step."
+            ),
+            "twilio_list_prompt": "Would you like to proceed with creating your project?",
             "options": [
-                {"label": "Yes", "value": "yes"},
-                {"label": "No", "value": "no"},
+                {"label": "Yes, Create My Project", "value": "yes"},
+                {"label": "No, I'm Just Exploring", "value": "no"},
             ],
         }),
     ]

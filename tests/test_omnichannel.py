@@ -382,8 +382,8 @@ def test_willing_to_create_project_follows_contact_time():
     fields = [s["field"] for s in steps]
     assert fields.index("preferred_contact_time") < fields.index("willing_to_create_project")
     step = next(s for s in steps if s["field"] == "willing_to_create_project")
-    assert step["prompt"] == "Are you willing to create a project?"
-    assert [o["label"] for o in step["options"]] == ["Yes", "No"]
+    assert step["prompt"].startswith("Would you like to proceed with creating your project?")
+    assert [o["label"] for o in step["options"]] == ["Yes, Create My Project", "No, I'm Just Exploring"]
 
 
 def test_willing_to_create_project_uses_two_row_list(monkeypatch):

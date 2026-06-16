@@ -176,6 +176,14 @@ def format_multi_select_message(step: dict) -> str:
     return format_mcq_message(step)
 
 
+def invalid_email_reply() -> str:
+    return (
+        "That doesn't look like a valid Gmail address.\n\n"
+        "Please enter an email ending with *@gmail.com* (e.g. name@gmail.com), "
+        "or reply *skip* to continue without email."
+    )
+
+
 def invalid_choice_reply(step: dict) -> str:
     """
     Politely reject input that does not match MCQ options and re-ask the current question.
@@ -187,15 +195,11 @@ def invalid_choice_reply(step: dict) -> str:
     if stype == "multi_select":
         hint = "Please reply with one or more option numbers or names from the list below."
 
-    from backend.agents.chat.twilio_client import mcq_uses_interactive_delivery
+    from backend.agents.chat.twilio_client import mcq_uses_interactive_delivery, format_mcq_options_display
 
     if mcq_uses_interactive_delivery(step):
-        question = (
-            step.get("twilio_list_prompt")
-            or step.get("prompt")
-            or "Please choose one option."
-        )
-        return f"{apology}\n\n{question}\n\n{hint}"
+        options_body = format_mcq_options_display(step)
+        return f"{apology}\n\n{options_body}\n\n{hint}"
 
     question_body = format_step_message(step, include_stage=False)
     return f"{apology}\n\n{question_body}\n\n{hint}"
@@ -209,7 +213,7 @@ def format_step_message(step: dict, *, include_stage: bool = True) -> str:
             parts.extend([bridge, ""])
     if is_text_only_step(step):
         body = step.get("prompt", "Please type your answer.")
-        if step.get("optional"):
+        if step.get("optional") and "skip" not in body.lower():
             body += "\n\n(Reply *skip* if not applicable.)"
     elif step.get("type") == "mcq":
         body = format_mcq_message(step)
@@ -365,6 +369,10 @@ def process_hybrid_turn(
             msg = _complete_field(session, field, "")
             return (msg or _prompt_continue(session), True)
         if text and text.lower() not in _SKIP_WORDS:
+            if field == "email" and not se.is_valid_gmail_address(text):
+                return (invalid_email_reply(), True)
+            if field == "email":
+                text = text.lower()
             msg = _complete_field(session, field, text)
             return (msg or _prompt_continue(session), True)
         return (format_step_message(step), True)
