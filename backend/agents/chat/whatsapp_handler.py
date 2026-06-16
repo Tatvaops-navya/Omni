@@ -439,7 +439,6 @@ async def _handle_whatsapp_message_impl(
     uses_interactive_list = (
         outbound_step
         and outbound_step.get("type") == "mcq"
-        and not outbound_step.get("force_plain_mcq")
         and (
             outbound_step.get("twilio_content_sid")
             or outbound_step.get("use_dynamic_list")

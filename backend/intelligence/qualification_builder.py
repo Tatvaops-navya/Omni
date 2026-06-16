@@ -365,8 +365,17 @@ def format_final_review(session, *, include_footer: bool | None = None) -> str:
 def _question_review_label(step: dict) -> str:
     prompt = str(step.get("prompt") or "").strip()
     if prompt:
-        return prompt.split("\n")[0].strip()
-    return str(step.get("field") or "").replace("_", " ").title()
+        text = prompt.split("\n")[0].strip()
+    else:
+        text = str(step.get("field") or "").replace("_", " ").title()
+    return text.rstrip("?. ").strip()
+
+
+def _requirement_review_line(question: str, answer: str) -> str:
+    """Single requirement row: Question - Answer (no trailing ? or colon clutter)."""
+    q = (question or "").strip().rstrip("?. ").strip()
+    a = (answer or "—").strip()
+    return f"- {q} - {a}"
 
 
 def _format_requirements_review(session, *, service_key: str = "") -> list[str]:
@@ -379,14 +388,14 @@ def _format_requirements_review(session, *, service_key: str = "") -> list[str]:
             continue
         label = _question_review_label(step)
         value = _humanize(field, ef.get(field), service_category=service_key)
-        lines.append(f"- {label}: {value}")
+        lines.append(_requirement_review_line(label, value))
     if lines:
         return lines
     return [
-        f"- Requirement 1: {_humanize('service_q1', ef.get('service_q1'), service_category=service_key)}",
-        f"- Requirement 2: {_humanize('service_q2', ef.get('service_q2'), service_category=service_key)}",
-        f"- Requirement 3: {_humanize('service_q3', ef.get('service_q3'), service_category=service_key)}",
-        f"- Additional notes: {_humanize('service_q4', ef.get('service_q4'), service_category=service_key)}",
+        _requirement_review_line("Requirement 1", _humanize("service_q1", ef.get("service_q1"), service_category=service_key)),
+        _requirement_review_line("Requirement 2", _humanize("service_q2", ef.get("service_q2"), service_category=service_key)),
+        _requirement_review_line("Requirement 3", _humanize("service_q3", ef.get("service_q3"), service_category=service_key)),
+        _requirement_review_line("Additional notes", _humanize("service_q4", ef.get("service_q4"), service_category=service_key)),
     ]
 
 
