@@ -22,7 +22,6 @@ from backend.storage import supabase_store
 from backend.storage.media_store import save_attachment
 from backend.agents.chat.twilio_client import (
     enrich_whatsapp_mcq_step,
-    format_mcq_options_display,
     send_context_then_mcq_list,
     send_whatsapp_message,
     send_whatsapp_flow,
@@ -463,7 +462,9 @@ async def _handle_whatsapp_message_impl(
             transition = (reply or "").strip()
             for chunk in (prompt_text, list_prompt):
                 if chunk:
-                    transition = transition.replace(chunk, "").strip()
+                    idx = transition.find(chunk)
+                    if idx != -1:
+                        transition = transition[:idx].strip()
             if not transition:
                 transition = hybrid_flow.SERVICE_SELECTION_TRANSITION
             await send_whatsapp_message(to=phone_number, body=transition)
@@ -474,34 +475,18 @@ async def _handle_whatsapp_message_impl(
                 step=outbound_step,
             )
             return
-        if field_name in {"preferred_contact_time", "willing_to_create_project"}:
-            # For these client-detail MCQs, only send the interactive template without
-            # repeating the question and numbered options as plain text.
-            fallback_body = (
-                "Preferred contact time?"
-                if field_name == "preferred_contact_time"
-                else "Would you like to proceed with creating your project?"
-            )
-            await send_whatsapp_flow(
-                to=phone_number,
-                body=list_prompt or prompt_text or fallback_body,
-                step=outbound_step,
-            )
-            return
-        # Other interactive lists: transition, full options text, then list-picker.
+        # For all other interactive lists, avoid repeating the question/options as plain text.
         if reply:
             cleaned = reply
             for chunk in (prompt_text, list_prompt):
                 if chunk:
-                    cleaned = cleaned.replace(chunk, "").strip()
+                    idx = cleaned.find(chunk)
+                    if idx != -1:
+                        cleaned = cleaned[:idx].strip()
             if cleaned:
                 await send_whatsapp_message(to=phone_number, body=cleaned)
                 await asyncio.sleep(1.0)
-        options_display = format_mcq_options_display(outbound_step)
-        if options_display:
-            await send_whatsapp_message(to=phone_number, body=options_display)
-            await asyncio.sleep(1.0)
-        reply = "Tap *Choose option* below to select your answer."
+        reply = list_prompt or prompt_text or "Tap *Choose option* below to select your answer."
     await send_whatsapp_flow(
         to=phone_number,
         body=reply,

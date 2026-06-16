@@ -30,7 +30,8 @@ PROJECT_DECLINED_FAREWELL = (
     "Thank you for sharing your details with TatvaOps.\n\n"
     "We understand you are not looking to start a project at this time. "
     "Whenever you are ready, we will be glad to assist you.\n\n"
-    "Wishing you all the best."
+    "Wishing you all the best.\n\n"
+    "If you would like to start a new enquiry, please restart after 5 minutes."
 )
 
 
@@ -371,8 +372,6 @@ def process_hybrid_turn(
         if text and text.lower() not in _SKIP_WORDS:
             if field == "email" and not se.is_valid_gmail_address(text):
                 return (invalid_email_reply(), True)
-            if field == "email":
-                text = text.lower()
             msg = _complete_field(session, field, text)
             return (msg or _prompt_continue(session), True)
         return (format_step_message(step), True)
@@ -433,9 +432,13 @@ def append_first_step_to_handoff(session: Session, handoff_text: str) -> str:
     step = get_current_step(session)
     if not step:
         return handoff_text
-    if step.get("type") == "mcq" and (step.get("twilio_content_sid") or step.get("use_dynamic_list")):
-        # Keep handoff clean; interactive list will be sent as the next message payload.
-        return handoff_text
+    if step.get("type") == "mcq":
+        # Enrich first so dynamic list metadata is considered before appending plain text.
+        from backend.agents.chat.twilio_client import enrich_whatsapp_mcq_step
+        enriched = enrich_whatsapp_mcq_step(step)
+        if enriched and (enriched.get("twilio_content_sid") or enriched.get("use_dynamic_list")):
+            # Keep handoff clean; interactive list will be sent as the next message payload.
+            return handoff_text
     if step.get("stage"):
         session.flow_state["last_stage_shown"] = step["stage"]
     return f"{handoff_text}\n\n{format_step_message(step)}"
