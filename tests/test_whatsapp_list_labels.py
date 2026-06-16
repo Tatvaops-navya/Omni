@@ -50,7 +50,7 @@ def test_build_content_variables_includes_descriptions(monkeypatch):
     assert len(variables["option_2_label"]) <= WHATSAPP_LIST_TITLE_MAX
 
 
-def test_long_labels_force_plain_mcq(monkeypatch):
+def test_long_labels_keep_interactive_mcq(monkeypatch):
     monkeypatch.setattr(
         "backend.agents.chat.twilio_client.settings.twilio_whatsapp_quick_reply",
         True,
@@ -72,7 +72,8 @@ def test_long_labels_force_plain_mcq(monkeypatch):
         ],
     }
     enriched = enrich_whatsapp_mcq_step(step)
-    assert enriched.get("force_plain_mcq") is True
+    assert enriched.get("force_plain_mcq") is not True
+    assert enriched.get("twilio_content_sid") == "HXtest5row"
 
 
 def test_format_mcq_options_display_shows_all_options():

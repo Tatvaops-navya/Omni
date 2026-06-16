@@ -255,11 +255,6 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
         })
     out["options"] = enriched_options
     long_labels = any(len(str(o.get("label") or "")) > WHATSAPP_LIST_TITLE_MAX for o in quick_opts)
-    if long_labels:
-        # WhatsApp list row titles are capped to 24 chars in picker UIs; for long
-        # options prefer plain numbered text so the full option labels are visible.
-        out["force_plain_mcq"] = True
-        return out
 
     if out.get("twilio_content_sid"):
         field = str(out.get("field", ""))
@@ -276,8 +271,6 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
             out["require_content_variables"] = True
         if _template_supports_row_descriptions(out):
             out["twilio_list_use_descriptions"] = True
-        elif long_labels:
-            out["force_plain_mcq"] = True
         return out
 
     variable_sid = _variable_mcq_list_sid(len(quick_opts))
