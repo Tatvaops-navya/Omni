@@ -148,6 +148,20 @@ def _format_mcq_plain_fallback(body: str, step: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_mcq_options_display(step: dict[str, Any]) -> str:
+    """Question + numbered options — full text for chat before a list-picker."""
+    options = [o for o in (step.get("options") or []) if not _is_other_option(o)]
+    if not options:
+        return str(step.get("prompt") or "").strip()
+    prompt = str(step.get("prompt") or "Please choose one option.").strip()
+    lines = [prompt, ""]
+    for i, opt in enumerate(options, 1):
+        lines.append(f"{i}. {opt.get('label', '')}")
+    if any(_is_other_option(o) for o in step.get("options") or []):
+        lines.extend(["", "Or type *Other* and describe your requirement."])
+    return "\n".join(lines)
+
+
 def _resolve_content_sid(step: dict[str, Any]) -> str:
     sid = str(step.get("twilio_content_sid") or "").strip()
     if sid:
@@ -334,12 +348,12 @@ def _template_supports_row_descriptions(step: dict[str, Any]) -> bool:
 
 def _twilio_list_row(text: str) -> tuple[str, str]:
     """
-    WhatsApp list rows: title max 24 chars; use description (max 72) for full option text.
+    WhatsApp list rows: title max 24 chars; description (max 72) carries full option text.
     """
     full = (text or "").strip() or "Option"
-    if len(full) <= WHATSAPP_LIST_TITLE_MAX:
-        return full, ""
     description = full[:WHATSAPP_LIST_DESCRIPTION_MAX]
+    if len(full) <= WHATSAPP_LIST_TITLE_MAX:
+        return full, description
     title = full[:WHATSAPP_LIST_TITLE_MAX]
     if " " in title:
         trimmed = title.rsplit(" ", 1)[0]

@@ -7,10 +7,10 @@ from backend.agents.chat.twilio_client import (
 )
 
 
-def test_short_label_no_description():
+def test_short_label_includes_description():
     title, desc = _twilio_list_row("New Home Build")
     assert title == "New Home Build"
-    assert desc == ""
+    assert desc == "New Home Build"
 
 
 def test_long_label_puts_full_text_in_description():
@@ -45,6 +45,30 @@ def test_build_content_variables_includes_descriptions(monkeypatch):
     assert enriched.get("twilio_list_use_descriptions") is True
     variables = _build_content_variables(enriched, enriched["options"])
     assert variables["option_1_label"] == "New Home Build"
-    assert variables["option_1_description"] == ""
+    assert variables["option_1_description"] == "New Home Build"
     assert variables["option_2_description"] == "Floor Addition / Extension"
     assert len(variables["option_2_label"]) <= WHATSAPP_LIST_TITLE_MAX
+
+
+def test_format_mcq_options_display_shows_all_options():
+    from backend.agents.chat.twilio_client import format_mcq_options_display
+
+    step = {
+        "type": "mcq",
+        "field": "order_1",
+        "prompt": "What type of residential construction project are you planning?",
+        "options": [
+            {"label": "New Home Build", "value": "new_home_build"},
+            {"label": "Floor Addition / Extension", "value": "floor_addition_extension"},
+            {"label": "Structural Repair / Retrofit", "value": "structural_repair_retrofit"},
+            {"label": "Farmhouse / Villa Construction", "value": "farmhouse_villa_construction"},
+            {"label": "Commercial", "value": "commercial"},
+        ],
+    }
+    text = format_mcq_options_display(step)
+    assert "What type of residential construction project are you planning?" in text
+    assert "1. New Home Build" in text
+    assert "2. Floor Addition / Extension" in text
+    assert "3. Structural Repair / Retrofit" in text
+    assert "4. Farmhouse / Villa Construction" in text
+    assert "5. Commercial" in text

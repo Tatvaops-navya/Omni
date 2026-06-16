@@ -3,10 +3,13 @@ Deterministic stage-based qualification workflow.
 Stages advance ONLY when every required field has a valid value.
 """
 from __future__ import annotations
+import re
 from typing import Any, Optional
 
 from backend.schemas.service import ServiceCategory
 from backend.schemas.session import Session, ConversationStage
+
+_GMAIL_ADDRESS_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@gmail\.com$", re.IGNORECASE)
 
 STAGE_ORDER: list[str] = [
     "ava_intro",
@@ -57,11 +60,24 @@ def required_fields_for_stage(session: Session, stage: str) -> list[str]:
     return list(STAGE_REQUIRED_FIELDS.get(stage, []))
 
 
+def is_valid_gmail_address(value: Any) -> bool:
+    """True when value is a non-empty *@gmail.com address."""
+    s = str(value or "").strip()
+    if not s:
+        return False
+    return _GMAIL_ADDRESS_RE.fullmatch(s) is not None
+
+
 def is_valid_field_value(value: Any, *, field: str = "") -> bool:
     if value is None:
         return False
     if field in OPTIONAL_FIELDS and value in ("", None):
         return True
+    if field == "email":
+        s = str(value).strip()
+        if not s:
+            return True
+        return is_valid_gmail_address(s)
     if field == "attachments" or _is_file_upload_field(field):
         if str(value).lower() in ("skipped", "skip", "none"):
             return True
