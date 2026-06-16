@@ -27,6 +27,7 @@ def test_client_confirmation_excludes_internal_summary_fields():
     )
 
     text = summary.client_confirmation_text()
+    address_cta = summary.client_platform_address_cta_text()
 
     assert "TatvaOps" in text
     assert "Your enquiry has been successfully received" in text
@@ -44,8 +45,10 @@ def test_client_confirmation_excludes_internal_summary_fields():
     assert "Whitefield" in text
     assert "Location:" in text
     assert "Property location:" in text
-    assert "https://tatvaops.com/" in text
-    assert "add your address" in text.lower()
+    assert "https://tatvaops.com/" not in text
+    assert "add your address" not in text.lower()
+    assert "https://tatvaops.com/" in address_cta
+    assert "add your address" in address_cta.lower()
 
 
 def test_client_confirmation_separate_city_and_property_location():

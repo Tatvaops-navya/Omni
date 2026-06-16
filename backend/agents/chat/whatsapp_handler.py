@@ -356,6 +356,9 @@ async def _handle_whatsapp_message_impl(
         confirmation = (agent_response.text or "").strip()
         if confirmation:
             await send_whatsapp_message(to=phone_number, body=confirmation)
+        follow_up = (agent_response.follow_up_text or "").strip()
+        if follow_up:
+            await send_whatsapp_message(to=phone_number, body=follow_up)
         await log_event(
             "CONVERSATION_ENDED",
             session_id=session_id,
