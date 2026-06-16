@@ -4,7 +4,7 @@ EVA routing + specialized consultants + media uploads.
 """
 from __future__ import annotations
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response, BackgroundTasks
@@ -39,6 +39,8 @@ from backend.utils.session_idle import (
 
 router = APIRouter()
 _settings = get_settings()
+MEDIA_UPLOAD_DEBOUNCE_SEC = 2.5
+FILE_UPLOAD_STRAGGLER_WINDOW_SEC = 8.0
 
 
 def _normalize_restart_command(message: str) -> str:
@@ -84,6 +86,100 @@ async def _handle_restart45(session_id: str, phone_number: str) -> str:
         se.start_client_stage(session)
         await save_session(session)
     return "Session reset.\n\n" + intro
+
+
+def _collect_twilio_media_items(form_params: dict[str, str]) -> list[tuple[str, str]]:
+    try:
+        num_media = int(form_params.get("NumMedia") or 0)
+    except ValueError:
+        num_media = 0
+    items: list[tuple[str, str]] = []
+    for i in range(num_media):
+        url = (form_params.get(f"MediaUrl{i}") or "").strip()
+        if url:
+            items.append((url, form_params.get(f"MediaContentType{i}") or ""))
+    return items
+
+
+def _file_upload_recently_completed(session: Session) -> bool:
+    completed_at = session.flow_state.get("file_upload_completed_at")
+    if not completed_at:
+        return False
+    try:
+        finished = datetime.fromisoformat(str(completed_at))
+    except ValueError:
+        return False
+    return datetime.utcnow() - finished < timedelta(seconds=FILE_UPLOAD_STRAGGLER_WINDOW_SEC)
+
+
+async def _send_file_upload_follow_up(
+    session: Session,
+    phone_number: str,
+    *,
+    file_ack: str = "Thank you! We received your file.",
+) -> None:
+    if edit_flow.awaiting_file_upload(session):
+        reply, outbound_step, _handled = edit_flow.complete_file_upload(session)
+        combined = f"{file_ack}\n\n{reply}".strip()
+        await send_context_then_mcq_list(phone_number, combined, outbound_step)
+        return
+
+    follow_up = hybrid_flow.complete_attachment_upload(session)
+    outbound_step = (
+        get_final_review_outbound_step(session)
+        if se.fs_current_stage(session) == "final_review"
+        else hybrid_flow.get_current_step(session)
+    )
+    if outbound_step and outbound_step.get("type") == "mcq":
+        prompt_text = str(outbound_step.get("prompt", "")).strip()
+        list_prompt = str(outbound_step.get("twilio_list_prompt", "")).strip()
+        cleaned_follow_up = (follow_up or "").strip()
+        for chunk in (prompt_text, list_prompt):
+            if chunk:
+                idx = cleaned_follow_up.find(chunk)
+                if idx != -1:
+                    cleaned_follow_up = cleaned_follow_up[:idx].strip()
+        follow_up = cleaned_follow_up
+    count = len(session.attachments)
+    if count > 1:
+        file_ack = f"Thank you! We received your {count} files."
+    combined = f"{file_ack}\n\n{follow_up}".strip() if follow_up else file_ack
+    await send_context_then_mcq_list(phone_number, combined, outbound_step)
+
+
+async def _debounced_file_upload_follow_up(
+    session_id: str,
+    phone_number: str,
+    batch_version: int,
+) -> None:
+    await asyncio.sleep(MEDIA_UPLOAD_DEBOUNCE_SEC)
+    session = await get_session(session_id)
+    if not session:
+        return
+    if session.flow_state.get("media_upload_batch_version") != batch_version:
+        return
+    if session.flow_state.get("media_upload_follow_up_sent") == batch_version:
+        return
+
+    hybrid_flow.init_flow(session)
+    if not edit_flow.awaiting_file_upload(session) and not hybrid_flow.pending_file_upload(session):
+        return
+
+    session.flow_state["media_upload_follow_up_sent"] = batch_version
+    session.flow_state["file_upload_completed_at"] = datetime.utcnow().isoformat()
+    await save_session(session)
+    await supabase_store.upsert_session_log(session)
+    await _send_file_upload_follow_up(session, phone_number)
+    await save_session(session)
+    await supabase_store.upsert_session_log(session)
+
+
+async def _schedule_file_upload_follow_up(session: Session, phone_number: str) -> None:
+    batch_version = int(session.flow_state.get("media_upload_batch_version") or 0) + 1
+    session.flow_state["media_upload_batch_version"] = batch_version
+    session.flow_state.pop("media_upload_follow_up_sent", None)
+    await save_session(session)
+    asyncio.create_task(_debounced_file_upload_follow_up(session.session_id, phone_number, batch_version))
 
 
 def _twilio_validation_url(request: Request) -> str:
@@ -135,8 +231,9 @@ async def whatsapp_webhook(
         NumMedia = int(form_params.get("NumMedia") or 0)
     except ValueError:
         NumMedia = 0
-    MediaUrl0 = form_params.get("MediaUrl0")
-    MediaContentType0 = form_params.get("MediaContentType0")
+    media_items = _collect_twilio_media_items(form_params)
+    MediaUrl0 = media_items[0][0] if media_items else form_params.get("MediaUrl0")
+    MediaContentType0 = media_items[0][1] if media_items else (form_params.get("MediaContentType0") or "")
 
     if not From:
         raise HTTPException(status_code=400, detail="Missing From")
@@ -174,8 +271,7 @@ async def whatsapp_webhook(
         phone_number,
         user_message,
         NumMedia,
-        MediaUrl0,
-        MediaContentType0 or "",
+        media_items,
         ButtonText or "",
         ButtonPayload or "",
         resolved_list_id,
@@ -192,16 +288,15 @@ async def handle_whatsapp_message_bg(
     phone_number: str,
     user_message: str,
     num_media: int = 0,
-    media_url: Optional[str] = None,
-    media_content_type: str = "",
+    media_items: list[tuple[str, str]] | None = None,
     button_text: str = "",
     button_payload: str = "",
     list_id: str = "",
 ):
     try:
         await _handle_whatsapp_message_impl(
-            session_id, phone_number, user_message, num_media, media_url,
-            media_content_type, button_text, button_payload, list_id,
+            session_id, phone_number, user_message, num_media, media_items or [],
+            button_text, button_payload, list_id,
         )
     except Exception as e:
         import traceback
@@ -216,12 +311,12 @@ async def _handle_whatsapp_message_impl(
     phone_number: str,
     user_message: str,
     num_media: int = 0,
-    media_url: Optional[str] = None,
-    media_content_type: str = "",
+    media_items: list[tuple[str, str]] | None = None,
     button_text: str = "",
     button_payload: str = "",
     list_id: str = "",
 ):
+    media_items = media_items or []
     session = await get_session(session_id)
 
     # In-progress chat idle > N minutes — reset and send EVA intro; discard stale reply.
@@ -281,46 +376,33 @@ async def _handle_whatsapp_message_impl(
             return
 
     # Media upload handling (stage 9 — attachments, or edit-details file update)
-    if num_media > 0 and media_url:
-        meta = await save_attachment(session, media_url, media_content_type)
-        if meta:
-            hybrid_flow.init_flow(session)
-            file_ack = "Thank you! We received your file."
-            if edit_flow.awaiting_file_upload(session):
-                reply, outbound_step, _handled = edit_flow.complete_file_upload(session)
-                await save_session(session)
+    if num_media > 0 and media_items:
+        hybrid_flow.init_flow(session)
+        saved_any = False
+        for media_url, media_content_type in media_items:
+            meta = await save_attachment(session, media_url, media_content_type)
+            if meta:
+                saved_any = True
+        if saved_any:
+            if edit_flow.awaiting_file_upload(session) or hybrid_flow.pending_file_upload(session):
+                await _schedule_file_upload_follow_up(session, phone_number)
                 await supabase_store.upsert_session_log(session)
-                combined = f"{file_ack}\n\n{reply}".strip()
-                await send_context_then_mcq_list(phone_number, combined, outbound_step)
                 return
-            if hybrid_flow.pending_file_upload(session):
-                follow_up = hybrid_flow.complete_attachment_upload(session)
+            if _file_upload_recently_completed(session):
+                hybrid_flow.refresh_attachment_field_count(session)
                 await save_session(session)
                 await supabase_store.upsert_session_log(session)
-                outbound_step = (
-                    get_final_review_outbound_step(session)
-                    if se.fs_current_stage(session) == "final_review"
-                    else hybrid_flow.get_current_step(session)
-                )
-                if outbound_step and outbound_step.get("type") == "mcq":
-                    prompt_text = str(outbound_step.get("prompt", "")).strip()
-                    list_prompt = str(outbound_step.get("twilio_list_prompt", "")).strip()
-                    cleaned_follow_up = (follow_up or "").strip()
-                    for chunk in (prompt_text, list_prompt):
-                        if chunk:
-                            idx = cleaned_follow_up.find(chunk)
-                            if idx != -1:
-                                cleaned_follow_up = cleaned_follow_up[:idx].strip()
-                    follow_up = cleaned_follow_up
-                combined = f"{file_ack}\n\n{follow_up}".strip() if follow_up else file_ack
-                await send_context_then_mcq_list(phone_number, combined, outbound_step)
                 return
             session.mark_field_complete("has_attachments", True)
             await save_session(session)
-            await send_whatsapp_message(
-                to=phone_number,
-                body=f"{file_ack} Our team will review it with your enquiry.",
+            await supabase_store.upsert_session_log(session)
+            count = len(session.attachments)
+            ack = (
+                f"Thank you! We received your {count} files. Our team will review them with your enquiry."
+                if count > 1
+                else "Thank you! We received your file. Our team will review it with your enquiry."
             )
+            await send_whatsapp_message(to=phone_number, body=ack)
             return
 
     if not user_message:

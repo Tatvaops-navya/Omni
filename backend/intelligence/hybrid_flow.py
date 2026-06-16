@@ -495,6 +495,25 @@ def advance_step(session: Session) -> None:
     se.maybe_advance_current_stage(session)
 
 
+def refresh_attachment_field_count(session: Session) -> None:
+    """Update stored file-step value after additional uploads in the same batch."""
+    se.reconcile_session(session)
+    count = len(session.attachments)
+    value = f"{count} file(s) uploaded" if count else "skipped"
+    field = None
+    step = get_current_step(session)
+    if step and step.get("type") == "file_request":
+        field = step.get("field")
+    if not field:
+        for s in qb.get_service_questionnaire_steps(session):
+            if s.get("type") == "file_request":
+                field = s.get("field")
+                break
+    field = field or "attachments"
+    if field in session.completed_fields or session.extracted_fields.get(field):
+        se.mark_field_validated(session, field, value)
+
+
 def complete_attachment_upload(session: Session) -> str:
     """
     Called after WhatsApp media is saved. Completes the current file step and advances.

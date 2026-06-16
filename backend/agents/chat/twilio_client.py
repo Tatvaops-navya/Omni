@@ -6,6 +6,7 @@ Interactive tap options require Twilio Content templates; falls back to formatte
 from __future__ import annotations
 from typing import Any, Optional
 import json
+import re
 
 from backend.config import get_settings
 
@@ -69,6 +70,19 @@ async def send_whatsapp_message(to: str, body: str) -> bool:
     return ok
 
 
+async def _send_mcq_options_preview_if_needed(to: str, step: dict[str, Any]) -> None:
+    """Send numbered full option labels before list-picker when titles would be truncated."""
+    if not mcq_has_long_option_labels(step):
+        return
+    preview = format_mcq_options_list_only(step)
+    if not preview:
+        return
+    import asyncio
+
+    await _send_plain(to, preview)
+    await asyncio.sleep(0.5)
+
+
 async def send_context_then_mcq_list(
     to: str,
     context_body: str,
@@ -123,6 +137,7 @@ async def send_whatsapp_flow(to: str, body: str, step: Optional[dict[str, Any]] 
             quick_opts = quick_opts[:opt_cap]
         min_opts = 1 if str(step.get("field", "")) == "__final_review__" else 2
         if min_opts <= len(quick_opts) <= 10:
+            await _send_mcq_options_preview_if_needed(to, step)
             sent = await _send_interactive_options(to, body, quick_opts, step=step)
             if sent:
                 return True
@@ -146,6 +161,22 @@ def _format_mcq_plain_fallback(body: str, step: dict[str, Any]) -> str:
     if any(_is_other_option(o) for o in step.get("options") or []):
         lines.extend(["", "Or type *Other* and describe your requirement."])
     return "\n".join(lines)
+
+
+def format_mcq_options_list_only(step: dict[str, Any]) -> str:
+    """Numbered options only — full labels for a preview before list-picker."""
+    options = [o for o in (step.get("options") or []) if not _is_other_option(o)]
+    if not options:
+        return ""
+    return "\n".join(f"{i}. {opt.get('label', '')}" for i, opt in enumerate(options, 1))
+
+
+def mcq_has_long_option_labels(step: dict[str, Any]) -> bool:
+    return any(
+        len(str(o.get("label") or "")) > WHATSAPP_LIST_TITLE_MAX
+        for o in (step.get("options") or [])
+        if not _is_other_option(o)
+    )
 
 
 def format_mcq_options_display(step: dict[str, Any]) -> str:
@@ -352,12 +383,47 @@ def _twilio_list_row(text: str) -> tuple[str, str]:
     description = full[:WHATSAPP_LIST_DESCRIPTION_MAX]
     if len(full) <= WHATSAPP_LIST_TITLE_MAX:
         return full, description
-    title = full[:WHATSAPP_LIST_TITLE_MAX]
+    return _compact_list_title(full), description
+
+
+def _compact_list_title(full: str) -> str:
+    """Build a readable 24-char list row title from a longer option label."""
+    if len(full) <= WHATSAPP_LIST_TITLE_MAX:
+        return full
+
+    if "(" in full and ")" in full:
+        inner = full[full.index("(") + 1 : full.index(")")].strip()
+        if inner and len(inner) <= WHATSAPP_LIST_TITLE_MAX:
+            return inner
+
+    for sep in (" – ", " - ", " / "):
+        if sep in full:
+            parts = [p.strip() for p in full.split(sep) if p.strip()]
+            fitting = [p for p in parts if len(p) <= WHATSAPP_LIST_TITLE_MAX]
+            if fitting:
+                return max(fitting, key=len)
+
+    abbreviated = full
+    for word, abbr in (
+        ("Residential", "Res."),
+        ("Commercial", "Comm."),
+        ("Industrial", "Ind."),
+        ("Agricultural", "Agri."),
+        ("Manufacturing", "Mfg"),
+        ("Property", "Prop."),
+        ("Interior", "Int."),
+        ("Exterior", "Ext."),
+        ("Within", "In"),
+    ):
+        abbreviated = re.sub(rf"\b{re.escape(word)}\b", abbr, abbreviated, flags=re.I)
+    if len(abbreviated) <= WHATSAPP_LIST_TITLE_MAX:
+        return abbreviated.strip()
+
+    title = abbreviated[:WHATSAPP_LIST_TITLE_MAX]
     if " " in title:
-        trimmed = title.rsplit(" ", 1)[0]
-        if len(trimmed) >= 10:
-            title = trimmed
-    return title, description
+        title = title.rsplit(" ", 1)[0]
+    title = title.rstrip("–-/+( ").strip()
+    return title or abbreviated[:WHATSAPP_LIST_TITLE_MAX]
 
 
 def _twilio_list_label(text: str) -> str:
@@ -399,8 +465,7 @@ def _build_content_variables(step: dict[str, Any], options: list[dict[str, Any]]
         title, description = _twilio_list_row(label_src)
         variables[f"option_{i}_label"] = title
         variables[f"option_{i}_value"] = str(opt.get("value") or opt.get("label") or f"opt_{i}").strip()
-        if step.get("twilio_list_use_descriptions") or step.get("use_dynamic_list"):
-            variables[f"option_{i}_description"] = description
+        variables[f"option_{i}_description"] = description
     return variables
 
 
