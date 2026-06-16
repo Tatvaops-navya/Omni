@@ -226,6 +226,8 @@ def display_label(field: str, value: Any, *, service_category: str = "") -> str:
     raw = str(value).strip()
     if not raw:
         return "—"
+    if field == "email":
+        return raw
 
     if field == "service_category":
         return _SERVICE_LABELS.get(raw, _prettify(raw))

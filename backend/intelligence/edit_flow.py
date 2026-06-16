@@ -530,7 +530,7 @@ def process_edit_turn(
             elif field == "email" and not se.is_valid_gmail_address(text):
                 return hybrid_flow.invalid_email_reply(), None, True
             else:
-                value = text.lower() if field == "email" else text
+                value = text
         else:
             return "Unsupported field type for edit.", None, True
 

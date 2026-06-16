@@ -181,7 +181,7 @@ class ConversationController:
             session.add_message(MessageRole.USER, user_message)
             hold = (
                 "Thank you for connecting with TatvaOps. "
-                "Whenever you are ready to start a project, message us anytime."
+                "If you would like to start a new enquiry, please restart after 5 minutes."
             )
             session.add_message(MessageRole.ASSISTANT, hold)
             return AgentResponse(text=hold, session=session)
