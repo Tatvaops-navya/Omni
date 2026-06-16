@@ -297,12 +297,22 @@ async def _handle_whatsapp_message_impl(
                 follow_up = hybrid_flow.complete_attachment_upload(session)
                 await save_session(session)
                 await supabase_store.upsert_session_log(session)
-                combined = f"{file_ack}\n\n{follow_up}".strip()
                 outbound_step = (
                     get_final_review_outbound_step(session)
                     if se.fs_current_stage(session) == "final_review"
-                    else None
+                    else hybrid_flow.get_current_step(session)
                 )
+                if outbound_step and outbound_step.get("type") == "mcq":
+                    prompt_text = str(outbound_step.get("prompt", "")).strip()
+                    list_prompt = str(outbound_step.get("twilio_list_prompt", "")).strip()
+                    cleaned_follow_up = (follow_up or "").strip()
+                    for chunk in (prompt_text, list_prompt):
+                        if chunk:
+                            idx = cleaned_follow_up.find(chunk)
+                            if idx != -1:
+                                cleaned_follow_up = cleaned_follow_up[:idx].strip()
+                    follow_up = cleaned_follow_up
+                combined = f"{file_ack}\n\n{follow_up}".strip() if follow_up else file_ack
                 await send_context_then_mcq_list(phone_number, combined, outbound_step)
                 return
             session.mark_field_complete("has_attachments", True)
@@ -412,6 +422,7 @@ async def _handle_whatsapp_message_impl(
     uses_interactive_list = (
         outbound_step
         and outbound_step.get("type") == "mcq"
+        and not outbound_step.get("force_plain_mcq")
         and (
             outbound_step.get("twilio_content_sid")
             or outbound_step.get("use_dynamic_list")
