@@ -34,6 +34,36 @@ def test_build_content_variables_includes_descriptions(monkeypatch):
         "field": "service_q1",
         "prompt": "What type of project?",
         "options": [
+            {"label": "Home Build", "value": "new_home_build"},
+            {"label": "Addition", "value": "addition"},
+            {"label": "Repair", "value": "repair"},
+            {"label": "Farmhouse", "value": "farmhouse"},
+            {"label": "Commercial", "value": "commercial"},
+        ],
+    }
+    enriched = enrich_whatsapp_mcq_step(step)
+    assert enriched.get("twilio_list_use_descriptions") is True
+    variables = _build_content_variables(enriched, enriched["options"])
+    assert variables["option_1_label"] == "Home Build"
+    assert variables["option_1_description"] == "Home Build"
+    assert variables["option_2_description"] == "Addition"
+    assert len(variables["option_2_label"]) <= WHATSAPP_LIST_TITLE_MAX
+
+
+def test_long_labels_force_plain_mcq(monkeypatch):
+    monkeypatch.setattr(
+        "backend.agents.chat.twilio_client.settings.twilio_whatsapp_quick_reply",
+        True,
+    )
+    monkeypatch.setattr(
+        "backend.agents.chat.twilio_client.settings.twilio_mcq_list_5_content_sid",
+        "HXtest5row",
+    )
+    step = {
+        "type": "mcq",
+        "field": "service_q1",
+        "prompt": "What type of project?",
+        "options": [
             {"label": "New Home Build", "value": "new_home_build"},
             {"label": "Floor Addition / Extension", "value": "floor_addition_extension"},
             {"label": "Structural Repair / Retrofit", "value": "structural_repair_retrofit"},
@@ -42,12 +72,7 @@ def test_build_content_variables_includes_descriptions(monkeypatch):
         ],
     }
     enriched = enrich_whatsapp_mcq_step(step)
-    assert enriched.get("twilio_list_use_descriptions") is True
-    variables = _build_content_variables(enriched, enriched["options"])
-    assert variables["option_1_label"] == "New Home Build"
-    assert variables["option_1_description"] == "New Home Build"
-    assert variables["option_2_description"] == "Floor Addition / Extension"
-    assert len(variables["option_2_label"]) <= WHATSAPP_LIST_TITLE_MAX
+    assert enriched.get("force_plain_mcq") is True
 
 
 def test_format_mcq_options_display_shows_all_options():

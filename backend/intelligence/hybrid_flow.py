@@ -17,6 +17,17 @@ TEXT_ONLY_FIELDS = frozenset({
 })
 
 _SKIP_WORDS = frozenset({"skip", "none", "nil", "-"})
+_DETAILS_UNAVAILABLE_PHRASES = (
+    "i don't have",
+    "i dont have",
+    "don't have",
+    "dont have",
+    "no data",
+    "not sure",
+    "don't know",
+    "dont know",
+    "no idea",
+)
 
 STAGE_BRIDGES = {
     "client_details": "Perfect ✨ Let us start with a few quick details.",
@@ -37,6 +48,13 @@ PROJECT_DECLINED_FAREWELL = (
 
 def _is_project_declined(value: Any) -> bool:
     return str(value or "").strip().lower() in ("no", "n")
+
+
+def _sounds_like_unavailable_detail(text: str) -> bool:
+    low = (text or "").strip().lower()
+    if not low:
+        return False
+    return any(phrase in low for phrase in _DETAILS_UNAVAILABLE_PHRASES)
 
 
 def init_flow(session: Session) -> None:
@@ -373,6 +391,13 @@ def process_hybrid_turn(
             if field == "email" and not se.is_valid_gmail_address(text):
                 return (invalid_email_reply(), True)
             msg = _complete_field(session, field, text)
+            if (
+                msg
+                and stype == "descriptive"
+                and field.startswith("service_q")
+                and _sounds_like_unavailable_detail(text)
+            ):
+                msg = f"That's absolutely fine.\n\n{msg}"
             return (msg or _prompt_continue(session), True)
         return (format_step_message(step), True)
 
