@@ -34,10 +34,17 @@ OFF_TOPIC_KEYWORDS = [
 
 
 class AgentResponse:
-    def __init__(self, text: str, session: Session, summary_generated: bool = False):
+    def __init__(
+        self,
+        text: str,
+        session: Session,
+        summary_generated: bool = False,
+        follow_up_text: str | None = None,
+    ):
         self.text = text
         self.session = session
         self.summary_generated = summary_generated
+        self.follow_up_text = follow_up_text
 
 
 def _is_off_topic(message: str) -> bool:
@@ -234,13 +241,16 @@ class ConversationController:
                 confirmation_text = summary.client_confirmation_text(
                     tatva_enquiry_summary=tatva_summary if isinstance(tatva_summary, dict) else None,
                 )
+                address_cta_text = summary.client_platform_address_cta_text()
                 session.add_message(MessageRole.ASSISTANT, confirmation_text)
+                session.add_message(MessageRole.ASSISTANT, address_cta_text)
                 await log_event("SUMMARY_GENERATED", session_id=session.session_id,
                                 data={"lead_score": session.lead_score, "channel": channel})
                 return AgentResponse(
                     text=confirmation_text,
                     session=session,
                     summary_generated=True,
+                    follow_up_text=address_cta_text,
                 )
 
             review_step = get_final_review_outbound_step(session)

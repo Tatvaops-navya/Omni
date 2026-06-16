@@ -256,3 +256,5 @@ async def test_confirm_submit_triggers_tatva_enquiry(monkeypatch):
     assert resp.summary_generated is True
     assert "*Project Overview*" in resp.text
     assert "sdffdsds" in resp.text
+    assert resp.follow_up_text is not None
+    assert "add your address" in resp.follow_up_text.lower()

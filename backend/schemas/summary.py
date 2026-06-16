@@ -158,9 +158,12 @@ class ProjectSummary(BaseModel):
             "Our team is reviewing your requirements and will contact you "
             "during your preferred time.\n\n"
             "Thank you for choosing TatvaOps.\n\n"
-            "Building Better. Together.\n\n"
-            f"{CLIENT_PLATFORM_ADDRESS_CTA}"
+            "Building Better. Together."
         )
+
+    def client_platform_address_cta_text(self) -> str:
+        """Separate follow-up message prompting the client to add their address."""
+        return CLIENT_PLATFORM_ADDRESS_CTA
 
     def _client_confirmation_snapshot_body(self) -> str:
         snap = self.enquiry_snapshot or {}
@@ -181,33 +184,6 @@ class ProjectSummary(BaseModel):
             snap.get("property_location") or "—",
             service_category=service_key,
         )
-
-        if tatva_enquiry_summary:
-            body = format_tatva_enquiry_summary_whatsapp(tatva_enquiry_summary)
-        else:
-            snap = self.enquiry_snapshot or {}
-            service_key = str(snap.get("service_category") or "").strip()
-            service = display_label("service_category", service_key or "your selected service")
-            consultant = display_label(
-                "assigned_consultant",
-                snap.get("assigned_consultant") or "our specialist",
-            )
-            city = display_label(
-                "city",
-                snap.get("city") or "—",
-                service_category=service_key,
-            )
-            property_location = display_label(
-                "property_location",
-                snap.get("property_location") or "—",
-                service_category=service_key,
-            )
-            body = (
-                f"📍 Location: {city}\n"
-                f"📍 Property location: {property_location}\n"
-                f"🏠 Service: {service}\n"
-                f"👨‍💼 Assigned Specialist: {consultant}"
-            )
 
         return (
             f"📍 Location: {city}\n"

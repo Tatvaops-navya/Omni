@@ -176,8 +176,11 @@ async def vapi_chat_completions(request: Request):
         await save_session(session)
         return _build_response(fallback, is_streaming)
 
-    # Optimize for voice
-    voice_text = optimize_for_voice(agent_response.text)
+    # Optimize for voice (append follow-up CTA in one spoken turn when present)
+    combined_text = agent_response.text or ""
+    if agent_response.follow_up_text:
+        combined_text = f"{combined_text}\n\n{agent_response.follow_up_text}"
+    voice_text = optimize_for_voice(combined_text)
 
     # Persist
     await save_session(agent_response.session)
