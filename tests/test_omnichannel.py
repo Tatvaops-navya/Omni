@@ -16,7 +16,6 @@ from backend.agents.chat.whatsapp_handler import (
     _more_file_upload_step,
     _parse_yes_no_choice,
     _returning_edit_decision_step,
-    _returning_profile_field_step,
     _returning_user_greeting_text,
 )
 from backend.utils.session_idle import (
@@ -157,10 +156,6 @@ def test_returning_user_steps_and_greeting():
     assert decision["field"] == "__returning_edit_info__"
     assert [o["value"] for o in decision["options"]] == ["yes", "no"]
 
-    profile = _returning_profile_field_step()
-    assert profile["field"] == "__returning_profile_field__"
-    assert [o["value"] for o in profile["options"]] == ["client_name", "email", "continue"]
-
     session = Session(
         session_id="wa_test",
         phone_number="whatsapp:+91999",
@@ -168,11 +163,11 @@ def test_returning_user_steps_and_greeting():
         conversation_stage=ConversationStage.SUMMARY_GENERATED,
         summary_generated=True,
     )
-    session.extracted_fields["client_name"] = "Rahul Sharma"
-    session.extracted_fields["email"] = "rahul@gmail.com"
+    session.extracted_fields["client_name"] = "John Doe"
+    session.extracted_fields["email"] = "pramod.d@tatvaops.com"
     text = _returning_user_greeting_text(session)
-    assert "Welcome back, Rahul" in text
-    assert "rahul@gmail.com" in text
+    assert "Hey John Doe" in text
+    assert "EVA" in text
     assert _first_name("Rahul Sharma") == "Rahul"
 
 
