@@ -9,7 +9,16 @@ from backend.intelligence import stage_engine as se
 from backend.intelligence.lead_scorer import score_lead
 from backend.intelligence.conversation_controller import ConversationController, _is_off_topic
 from backend.intelligence.persona import GUARDRAIL_REDIRECT
-from backend.agents.chat.whatsapp_handler import _is_new_enquiry_intent, _is_post_submit_polite_reply
+from backend.agents.chat.whatsapp_handler import (
+    _is_new_enquiry_intent,
+    _is_post_submit_polite_reply,
+    _first_name,
+    _more_file_upload_step,
+    _parse_yes_no_choice,
+    _returning_edit_decision_step,
+    _returning_profile_field_step,
+    _returning_user_greeting_text,
+)
 from backend.utils.session_idle import (
     is_session_idle_expired,
     idle_timeout_notice,
@@ -125,6 +134,46 @@ def test_post_submit_message_intent():
     assert not _is_new_enquiry_intent("Thank you")
     assert _is_new_enquiry_intent("Hello")
     assert _is_new_enquiry_intent("Hi there")
+
+
+def test_more_file_upload_step_has_yes_no_options():
+    step = _more_file_upload_step()
+    assert step["field"] == "__more_file_upload__"
+    assert step["type"] == "mcq"
+    assert step["prompt"].lower().startswith("do you want to add")
+    assert [o["value"] for o in step["options"]] == ["yes", "no"]
+
+
+def test_parse_yes_no_choice_accepts_text_and_list_taps():
+    assert _parse_yes_no_choice("yes") is True
+    assert _parse_yes_no_choice("NO") is False
+    assert _parse_yes_no_choice("", list_id="yes") is True
+    assert _parse_yes_no_choice("", button_payload="no") is False
+    assert _parse_yes_no_choice("maybe later") is None
+
+
+def test_returning_user_steps_and_greeting():
+    decision = _returning_edit_decision_step()
+    assert decision["field"] == "__returning_edit_info__"
+    assert [o["value"] for o in decision["options"]] == ["yes", "no"]
+
+    profile = _returning_profile_field_step()
+    assert profile["field"] == "__returning_profile_field__"
+    assert [o["value"] for o in profile["options"]] == ["client_name", "email", "continue"]
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    session.extracted_fields["client_name"] = "Rahul Sharma"
+    session.extracted_fields["email"] = "rahul@gmail.com"
+    text = _returning_user_greeting_text(session)
+    assert "Welcome back, Rahul" in text
+    assert "rahul@gmail.com" in text
+    assert _first_name("Rahul Sharma") == "Rahul"
 
 
 def test_greeting_detection_not_name_false_positive():
