@@ -688,7 +688,7 @@ def format_attachment_review_line(session: Session) -> str:
     return f"{count} files uploaded"
 
 
-def sync_attachment_fields(session: Session) -> None:
+def sync_attachment_fields(session: Session, *, complete_step: bool = True) -> None:
     """Align stored file-step answers with session.attachments (source of truth)."""
     se.reconcile_session(session)
     field = resolve_file_upload_field(session)
@@ -701,7 +701,12 @@ def sync_attachment_fields(session: Session) -> None:
             return
     value = attachment_upload_value(session)
     if field in session.completed_fields or session.extracted_fields.get(field) or count > 0:
-        se.mark_field_validated(session, field, value)
+        if complete_step:
+            se.mark_field_validated(session, field, value)
+        else:
+            session.extracted_fields[field] = value
+            if field in session.completed_fields:
+                session.completed_fields.remove(field)
 
 
 def file_upload_ack_message(session: Session) -> str:
@@ -713,7 +718,11 @@ def file_upload_ack_message(session: Session) -> str:
 
 def refresh_attachment_field_count(session: Session) -> None:
     """Update stored file-step value after additional uploads in the same batch."""
-    sync_attachment_fields(session)
+    holding = bool(
+        session.flow_state.get("awaiting_more_upload_decision")
+        or session.flow_state.get("awaiting_additional_file_upload")
+    )
+    sync_attachment_fields(session, complete_step=not holding)
 
 
 def complete_attachment_upload(session: Session) -> str:
@@ -735,6 +744,11 @@ def complete_attachment_upload(session: Session) -> str:
 
 def pending_file_upload(session: Session) -> bool:
     se.reconcile_session(session)
+    if (
+        session.flow_state.get("awaiting_more_upload_decision")
+        or session.flow_state.get("awaiting_additional_file_upload")
+    ):
+        return True
     step = get_current_step(session)
     return bool(step and step.get("type") == "file_request")
 
