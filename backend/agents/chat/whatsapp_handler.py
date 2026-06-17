@@ -365,14 +365,25 @@ async def _debounced_file_upload_follow_up(
             return
 
         hybrid_flow.init_flow(session)
-        if not edit_flow.awaiting_file_upload(session) and not hybrid_flow.pending_file_upload(session):
+        awaiting_additional = session.flow_state.get("awaiting_additional_file_upload")
+        if (
+            not edit_flow.awaiting_file_upload(session)
+            and not hybrid_flow.pending_file_upload(session)
+            and not awaiting_additional
+        ):
             return
 
         session.flow_state["media_upload_follow_up_sent"] = batch_version
         session.flow_state["file_upload_completed_at"] = datetime.utcnow().isoformat()
+        if awaiting_additional:
+            session.flow_state.pop("awaiting_additional_file_upload", None)
         await save_session(session)
         await supabase_store.upsert_session_log(session)
-        await _send_file_upload_follow_up(session, phone_number)
+        await _send_file_upload_follow_up(
+            session,
+            phone_number,
+            ask_for_more=not awaiting_additional,
+        )
         await save_session(session)
         await supabase_store.upsert_session_log(session)
 
@@ -600,7 +611,12 @@ async def _handle_whatsapp_message_impl(
                 if meta:
                     saved_any = True
             if saved_any:
-                if edit_flow.awaiting_file_upload(session) or hybrid_flow.pending_file_upload(session):
+                in_file_upload_flow = (
+                    edit_flow.awaiting_file_upload(session)
+                    or hybrid_flow.pending_file_upload(session)
+                    or session.flow_state.get("awaiting_additional_file_upload")
+                )
+                if in_file_upload_flow:
                     await _schedule_file_upload_follow_up(session, phone_number)
                     await save_session(session)
                     await supabase_store.upsert_session_log(session)
@@ -735,6 +751,10 @@ async def _handle_whatsapp_message_impl(
             )
             return
         if wants_more:
+            session.flow_state.pop("awaiting_more_upload_decision", None)
+            session.flow_state["awaiting_additional_file_upload"] = True
+            await save_session(session)
+            await supabase_store.upsert_session_log(session)
             prompt = hybrid_flow.file_request_prompt(session) or "Please upload your file."
             await send_whatsapp_message(to=phone_number, body=prompt)
             return
