@@ -238,8 +238,10 @@ class ConversationController:
                 _end_conversation(session)
                 await submit_service_questionnaire(session)
                 tatva_summary = session.flow_state.get("tatva_enquiry_summary")
+                tatva_attachments = session.flow_state.get("tatva_enquiry_attachments")
                 confirmation_text = summary.client_confirmation_text(
                     tatva_enquiry_summary=tatva_summary if isinstance(tatva_summary, dict) else None,
+                    tatva_enquiry_attachments=tatva_attachments if isinstance(tatva_attachments, list) else None,
                 )
                 address_cta_text = summary.client_platform_address_cta_text()
                 session.add_message(MessageRole.ASSISTANT, confirmation_text)

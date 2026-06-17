@@ -137,7 +137,12 @@ class ProjectSummary(BaseModel):
             return text[: max_chars - 40] + "\n\n_(Full brief saved for our team.)_"
         return text
 
-    def client_confirmation_text(self, *, tatva_enquiry_summary: dict | None = None) -> str:
+    def client_confirmation_text(
+        self,
+        *,
+        tatva_enquiry_summary: dict | None = None,
+        tatva_enquiry_attachments: list | None = None,
+    ) -> str:
         """Branded client-facing confirmation — Tatva API summary when available."""
         header = (
             "🏡 TatvaOps\n\n"
@@ -147,7 +152,10 @@ class ProjectSummary(BaseModel):
         if tatva_enquiry_summary:
             try:
                 from backend.integrations.tatva_enquiry_submit import format_tatva_enquiry_summary_whatsapp
-                body = format_tatva_enquiry_summary_whatsapp(tatva_enquiry_summary)
+                body = format_tatva_enquiry_summary_whatsapp(
+                    tatva_enquiry_summary,
+                    attachments=tatva_enquiry_attachments,
+                )
             except ImportError:
                 body = self._client_confirmation_snapshot_body()
         else:

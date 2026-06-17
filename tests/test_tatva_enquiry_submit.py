@@ -68,13 +68,25 @@ def test_format_tatva_enquiry_summary_whatsapp():
         "specialConsiderations": "No special considerations noted",
         "estimatedScope": "Budget = ₹25 Lakhs",
     }
-    text = format_tatva_enquiry_summary_whatsapp(summary)
+    attachments = [
+        {
+            "key": "enquiries/user/service/file.png",
+            "url": "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png",
+        }
+    ]
+    text = format_tatva_enquiry_summary_whatsapp(summary, attachments=attachments)
     assert "*Project Overview*" in text
     assert "Residential Construction enquiry" in text
     assert "*Client Requirements*" in text
     assert "sdffdsds" in text
     assert "*Estimated Scope*" in text
     assert "₹25 Lakhs" in text
+    assert "*Attachments*" in text
+    assert "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" in text
+    assert text.index("*Estimated Scope*") < text.index("*Attachments*")
+
+    text_without_files = format_tatva_enquiry_summary_whatsapp(summary)
+    assert "*Attachments*" not in text_without_files
 
 
 def test_client_confirmation_uses_tatva_api_summary():
@@ -102,10 +114,21 @@ def test_client_confirmation_uses_tatva_api_summary():
         execution_readiness="",
         enquiry_snapshot={"city": "hsr", "service_category": "residential_construction"},
     )
-    text = summary.client_confirmation_text(tatva_enquiry_summary=tatva_summary)
+    attachments = [
+        {
+            "key": "enquiries/user/service/file.png",
+            "url": "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png",
+        }
+    ]
+    text = summary.client_confirmation_text(
+        tatva_enquiry_summary=tatva_summary,
+        tatva_enquiry_attachments=attachments,
+    )
     assert "Your enquiry has been successfully received" in text
     assert "*Project Overview*" in text
     assert "sdffdsds" in text
+    assert "*Attachments*" in text
+    assert "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" in text
     assert "Location:" not in text
     assert "Assigned Specialist:" not in text
 
@@ -158,6 +181,12 @@ async def test_submit_service_questionnaire_posts_multipart(monkeypatch):
                             "clientRequirements": "scd",
                             "timeline": "12 months",
                         },
+                        "attachments": [
+                            {
+                                "key": "enquiries/user/service/file.png",
+                                "url": "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png",
+                            }
+                        ],
                     }
                 },
             }
@@ -189,6 +218,7 @@ async def test_submit_service_questionnaire_posts_multipart(monkeypatch):
     assert result["projectOverview"].startswith("The client submitted")
     assert session.flow_state.get("tatva_enquiry_submitted") is True
     assert session.flow_state.get("tatva_enquiry_summary")["clientRequirements"] == "scd"
+    assert session.flow_state.get("tatva_enquiry_attachments")[0]["url"].endswith("file.png")
     assert captured["url"].endswith("/users/api/enquiries/service-questionnaire")
     assert captured["data"]["userId"] == "698045af7d79fe3c880dab0f"
     assert captured["data"]["serviceId"] == "6926b7865c6d9f597ae41693"
