@@ -36,7 +36,25 @@ _TATVA_ENQUIRY_SUMMARY_LABELS: list[tuple[str, str]] = [
 ]
 
 
-def format_tatva_enquiry_summary_whatsapp(summary: dict[str, Any]) -> str:
+def _attachment_urls(attachments: list[Any] | None) -> list[str]:
+    if not attachments:
+        return []
+    urls: list[str] = []
+    for item in attachments:
+        if isinstance(item, dict):
+            url = str(item.get("url") or "").strip()
+            if url:
+                urls.append(url)
+        elif isinstance(item, str) and item.strip():
+            urls.append(item.strip())
+    return urls
+
+
+def format_tatva_enquiry_summary_whatsapp(
+    summary: dict[str, Any],
+    *,
+    attachments: list[Any] | None = None,
+) -> str:
     """Format Tatva API enquiry.summary object for WhatsApp confirmation."""
     lines: list[str] = []
     for key, label in _TATVA_ENQUIRY_SUMMARY_LABELS:
@@ -47,6 +65,11 @@ def format_tatva_enquiry_summary_whatsapp(summary: dict[str, Any]) -> str:
         if not text:
             continue
         lines.append(f"*{label}*\n{text}")
+
+    urls = _attachment_urls(attachments)
+    if urls:
+        lines.append("*Attachments*\n" + "\n".join(urls))
+
     return "\n\n".join(lines)
 
 
@@ -361,6 +384,9 @@ async def submit_service_questionnaire(session: Session) -> Optional[dict[str, A
     tatva_summary = enquiry.get("summary") or {}
     if isinstance(tatva_summary, dict) and tatva_summary:
         session.flow_state["tatva_enquiry_summary"] = tatva_summary
+    tatva_attachments = enquiry.get("attachments") or []
+    if isinstance(tatva_attachments, list) and tatva_attachments:
+        session.flow_state["tatva_enquiry_attachments"] = tatva_attachments
     enquiry_id = enquiry.get("_id") or enquiry.get("id")
     if enquiry_id:
         session.flow_state["tatva_enquiry_id"] = str(enquiry_id)
