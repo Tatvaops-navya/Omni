@@ -36,18 +36,99 @@ _TATVA_ENQUIRY_SUMMARY_LABELS: list[tuple[str, str]] = [
 ]
 
 
-def _attachment_urls(attachments: list[Any] | None) -> list[str]:
+_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif", ".svg"})
+_VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".mpeg", ".mpg"})
+_PDF_EXTENSIONS = frozenset({".pdf"})
+_DOCUMENT_EXTENSIONS = frozenset({
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".rtf", ".odt",
+})
+
+_ATTACHMENT_KIND_LABELS: dict[str, str] = {
+    "image": "View image",
+    "video": "View video",
+    "pdf": "View PDF",
+    "document": "View document",
+    "file": "View file",
+}
+
+
+def _normalize_attachments(attachments: list[Any] | None) -> list[dict[str, str]]:
     if not attachments:
         return []
-    urls: list[str] = []
+    items: list[dict[str, str]] = []
     for item in attachments:
         if isinstance(item, dict):
             url = str(item.get("url") or "").strip()
-            if url:
-                urls.append(url)
+            if not url:
+                continue
+            items.append({
+                "url": url,
+                "key": str(item.get("key") or "").strip(),
+                "mime": str(item.get("mimeType") or item.get("mime_type") or "").strip(),
+            })
         elif isinstance(item, str) and item.strip():
-            urls.append(item.strip())
-    return urls
+            items.append({"url": item.strip(), "key": "", "mime": ""})
+    return items
+
+
+def _attachment_kind(*, url: str, key: str = "", mime: str = "") -> str:
+    mime_l = mime.lower()
+    if mime_l.startswith("image/"):
+        return "image"
+    if mime_l.startswith("video/"):
+        return "video"
+    if mime_l == "application/pdf":
+        return "pdf"
+    if mime_l.startswith("application/") or mime_l.startswith("text/"):
+        return "document"
+
+    path = (key or url).split("?")[0].lower()
+    ext = ""
+    if "." in path.rsplit("/", 1)[-1]:
+        ext = "." + path.rsplit(".", 1)[-1]
+    if ext in _IMAGE_EXTENSIONS:
+        return "image"
+    if ext in _VIDEO_EXTENSIONS:
+        return "video"
+    if ext in _PDF_EXTENSIONS:
+        return "pdf"
+    if ext in _DOCUMENT_EXTENSIONS:
+        return "document"
+    return "file"
+
+
+def _attachment_view_labels(attachments: list[Any] | None) -> list[str]:
+    items = _normalize_attachments(attachments)
+    if not items:
+        return []
+
+    kind_totals: dict[str, int] = {}
+    for item in items:
+        kind = _attachment_kind(**item)
+        kind_totals[kind] = kind_totals.get(kind, 0) + 1
+
+    kind_seen: dict[str, int] = {}
+    labels: list[str] = []
+    for item in items:
+        kind = _attachment_kind(**item)
+        label = _ATTACHMENT_KIND_LABELS[kind]
+        if kind_totals[kind] > 1:
+            kind_seen[kind] = kind_seen.get(kind, 0) + 1
+            label = f"{label} {kind_seen[kind]}"
+        labels.append(f"↗ {label}")
+    return labels
+
+
+def extract_tatva_attachment_urls(attachments: list[Any] | None) -> list[str]:
+    return [item["url"] for item in _normalize_attachments(attachments)]
+
+
+def format_attachments_section_whatsapp(attachments: list[Any] | None) -> str:
+    """Label-only attachment section for WhatsApp summary (URLs sent separately)."""
+    labels = _attachment_view_labels(attachments)
+    if not labels:
+        return ""
+    return "*Attachments*\n\n" + "\n\n".join(labels)
 
 
 def format_tatva_enquiry_summary_whatsapp(
@@ -66,9 +147,9 @@ def format_tatva_enquiry_summary_whatsapp(
             continue
         lines.append(f"*{label}*\n{text}")
 
-    urls = _attachment_urls(attachments)
-    if urls:
-        lines.append("*Attachments*\n" + "\n".join(urls))
+    attachment_section = format_attachments_section_whatsapp(attachments)
+    if attachment_section:
+        lines.append(attachment_section)
 
     return "\n\n".join(lines)
 

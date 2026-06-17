@@ -6,6 +6,8 @@ import pytest
 from backend.integrations.tatva_enquiry_submit import (
     build_questionnaire_form_fields,
     build_questionnaire_summary,
+    extract_tatva_attachment_urls,
+    format_attachments_section_whatsapp,
     format_tatva_enquiry_summary_whatsapp,
     submit_service_questionnaire,
 )
@@ -72,7 +74,11 @@ def test_format_tatva_enquiry_summary_whatsapp():
         {
             "key": "enquiries/user/service/file.png",
             "url": "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png",
-        }
+        },
+        {
+            "key": "enquiries/user/service/plan.pdf",
+            "url": "https://d187u6mpwmtl08.cloudfront.net/enquiries/plan.pdf",
+        },
     ]
     text = format_tatva_enquiry_summary_whatsapp(summary, attachments=attachments)
     assert "*Project Overview*" in text
@@ -82,11 +88,36 @@ def test_format_tatva_enquiry_summary_whatsapp():
     assert "*Estimated Scope*" in text
     assert "₹25 Lakhs" in text
     assert "*Attachments*" in text
-    assert "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" in text
+    assert "↗ View image" in text
+    assert "↗ View PDF" in text
+    assert "cloudfront.net" not in text
     assert text.index("*Estimated Scope*") < text.index("*Attachments*")
+    assert text.index("↗ View image") < text.index("↗ View PDF")
 
     text_without_files = format_tatva_enquiry_summary_whatsapp(summary)
     assert "*Attachments*" not in text_without_files
+
+
+def test_format_attachments_section_whatsapp_labels_and_urls():
+    attachments = [
+        {"key": "a.jpg", "url": "https://example.com/a.jpg"},
+        {"key": "b.mp4", "url": "https://example.com/b.mp4"},
+        {"key": "c.pdf", "url": "https://example.com/c.pdf"},
+        {"key": "d.bin", "url": "https://example.com/d.bin"},
+    ]
+    section = format_attachments_section_whatsapp(attachments)
+    assert section.startswith("*Attachments*")
+    assert "↗ View image" in section
+    assert "↗ View video" in section
+    assert "↗ View PDF" in section
+    assert "↗ View file" in section
+    assert "example.com" not in section
+    assert extract_tatva_attachment_urls(attachments) == [
+        "https://example.com/a.jpg",
+        "https://example.com/b.mp4",
+        "https://example.com/c.pdf",
+        "https://example.com/d.bin",
+    ]
 
 
 def test_client_confirmation_uses_tatva_api_summary():
@@ -128,7 +159,8 @@ def test_client_confirmation_uses_tatva_api_summary():
     assert "*Project Overview*" in text
     assert "sdffdsds" in text
     assert "*Attachments*" in text
-    assert "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" in text
+    assert "↗ View image" in text
+    assert "cloudfront.net" not in text
     assert "Location:" not in text
     assert "Assigned Specialist:" not in text
 
