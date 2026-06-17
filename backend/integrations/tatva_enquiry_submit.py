@@ -97,7 +97,8 @@ def _attachment_kind(*, url: str, key: str = "", mime: str = "") -> str:
     return "file"
 
 
-def _attachment_view_labels(attachments: list[Any] | None) -> list[str]:
+def _attachment_whatsapp_blocks(attachments: list[Any] | None) -> list[str]:
+    """One label + URL block per attachment (paired for WhatsApp tap-to-open)."""
     items = _normalize_attachments(attachments)
     if not items:
         return []
@@ -108,15 +109,15 @@ def _attachment_view_labels(attachments: list[Any] | None) -> list[str]:
         kind_totals[kind] = kind_totals.get(kind, 0) + 1
 
     kind_seen: dict[str, int] = {}
-    labels: list[str] = []
+    blocks: list[str] = []
     for item in items:
         kind = _attachment_kind(**item)
         label = _ATTACHMENT_KIND_LABELS[kind]
         if kind_totals[kind] > 1:
             kind_seen[kind] = kind_seen.get(kind, 0) + 1
             label = f"{label} {kind_seen[kind]}"
-        labels.append(f"↗ {label}")
-    return labels
+        blocks.append(f"↗ {label}\n{item['url']}")
+    return blocks
 
 
 def extract_tatva_attachment_urls(attachments: list[Any] | None) -> list[str]:
@@ -124,11 +125,11 @@ def extract_tatva_attachment_urls(attachments: list[Any] | None) -> list[str]:
 
 
 def format_attachments_section_whatsapp(attachments: list[Any] | None) -> str:
-    """Label-only attachment section for WhatsApp summary (URLs sent separately)."""
-    labels = _attachment_view_labels(attachments)
-    if not labels:
+    """Attachment section with each label paired to its clickable URL."""
+    blocks = _attachment_whatsapp_blocks(attachments)
+    if not blocks:
         return ""
-    return "*Attachments*\n\n" + "\n\n".join(labels)
+    return "*Attachments*\n\n" + "\n\n".join(blocks)
 
 
 def format_tatva_enquiry_summary_whatsapp(

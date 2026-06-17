@@ -88,11 +88,11 @@ def test_format_tatva_enquiry_summary_whatsapp():
     assert "*Estimated Scope*" in text
     assert "₹25 Lakhs" in text
     assert "*Attachments*" in text
-    assert "↗ View image" in text
-    assert "↗ View PDF" in text
-    assert "cloudfront.net" not in text
+    assert "↗ View image\nhttps://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" in text
+    assert "↗ View PDF\nhttps://d187u6mpwmtl08.cloudfront.net/enquiries/plan.pdf" in text
     assert text.index("*Estimated Scope*") < text.index("*Attachments*")
     assert text.index("↗ View image") < text.index("↗ View PDF")
+    assert text.index("file.png") < text.index("plan.pdf")
 
     text_without_files = format_tatva_enquiry_summary_whatsapp(summary)
     assert "*Attachments*" not in text_without_files
@@ -107,11 +107,11 @@ def test_format_attachments_section_whatsapp_labels_and_urls():
     ]
     section = format_attachments_section_whatsapp(attachments)
     assert section.startswith("*Attachments*")
-    assert "↗ View image" in section
-    assert "↗ View video" in section
-    assert "↗ View PDF" in section
-    assert "↗ View file" in section
-    assert "example.com" not in section
+    assert "↗ View image\nhttps://example.com/a.jpg" in section
+    assert "↗ View video\nhttps://example.com/b.mp4" in section
+    assert "↗ View PDF\nhttps://example.com/c.pdf" in section
+    assert "↗ View file\nhttps://example.com/d.bin" in section
+    assert section.index("a.jpg") < section.index("b.mp4") < section.index("c.pdf")
     assert extract_tatva_attachment_urls(attachments) == [
         "https://example.com/a.jpg",
         "https://example.com/b.mp4",
@@ -159,8 +159,7 @@ def test_client_confirmation_uses_tatva_api_summary():
     assert "*Project Overview*" in text
     assert "sdffdsds" in text
     assert "*Attachments*" in text
-    assert "↗ View image" in text
-    assert "cloudfront.net" not in text
+    assert "↗ View image\nhttps://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" in text
     assert "Location:" not in text
     assert "Assigned Specialist:" not in text
 
