@@ -42,6 +42,31 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+_VERBATIM_FIELDS = frozenset({
+    "client_name",
+    "city",
+    "property_location",
+    "phone_number",
+    "email",
+    "service_q4",
+    "special_notes_extra",
+    "req_functional_needs",
+    "req_inspiration_notes",
+})
+
+
+def _is_user_entered_text(raw: str) -> bool:
+    """True when the value looks like free-form user typing, not an internal MCQ slug."""
+    if any(ch in raw for ch in (",", ";", ":", ".", "!", "?")):
+        return True
+    if " " in raw.strip():
+        return True
+    # Preserve mixed case (VidyMN, JP Nagar, iPhone, etc.)
+    if raw != raw.lower() and raw != raw.upper():
+        return True
+    return False
+
+
 def _prettify(value: Any) -> str:
     s = str(value or "").strip()
     if not s:
@@ -226,7 +251,8 @@ def display_label(field: str, value: Any, *, service_category: str = "") -> str:
     raw = str(value).strip()
     if not raw:
         return "—"
-    if field == "email":
+
+    if field in _VERBATIM_FIELDS:
         return raw
 
     if field == "service_category":
@@ -234,11 +260,19 @@ def display_label(field: str, value: Any, *, service_category: str = "") -> str:
     if field in ("assigned_consultant", "consultant"):
         return _CONSULTANT_NAMES.get(raw.lower(), _prettify(raw))
     if field in _COMMON_FIELD_LABELS:
-        return _COMMON_FIELD_LABELS[field].get(raw.lower(), _prettify(raw))
+        mapped = _COMMON_FIELD_LABELS[field].get(raw.lower())
+        if mapped:
+            return mapped
+        if _is_user_entered_text(raw):
+            return raw
+        return _prettify(raw)
 
     if service_category:
         field_map = _service_flow_labels(service_category).get(field, {})
         if raw in field_map:
             return field_map[raw]
+
+    if _is_user_entered_text(raw):
+        return raw
 
     return _prettify(raw)

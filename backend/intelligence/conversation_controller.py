@@ -247,6 +247,16 @@ class ConversationController:
                 )
 
             review_step = get_final_review_outbound_step(session)
+            stale = hybrid_flow.check_stale_interactive_selection(
+                session,
+                list_id=list_id,
+                button_payload=button_payload,
+                button_text=button_text,
+                user_message=user_message,
+            )
+            if stale:
+                session.add_message(MessageRole.ASSISTANT, stale)
+                return AgentResponse(text=stale, session=session)
             hold = hybrid_flow.invalid_choice_reply(review_step)
             session.add_message(MessageRole.ASSISTANT, hold)
             return AgentResponse(text=hold, session=session)
@@ -276,6 +286,17 @@ class ConversationController:
             return AgentResponse(text=hybrid_flow.first_client_message(), session=session)
 
         if se.needs_service_selection(session) and not session.flow_state.get("final_review_shown"):
+            stale = hybrid_flow.check_stale_interactive_selection(
+                session,
+                list_id=list_id,
+                button_payload=button_payload,
+                button_text=button_text,
+                user_message=user_message,
+            )
+            if stale:
+                session.add_message(MessageRole.ASSISTANT, stale)
+                return AgentResponse(text=stale, session=session)
+
             # Prefer interactive payload signals when present (WhatsApp list/button taps)
             selection_input = (list_id or button_payload or button_text or user_message or "").strip()
 

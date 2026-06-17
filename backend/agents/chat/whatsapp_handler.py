@@ -41,6 +41,15 @@ router = APIRouter()
 _settings = get_settings()
 MEDIA_UPLOAD_DEBOUNCE_SEC = 2.5
 FILE_UPLOAD_STRAGGLER_WINDOW_SEC = 8.0
+_media_session_locks: dict[str, asyncio.Lock] = {}
+
+
+def _media_session_lock(session_id: str) -> asyncio.Lock:
+    lock = _media_session_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _media_session_locks[session_id] = lock
+    return lock
 
 
 def _normalize_restart_command(message: str) -> str:
@@ -116,8 +125,11 @@ async def _send_file_upload_follow_up(
     session: Session,
     phone_number: str,
     *,
-    file_ack: str = "Thank you! We received your file.",
+    file_ack: str | None = None,
 ) -> None:
+    hybrid_flow.sync_attachment_fields(session)
+    if file_ack is None:
+        file_ack = hybrid_flow.file_upload_ack_message(session)
     if edit_flow.awaiting_file_upload(session):
         reply, outbound_step, _handled = edit_flow.complete_file_upload(session)
         combined = f"{file_ack}\n\n{reply}".strip()
@@ -140,9 +152,6 @@ async def _send_file_upload_follow_up(
                 if idx != -1:
                     cleaned_follow_up = cleaned_follow_up[:idx].strip()
         follow_up = cleaned_follow_up
-    count = len(session.attachments)
-    if count > 1:
-        file_ack = f"Thank you! We received your {count} files."
     combined = f"{file_ack}\n\n{follow_up}".strip() if follow_up else file_ack
     await send_context_then_mcq_list(phone_number, combined, outbound_step)
 
@@ -153,25 +162,26 @@ async def _debounced_file_upload_follow_up(
     batch_version: int,
 ) -> None:
     await asyncio.sleep(MEDIA_UPLOAD_DEBOUNCE_SEC)
-    session = await get_session(session_id)
-    if not session:
-        return
-    if session.flow_state.get("media_upload_batch_version") != batch_version:
-        return
-    if session.flow_state.get("media_upload_follow_up_sent") == batch_version:
-        return
+    async with _media_session_lock(session_id):
+        session = await get_session(session_id)
+        if not session:
+            return
+        if session.flow_state.get("media_upload_batch_version") != batch_version:
+            return
+        if session.flow_state.get("media_upload_follow_up_sent") == batch_version:
+            return
 
-    hybrid_flow.init_flow(session)
-    if not edit_flow.awaiting_file_upload(session) and not hybrid_flow.pending_file_upload(session):
-        return
+        hybrid_flow.init_flow(session)
+        if not edit_flow.awaiting_file_upload(session) and not hybrid_flow.pending_file_upload(session):
+            return
 
-    session.flow_state["media_upload_follow_up_sent"] = batch_version
-    session.flow_state["file_upload_completed_at"] = datetime.utcnow().isoformat()
-    await save_session(session)
-    await supabase_store.upsert_session_log(session)
-    await _send_file_upload_follow_up(session, phone_number)
-    await save_session(session)
-    await supabase_store.upsert_session_log(session)
+        session.flow_state["media_upload_follow_up_sent"] = batch_version
+        session.flow_state["file_upload_completed_at"] = datetime.utcnow().isoformat()
+        await save_session(session)
+        await supabase_store.upsert_session_log(session)
+        await _send_file_upload_follow_up(session, phone_number)
+        await save_session(session)
+        await supabase_store.upsert_session_log(session)
 
 
 async def _schedule_file_upload_follow_up(session: Session, phone_number: str) -> None:
@@ -377,33 +387,35 @@ async def _handle_whatsapp_message_impl(
 
     # Media upload handling (stage 9 — attachments, or edit-details file update)
     if num_media > 0 and media_items:
-        hybrid_flow.init_flow(session)
-        saved_any = False
-        for media_url, media_content_type in media_items:
-            meta = await save_attachment(session, media_url, media_content_type)
-            if meta:
-                saved_any = True
-        if saved_any:
-            if edit_flow.awaiting_file_upload(session) or hybrid_flow.pending_file_upload(session):
-                await _schedule_file_upload_follow_up(session, phone_number)
-                await supabase_store.upsert_session_log(session)
-                return
-            if _file_upload_recently_completed(session):
-                hybrid_flow.refresh_attachment_field_count(session)
+        async with _media_session_lock(session_id):
+            session = await get_session(session_id) or session
+            hybrid_flow.init_flow(session)
+            saved_any = False
+            for media_url, media_content_type in media_items:
+                meta = await save_attachment(session, media_url, media_content_type)
+                if meta:
+                    saved_any = True
+            if saved_any:
+                if edit_flow.awaiting_file_upload(session) or hybrid_flow.pending_file_upload(session):
+                    await _schedule_file_upload_follow_up(session, phone_number)
+                    await save_session(session)
+                    await supabase_store.upsert_session_log(session)
+                    return
+                if _file_upload_recently_completed(session):
+                    hybrid_flow.refresh_attachment_field_count(session)
+                    await save_session(session)
+                    await supabase_store.upsert_session_log(session)
+                    return
+                session.mark_field_complete("has_attachments", True)
+                hybrid_flow.sync_attachment_fields(session)
                 await save_session(session)
                 await supabase_store.upsert_session_log(session)
+                ack = (
+                    f"{hybrid_flow.file_upload_ack_message(session)} "
+                    f"Our team will review {'them' if hybrid_flow.attachment_count(session) > 1 else 'it'} with your enquiry."
+                )
+                await send_whatsapp_message(to=phone_number, body=ack)
                 return
-            session.mark_field_complete("has_attachments", True)
-            await save_session(session)
-            await supabase_store.upsert_session_log(session)
-            count = len(session.attachments)
-            ack = (
-                f"Thank you! We received your {count} files. Our team will review them with your enquiry."
-                if count > 1
-                else "Thank you! We received your file. Our team will review it with your enquiry."
-            )
-            await send_whatsapp_message(to=phone_number, body=ack)
-            return
 
     if not user_message:
         return
