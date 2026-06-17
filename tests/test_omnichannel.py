@@ -177,6 +177,41 @@ def test_returning_user_steps_and_greeting():
     assert _first_name("Rahul Sharma") == "Rahul"
 
 
+def test_sync_attachment_fields_can_hold_step_open():
+    from backend.schemas.session import AttachmentMeta
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+        service_category=ServiceCategory.ELECTRICAL,
+        active_consultant="vivek",
+    )
+    se.on_service_selected(session, ServiceCategory.ELECTRICAL)
+    for field, value in (
+        ("service_q1", "new_wiring_rewiring"),
+        ("service_q2", "residential_apartment"),
+        ("service_q3", "urgent_breakdown_hazard"),
+        ("service_q4", "Need rewiring"),
+    ):
+        se.mark_field_validated(session, field, value)
+    session.attachments.append(
+        AttachmentMeta(
+            file_name="layout.png",
+            file_url="https://example.com/layout.png",
+            mime_type="image/png",
+        )
+    )
+    session.flow_state["awaiting_more_upload_decision"] = True
+
+    hybrid_flow.sync_attachment_fields(session, complete_step=False)
+
+    assert session.extracted_fields.get("attachments") == "1 file uploaded"
+    assert "attachments" not in session.completed_fields
+    assert hybrid_flow.pending_file_upload(session) is True
+
+
 @pytest.mark.asyncio
 async def test_additional_file_upload_follow_up_advances_flow(monkeypatch):
     from backend.agents.chat import whatsapp_handler as wh

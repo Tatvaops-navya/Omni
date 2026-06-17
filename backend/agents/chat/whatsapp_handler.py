@@ -308,6 +308,32 @@ async def _send_willing_to_create_project_prompt(session: Session, phone_number:
     )
     await send_whatsapp_flow(to=phone_number, body=body, step=step)
 
+
+def _in_file_upload_flow(session: Session) -> bool:
+    return bool(
+        edit_flow.awaiting_file_upload(session)
+        or hybrid_flow.pending_file_upload(session)
+        or session.flow_state.get("awaiting_more_upload_decision")
+        or session.flow_state.get("awaiting_additional_file_upload")
+    )
+
+
+def _cancel_pending_upload_follow_up(session: Session) -> None:
+    """Invalidate any in-flight debounced upload follow-up tasks."""
+    session.flow_state["media_upload_batch_version"] = (
+        int(session.flow_state.get("media_upload_batch_version") or 0) + 1
+    )
+
+
+def _looks_like_upload_filename(message: str) -> bool:
+    lower = (message or "").strip().lower()
+    if not lower:
+        return False
+    return lower.endswith((
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".dwg", ".doc", ".docx",
+    ))
+
+
 async def _send_file_upload_follow_up(
     session: Session,
     phone_number: str,
@@ -315,7 +341,8 @@ async def _send_file_upload_follow_up(
     file_ack: str | None = None,
     ask_for_more: bool = True,
 ) -> None:
-    hybrid_flow.sync_attachment_fields(session)
+    if ask_for_more:
+        hybrid_flow.sync_attachment_fields(session, complete_step=False)
     if file_ack is None:
         file_ack = hybrid_flow.file_upload_ack_message(session)
     if ask_for_more:
@@ -366,10 +393,12 @@ async def _debounced_file_upload_follow_up(
 
         hybrid_flow.init_flow(session)
         awaiting_additional = session.flow_state.get("awaiting_additional_file_upload")
+        awaiting_more = session.flow_state.get("awaiting_more_upload_decision")
         if (
             not edit_flow.awaiting_file_upload(session)
             and not hybrid_flow.pending_file_upload(session)
             and not awaiting_additional
+            and not awaiting_more
         ):
             return
 
@@ -611,12 +640,10 @@ async def _handle_whatsapp_message_impl(
                 if meta:
                     saved_any = True
             if saved_any:
-                in_file_upload_flow = (
-                    edit_flow.awaiting_file_upload(session)
-                    or hybrid_flow.pending_file_upload(session)
-                    or session.flow_state.get("awaiting_additional_file_upload")
-                )
-                if in_file_upload_flow:
+                if session.flow_state.get("awaiting_more_upload_decision"):
+                    session.flow_state.pop("awaiting_more_upload_decision", None)
+                    session.flow_state["awaiting_additional_file_upload"] = True
+                if _in_file_upload_flow(session):
                     await _schedule_file_upload_follow_up(session, phone_number)
                     await save_session(session)
                     await supabase_store.upsert_session_log(session)
@@ -759,6 +786,7 @@ async def _handle_whatsapp_message_impl(
             await send_whatsapp_message(to=phone_number, body=prompt)
             return
         session.flow_state.pop("awaiting_more_upload_decision", None)
+        _cancel_pending_upload_follow_up(session)
         await save_session(session)
         await supabase_store.upsert_session_log(session)
         await _send_file_upload_follow_up(
@@ -769,6 +797,18 @@ async def _handle_whatsapp_message_impl(
         )
         await save_session(session)
         await supabase_store.upsert_session_log(session)
+        return
+
+    if (
+        _in_file_upload_flow(session)
+        and _looks_like_upload_filename(user_message)
+        and not _parse_yes_no_choice(
+            user_message,
+            list_id=list_id,
+            button_payload=button_payload,
+            button_text=button_text,
+        )
+    ):
         return
 
     if se.fs_current_stage(session) == "service_selection":
