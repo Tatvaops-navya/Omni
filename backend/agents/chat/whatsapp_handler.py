@@ -791,12 +791,6 @@ async def _handle_whatsapp_message_impl(
         confirmation = (agent_response.text or "").strip()
         if confirmation:
             await send_whatsapp_message(to=phone_number, body=confirmation)
-        from backend.integrations.tatva_enquiry_submit import extract_tatva_attachment_urls
-        attachment_urls = extract_tatva_attachment_urls(
-            agent_response.session.flow_state.get("tatva_enquiry_attachments")
-        )
-        for attachment_url in attachment_urls:
-            await send_whatsapp_message(to=phone_number, body=attachment_url)
         follow_up = (agent_response.follow_up_text or "").strip()
         if follow_up:
             await send_whatsapp_message(to=phone_number, body=follow_up)
