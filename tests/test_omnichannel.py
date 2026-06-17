@@ -18,6 +18,7 @@ from backend.agents.chat.whatsapp_handler import (
     _returning_edit_decision_step,
     _returning_profile_field_step,
     _returning_user_greeting_text,
+    _debounced_file_upload_follow_up,
 )
 from backend.utils.session_idle import (
     is_session_idle_expired,
@@ -174,6 +175,58 @@ def test_returning_user_steps_and_greeting():
     assert "Welcome back, Rahul" in text
     assert "rahul@gmail.com" in text
     assert _first_name("Rahul Sharma") == "Rahul"
+
+
+@pytest.mark.asyncio
+async def test_additional_file_upload_follow_up_advances_flow(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_whatsapp:+919888877777",
+        phone_number="whatsapp:+919888877777",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+        service_category=ServiceCategory.ELECTRICAL,
+        active_consultant="vivek",
+    )
+    se.on_service_selected(session, ServiceCategory.ELECTRICAL)
+    for field, value in (
+        ("service_q1", "new_wiring_rewiring"),
+        ("service_q2", "residential_apartment"),
+        ("service_q3", "urgent_breakdown_hazard"),
+        ("service_q4", "Need rewiring"),
+    ):
+        se.mark_field_validated(session, field, value)
+    session.flow_state["media_upload_batch_version"] = 1
+    session.flow_state["awaiting_additional_file_upload"] = True
+
+    follow_up_calls: list[bool] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_send_follow_up(_session, _phone, *, ask_for_more=True, **kwargs):
+        follow_up_calls.append(ask_for_more)
+
+    async def instant_sleep(_seconds):
+        return None
+
+    async def fake_upsert_session_log(_session):
+        return None
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh, "_send_file_upload_follow_up", fake_send_follow_up)
+    monkeypatch.setattr(wh.asyncio, "sleep", instant_sleep)
+    monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
+
+    await _debounced_file_upload_follow_up("wa_whatsapp:+919888877777", "whatsapp:+919888877777", 1)
+
+    assert follow_up_calls == [False]
+    assert "awaiting_additional_file_upload" not in session.flow_state
 
 
 def test_greeting_detection_not_name_false_positive():
