@@ -784,6 +784,69 @@ def test_invalid_mcq_reasks_current_question():
     assert not se.field_is_complete(session, "willing_to_create_project")
 
 
+def test_stale_whatsapp_list_tap_on_answered_question_is_rejected():
+    """Re-tapping an old list-picker must not change a completed answer."""
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Navya"),
+        ("city", "Bengaluru"),
+        ("property_location", "HSR Layout"),
+        ("preferred_contact_time", "afternoon"),
+        ("willing_to_create_project", "yes"),
+    ):
+        se.mark_field_validated(session, field, value)
+    se.on_service_selected(session, ServiceCategory.RESIDENTIAL_CONSTRUCTION)
+    se.mark_field_validated(session, "service_q1", "new_home_build")
+    session.flow_state["current_step_id"] = "q2_budget_range"
+
+    reply, handled = hybrid_flow.process_hybrid_turn(
+        session,
+        "Farmhouse / Villa Construction",
+        list_id="farmhouse_villa_construction",
+    )
+    assert handled is True
+    assert "already answered" in reply.lower()
+    assert session.extracted_fields.get("service_q1") == "new_home_build"
+    step = hybrid_flow.get_current_step(session)
+    assert step is not None
+    assert step["field"] == "service_q2"
+
+
+def test_current_whatsapp_list_tap_still_accepted():
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Navya"),
+        ("city", "Bengaluru"),
+        ("property_location", "HSR Layout"),
+        ("preferred_contact_time", "afternoon"),
+        ("willing_to_create_project", "yes"),
+    ):
+        se.mark_field_validated(session, field, value)
+    se.on_service_selected(session, ServiceCategory.RESIDENTIAL_CONSTRUCTION)
+
+    reply, handled = hybrid_flow.process_hybrid_turn(
+        session,
+        "New Home Build",
+        list_id="new_home_build",
+    )
+    assert handled is True
+    assert se.field_is_complete(session, "service_q1")
+    assert session.extracted_fields.get("service_q1") == "new_home_build"
+    assert hybrid_flow.get_current_step(session)["field"] == "service_q2"
+
+
 @pytest.mark.asyncio
 async def test_off_topic_during_mcq_reasks_not_guardrail():
     session = Session(

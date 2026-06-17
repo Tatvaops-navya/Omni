@@ -313,7 +313,9 @@ def get_final_review_outbound_step(session) -> dict:
 
 def format_final_review(session, *, include_footer: bool | None = None) -> str:
     """Structured preview before summary generation."""
+    from backend.intelligence import hybrid_flow
     from backend.intelligence.stage_engine import can_enter_final_review, missing_fields_report
+    hybrid_flow.sync_attachment_fields(session)
     if not can_enter_final_review(session):
         missing = missing_fields_report(session)
         return (
@@ -387,7 +389,11 @@ def _format_requirements_review(session, *, service_key: str = "") -> list[str]:
         if not field or stype == "file_request":
             continue
         label = _question_review_label(step)
-        value = _humanize(field, ef.get(field), service_category=service_key)
+        raw_value = ef.get(field)
+        if stype == "descriptive":
+            value = str(raw_value).strip() if raw_value not in (None, "") else "—"
+        else:
+            value = _humanize(field, raw_value, service_category=service_key)
         lines.append(_requirement_review_line(label, value))
     if lines:
         return lines
@@ -400,14 +406,25 @@ def _format_requirements_review(session, *, service_key: str = "") -> list[str]:
 
 
 def _format_attachments_review(session, *, service_key: str = "") -> str:
+    from backend.intelligence import hybrid_flow
+
+    hybrid_flow.sync_attachment_fields(session)
+    if hybrid_flow.attachment_count(session) > 0:
+        return hybrid_flow.format_attachment_review_line(session)
     ef = session.extracted_fields
     for step in get_service_questionnaire_steps(session):
         if step.get("type") != "file_request":
             continue
         field = step.get("field")
         if field:
-            return _humanize(field, ef.get(field, "none"), service_category=service_key)
-    return _humanize("attachments", ef.get("attachments", "none"), service_category=service_key)
+            raw = ef.get(field, "none")
+            if str(raw).strip().lower() in ("skipped", "skip", "none", ""):
+                return "No files uploaded"
+            return _humanize(field, raw, service_category=service_key)
+    raw = ef.get("attachments", "none")
+    if str(raw).strip().lower() in ("skipped", "skip", "none", ""):
+        return "No files uploaded"
+    return _humanize("attachments", raw, service_category=service_key)
 
 
 # Alias

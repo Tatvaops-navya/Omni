@@ -253,6 +253,155 @@ def _resolve_mcq_choice(step: dict, chosen: dict) -> dict[str, Any]:
     return {field: chosen.get("value", chosen["label"])}
 
 
+def _is_interactive_mcq_tap(
+    *,
+    list_id: Optional[str] = None,
+    button_text: Optional[str] = None,
+    button_payload: Optional[str] = None,
+) -> bool:
+    return bool((list_id or "").strip() or (button_payload or "").strip() or (button_text or "").strip())
+
+
+def _collect_flow_mcq_steps(session: Session) -> list[dict]:
+    """MCQ steps from earlier stages still visible as WhatsApp list pickers in chat."""
+    steps: list[dict] = []
+    for step in qb.build_client_details_steps():
+        if step.get("type") in ("mcq", "multi_select"):
+            steps.append(step)
+    from backend.intelligence.nova_router import get_service_selection_outbound_step
+
+    if session.service_category or se.needs_service_selection(session):
+        svc_step = get_service_selection_outbound_step(session)
+        if svc_step and svc_step.get("type") in ("mcq", "multi_select"):
+            steps.append(svc_step)
+    if session.service_category:
+        steps.extend(qb.get_service_questionnaire_steps(session))
+    return steps
+
+
+def _option_matches_list_id(opt: dict, list_id: str) -> bool:
+    lid = list_id.strip()
+    if not lid:
+        return False
+    return str(opt.get("value")) == lid or str(opt.get("label")) == lid
+
+
+def find_step_for_interactive_selection(
+    session: Session,
+    *,
+    list_id: Optional[str] = None,
+    button_text: Optional[str] = None,
+    button_payload: Optional[str] = None,
+    user_message: str = "",
+) -> Optional[dict]:
+    """
+    Map a WhatsApp list/button tap to the question step it came from.
+    list_id is authoritative when present (row value from the tapped message).
+    """
+    lid = (list_id or "").strip()
+    tap = (button_text or button_payload or "").strip()
+    text = (user_message or "").strip()
+    steps = _collect_flow_mcq_steps(session)
+
+    if lid:
+        for step in steps:
+            for opt in step.get("options", []):
+                if _option_matches_list_id(opt, lid):
+                    return step
+        return None
+
+    candidates: list[dict] = []
+    for probe in (tap, text):
+        if not probe:
+            continue
+        for step in steps:
+            if step.get("type") not in ("mcq", "multi_select"):
+                continue
+            if match_mcq_option(probe, step.get("options", [])):
+                candidates.append(step)
+        if candidates:
+            break
+
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    current = get_current_step(session)
+    current_field = str((current or {}).get("field") or "")
+    for step in candidates:
+        if str(step.get("field") or "") == current_field:
+            return step
+    for step in candidates:
+        if se.field_is_complete(session, str(step.get("field") or "")):
+            return step
+    return candidates[0]
+
+
+def is_stale_mcq_selection(session: Session, matched_step: dict) -> bool:
+    """True when the tap targets a question that is no longer the active step."""
+    field = str(matched_step.get("field") or "")
+    if not field:
+        return False
+    current = get_current_step(session)
+    current_field = str((current or {}).get("field") or "")
+    if current_field and current_field == field:
+        return False
+    if se.field_is_complete(session, field):
+        return True
+    return bool(current_field and current_field != field)
+
+
+def stale_mcq_reply(session: Session) -> str:
+    """User tapped an old WhatsApp list — options cannot be disabled in the chat UI."""
+    msg = (
+        "You've already answered that question, so that option can't be changed here.\n\n"
+        "Please continue with the current question below."
+    )
+    current = get_current_step(session)
+    if current:
+        prompt = str(current.get("prompt") or "").strip()
+        if prompt:
+            first_line = prompt.split("\n")[0].strip()
+            if first_line:
+                msg += f"\n\n*{first_line}*"
+    return msg
+
+
+def check_stale_interactive_selection(
+    session: Session,
+    *,
+    list_id: Optional[str] = None,
+    button_text: Optional[str] = None,
+    button_payload: Optional[str] = None,
+    user_message: str = "",
+    allowed_field: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Return a user-facing reply when an interactive tap targets a completed/out-of-order question.
+    allowed_field: when editing one field, re-taps on that same question remain valid.
+    """
+    if not _is_interactive_mcq_tap(
+        list_id=list_id, button_text=button_text, button_payload=button_payload,
+    ):
+        return None
+    matched = find_step_for_interactive_selection(
+        session,
+        list_id=list_id,
+        button_text=button_text,
+        button_payload=button_payload,
+        user_message=user_message,
+    )
+    if not matched:
+        return None
+    matched_field = str(matched.get("field") or "")
+    if allowed_field and matched_field == allowed_field:
+        return None
+    if is_stale_mcq_selection(session, matched):
+        return stale_mcq_reply(session)
+    return None
+
+
 def try_resolve_mcq(
     session: Session,
     user_message: str,
@@ -351,6 +500,16 @@ def process_hybrid_turn(
         session.flow_state.pop("awaiting_other_field", None)
         msg = _complete_field(session, awaiting, text)
         return (msg or _prompt_continue(session), True)
+
+    stale_reply = check_stale_interactive_selection(
+        session,
+        list_id=list_id,
+        button_text=button_text,
+        button_payload=button_payload,
+        user_message=normalized_text,
+    )
+    if stale_reply:
+        return (stale_reply, True)
 
     step = get_current_step(session)
     if not step:
@@ -492,23 +651,69 @@ def advance_step(session: Session) -> None:
     se.maybe_advance_current_stage(session)
 
 
-def refresh_attachment_field_count(session: Session) -> None:
-    """Update stored file-step value after additional uploads in the same batch."""
-    se.reconcile_session(session)
-    count = len(session.attachments)
-    value = f"{count} file(s) uploaded" if count else "skipped"
-    field = None
+def resolve_file_upload_field(session: Session) -> str:
+    """Field name for the questionnaire file-upload step (attachments or file_order_N)."""
     step = get_current_step(session)
     if step and step.get("type") == "file_request":
-        field = step.get("field")
-    if not field:
-        for s in qb.get_service_questionnaire_steps(session):
-            if s.get("type") == "file_request":
-                field = s.get("field")
-                break
-    field = field or "attachments"
-    if field in session.completed_fields or session.extracted_fields.get(field):
+        return str(step.get("field") or "attachments")
+    for s in qb.get_service_questionnaire_steps(session):
+        if s.get("type") == "file_request":
+            return str(s.get("field") or "attachments")
+    return "attachments"
+
+
+def attachment_count(session: Session) -> int:
+    return len(session.attachments or [])
+
+
+def attachment_upload_value(session: Session) -> str:
+    count = attachment_count(session)
+    if count <= 0:
+        return "skipped"
+    if count == 1:
+        return "1 file uploaded"
+    return f"{count} files uploaded"
+
+
+def format_attachment_review_line(session: Session) -> str:
+    """Client-facing file count for final review / summary."""
+    count = attachment_count(session)
+    if count <= 0:
+        field = resolve_file_upload_field(session)
+        raw = str(session.extracted_fields.get(field) or "").strip().lower()
+        if raw in ("skipped", "skip", "none", ""):
+            return "No files uploaded"
+    if count == 1:
+        return "1 file uploaded"
+    return f"{count} files uploaded"
+
+
+def sync_attachment_fields(session: Session) -> None:
+    """Align stored file-step answers with session.attachments (source of truth)."""
+    se.reconcile_session(session)
+    field = resolve_file_upload_field(session)
+    count = attachment_count(session)
+    existing = str(session.extracted_fields.get(field) or "").strip().lower()
+    if count <= 0:
+        if field not in session.completed_fields and not existing:
+            return
+        if existing in ("skipped", "skip", "none", ""):
+            return
+    value = attachment_upload_value(session)
+    if field in session.completed_fields or session.extracted_fields.get(field) or count > 0:
         se.mark_field_validated(session, field, value)
+
+
+def file_upload_ack_message(session: Session) -> str:
+    count = attachment_count(session)
+    if count > 1:
+        return f"Thank you! We received your {count} files."
+    return "Thank you! We received your file."
+
+
+def refresh_attachment_field_count(session: Session) -> None:
+    """Update stored file-step value after additional uploads in the same batch."""
+    sync_attachment_fields(session)
 
 
 def complete_attachment_upload(session: Session) -> str:
@@ -516,11 +721,8 @@ def complete_attachment_upload(session: Session) -> str:
     Called after WhatsApp media is saved. Completes the current file step and advances.
     """
     se.reconcile_session(session)
-    step = get_current_step(session)
-    field = (step or {}).get("field") or "attachments"
-    count = len(session.attachments)
-    value = f"{count} file(s) uploaded" if count else "skipped"
-    se.mark_field_validated(session, field, value)
+    sync_attachment_fields(session)
+    field = resolve_file_upload_field(session)
     session.flow_state.pop("current_step_id", None)
     se.maybe_advance_current_stage(session)
     if se.can_enter_final_review(session):

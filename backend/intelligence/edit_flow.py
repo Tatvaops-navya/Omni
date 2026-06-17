@@ -404,6 +404,18 @@ def process_edit_turn(
     if not is_active(session):
         return "", None, False
 
+    stale = hybrid_flow.check_stale_interactive_selection(
+        session,
+        list_id=list_id,
+        button_payload=button_payload,
+        button_text=button_text,
+        user_message=user_message,
+        allowed_field=session.flow_state.get("edit_field") if session.flow_state.get("edit_phase") == "value" else None,
+    )
+    if stale:
+        outbound = get_outbound_step(session)
+        return stale, outbound, True
+
     phase = session.flow_state.get("edit_phase", "section")
     text = (user_message or "").strip()
     lower = text.lower()
@@ -552,9 +564,7 @@ def process_edit_turn(
 
 def complete_file_upload(session: Session) -> tuple[str, Optional[dict], bool]:
     """Called after WhatsApp media is saved during edit upload phase."""
-    count = len(session.attachments)
-    value = f"{count} file(s) uploaded" if count else "skipped"
-    se.mark_field_validated(session, "attachments", value)
+    hybrid_flow.sync_attachment_fields(session)
     return _finish_edit(session)
 
 
