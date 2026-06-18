@@ -56,6 +56,28 @@ _session_locks: dict[str, asyncio.Lock] = {}
 MORE_FILE_UPLOAD_FIELD = "__more_file_upload__"
 RETURNING_EDIT_DECISION_FIELD = "__returning_edit_info__"
 RETURNING_PROFILE_FIELD = "__returning_profile_field__"
+RETURNING_USER_PHASE = "returning_user_phase"
+
+
+def _returning_user_phase(session: Session) -> str:
+    return str(session.flow_state.get(RETURNING_USER_PHASE) or "")
+
+
+def _set_returning_user_phase(session: Session, phase: str) -> None:
+    if phase:
+        session.flow_state[RETURNING_USER_PHASE] = phase
+    else:
+        session.flow_state.pop(RETURNING_USER_PHASE, None)
+
+
+def _clear_returning_user_prompt_state(session: Session) -> None:
+    session.flow_state.pop("awaiting_returning_edit_decision", None)
+    session.flow_state.pop("awaiting_returning_profile_field", None)
+    session.flow_state.pop("awaiting_returning_profile_value", None)
+    session.flow_state.pop("returning_profile_edit_field", None)
+    session.flow_state.pop("returning_user_reentry", None)
+    session.flow_state.pop("pending_outbound_mcq", None)
+    _set_returning_user_phase(session, "")
 
 
 def _session_lock(session_id: str) -> asyncio.Lock:
@@ -197,16 +219,28 @@ def _returning_profile_selection(
     return ""
 
 
+async def _send_returning_plain_mcq(
+    phone_number: str,
+    step: dict,
+    *,
+    context_body: str = "",
+) -> None:
+    """Single plain-text MCQ — avoids duplicate WhatsApp list-picker prompts."""
+    plain_step = dict(step)
+    plain_step["force_plain_mcq"] = True
+    plain_step.pop("twilio_content_sid", None)
+    plain_step.pop("use_dynamic_list", None)
+    menu = hybrid_flow.format_step_message(plain_step, include_stage=False)
+    body = "\n\n".join(part for part in ((context_body or "").strip(), menu) if part)
+    await send_whatsapp_message(to=phone_number, body=body)
+
+
 async def _send_returning_mcq_prompt(
     phone_number: str,
     context_body: str,
     step: dict,
 ) -> None:
-    await send_context_then_mcq_list(
-        phone_number,
-        context_body,
-        enrich_whatsapp_mcq_step(step),
-    )
+    await _send_returning_plain_mcq(phone_number, step, context_body=context_body)
 
 
 def _returning_edit_decision_step() -> dict:
@@ -229,12 +263,48 @@ def _returning_profile_field_step() -> dict:
     }
 
 
+def _complete_known_client_details_for_returning_user(
+    session: Session,
+    preserved: dict[str, str],
+) -> None:
+    """Mark profile fields complete so the next step is willing_to_create_project."""
+    se.mark_field_validated(session, "ava_intro_shown", True)
+    phone = preserved.get("phone", "")
+    if phone:
+        se.mark_field_validated(session, "phone_number", phone)
+
+    if preserved.get("client_name"):
+        se.mark_field_validated(session, "client_name", preserved["client_name"])
+
+    email = preserved.get("email", "")
+    if email and se.is_valid_gmail_address(email):
+        se.mark_field_validated(session, "email", email)
+    else:
+        se.mark_field_validated(session, "email", "")
+
+    city = preserved.get("city", "")
+    prop = preserved.get("property_location", "")
+    if not city and prop:
+        city = prop.split(",")[0].strip()
+    if city:
+        se.mark_field_validated(session, "city", city)
+
+    if prop:
+        se.mark_field_validated(session, "property_location", prop)
+
+    contact = preserved.get("preferred_contact_time", "")
+    if not contact:
+        contact = "morning"
+    se.mark_field_validated(session, "preferred_contact_time", contact)
+
+
 def _prepare_returning_user_client_stage(session: Session) -> None:
     """Clear the prior enquiry and position a returning user at willing_to_create_project."""
     phone = (session.extracted_fields.get("phone_number") or session.phone_number or "").strip()
     if phone.lower().startswith("whatsapp:"):
         phone = phone.split(":", 1)[-1]
     preserved = {
+        "phone": phone,
         "tatva_user_id": str(session.extracted_fields.get("tatva_user_id") or "").strip(),
         "client_name": str(session.extracted_fields.get("client_name") or "").strip(),
         "email": str(session.extracted_fields.get("email") or "").strip(),
@@ -256,24 +326,12 @@ def _prepare_returning_user_client_stage(session: Session) -> None:
     ):
         session.flow_state.pop(key, None)
     hybrid_flow.init_flow(session)
-    se.mark_field_validated(session, "ava_intro_shown", True)
-    if phone:
-        se.mark_field_validated(session, "phone_number", phone)
-    if preserved["client_name"]:
-        se.mark_field_validated(session, "client_name", preserved["client_name"])
-    if preserved["email"] and se.is_valid_gmail_address(preserved["email"]):
-        se.mark_field_validated(session, "email", preserved["email"])
-    if preserved["city"]:
-        se.mark_field_validated(session, "city", preserved["city"])
-    if preserved["property_location"]:
-        se.mark_field_validated(session, "property_location", preserved["property_location"])
-    if preserved["preferred_contact_time"]:
-        se.mark_field_validated(session, "preferred_contact_time", preserved["preferred_contact_time"])
+    _complete_known_client_details_for_returning_user(session, preserved)
     if preserved["tatva_user_id"]:
         session.extracted_fields["tatva_user_id"] = preserved["tatva_user_id"]
         if "tatva_user_id" not in session.completed_fields:
             session.completed_fields.append("tatva_user_id")
-    session.flow_state["returning_user_reentry"] = True
+    session.flow_state["returning_edit_flow_complete"] = True
     session.flow_state.pop("current_step_id", None)
     se.reconcile_session(session)
     _touch_session_activity(session)
@@ -288,13 +346,12 @@ def _is_registered_returning_user(session: Session) -> bool:
 
 
 def _is_in_returning_user_prompt(session: Session) -> bool:
-    """True while the user is mid returning-user re-entry (edit decision / profile)."""
-    return bool(
-        session.flow_state.get("awaiting_returning_edit_decision")
-        or session.flow_state.get("awaiting_returning_profile_field")
-        or session.flow_state.get("awaiting_returning_profile_value")
-        or session.flow_state.get("returning_user_reentry")
-    )
+    """True only while waiting for edit-decision or profile-edit replies."""
+    return _returning_user_phase(session) in {
+        "edit_decision",
+        "profile_field",
+        "profile_value",
+    }
 
 
 async def _hydrate_returning_profile_from_tatva(session: Session, *, force: bool = False) -> None:
@@ -347,6 +404,7 @@ async def _hydrate_returning_profile_from_tatva(session: Session, *, force: bool
 def _reset_stale_flow_for_returning_greeting(session: Session) -> None:
     """Drop stale qualification/review state before a returning-user welcome."""
     edit_flow.clear_edit_mode(session)
+    session.flow_state.pop("returning_edit_flow_complete", None)
     for key in (
         "conversation_ended",
         "final_review_shown",
@@ -364,6 +422,7 @@ def _reset_stale_flow_for_returning_greeting(session: Session) -> None:
         "project_declined",
     ):
         session.flow_state.pop(key, None)
+    _set_returning_user_phase(session, "")
 
 
 async def _ensure_registered_user_from_tatva(session: Session) -> bool:
@@ -405,6 +464,8 @@ async def _try_registered_user_greeting_restart(
         return False
     if session and _is_in_returning_user_prompt(session):
         return False
+    if session and session.flow_state.get("returning_edit_flow_complete"):
+        return False
 
     if session is None:
         session = Session(
@@ -440,36 +501,42 @@ def _returning_user_greeting_text(session: Session) -> str:
 async def _send_returning_user_reentry_prompt(session: Session, phone_number: str) -> None:
     session.flow_state["existing_user_flow_started"] = True
     session.flow_state["awaiting_returning_edit_decision"] = True
+    _set_returning_user_phase(session, "edit_decision")
     greeting = _returning_user_greeting_text(session)
     session.add_message(MessageRole.ASSISTANT, greeting)
     await save_session(session)
     await supabase_store.upsert_session_log(session)
-    await send_context_then_mcq_list(
-        phone_number,
-        greeting,
-        _returning_edit_decision_step(),
-    )
+    await send_whatsapp_message(to=phone_number, body=greeting)
+    await asyncio.sleep(1.5)
+    await _send_returning_plain_mcq(phone_number, _returning_edit_decision_step())
 
 
 async def _send_willing_to_create_project_prompt(session: Session, phone_number: str) -> None:
+    _clear_returning_user_prompt_state(session)
     _prepare_returning_user_client_stage(session)
     _touch_session_activity(session)
     step = hybrid_flow.get_current_step(session)
-    if step:
-        # Plain text (not another list-picker) — WhatsApp often drops a second
-        # interactive list right after the profile-edit menu, especially when the
-        # user typed their reply instead of tapping the list.
+    if step and step.get("field") == "willing_to_create_project":
         plain_step = dict(step)
         plain_step["force_plain_mcq"] = True
         plain_step.pop("twilio_content_sid", None)
         plain_step.pop("use_dynamic_list", None)
-        body = hybrid_flow.format_step_message(plain_step, include_stage=True)
+        body = hybrid_flow.format_step_message(plain_step, include_stage=False)
+        session.add_message(MessageRole.ASSISTANT, body)
+        await save_session(session)
+        await supabase_store.upsert_session_log(session)
         await send_whatsapp_message(to=phone_number, body=body)
     else:
-        await send_whatsapp_message(
-            to=phone_number,
-            body="Would you like to proceed with creating your project?",
+        fallback = (
+            "Would you like to proceed with creating your project? "
+            "Once created, a dedicated Relationship Manager will guide you through every step.\n\n"
+            "• Yes, Create My Project\n"
+            "• No, I'm Just Exploring"
         )
+        session.add_message(MessageRole.ASSISTANT, fallback)
+        await save_session(session)
+        await supabase_store.upsert_session_log(session)
+        await send_whatsapp_message(to=phone_number, body=fallback)
 
 
 def _in_file_upload_flow(session: Session) -> bool:
@@ -824,14 +891,7 @@ async def _handle_whatsapp_message_impl(
             if vendor_msg:
                 body = vendor_msg
             elif session.flow_state.get("tatva_phone_is_user"):
-                session.flow_state["existing_user_flow_started"] = True
-                session.flow_state["awaiting_returning_edit_decision"] = True
-                body = existing_user_welcome_text(session)
-                session.add_message(MessageRole.ASSISTANT, body)
-                await save_session(session)
-                await send_context_then_mcq_list(
-                    phone_number, body, returning_edit_decision_step()
-                )
+                await _send_returning_user_reentry_prompt(session, phone_number)
                 return
             else:
                 body = hybrid_flow.first_client_message()
@@ -886,22 +946,21 @@ async def _handle_whatsapp_message_impl(
             button_text=button_text,
         )
         if wants_edit is None:
-            await send_context_then_mcq_list(
+            await _send_returning_plain_mcq(
                 phone_number,
-                "Please choose *Yes* or *No*.",
                 _returning_edit_decision_step(),
+                context_body="Please choose *Yes* or *No*.",
             )
             return
         session.flow_state.pop("awaiting_returning_edit_decision", None)
         if wants_edit:
             session.flow_state["awaiting_returning_profile_field"] = True
+            _set_returning_user_phase(session, "profile_field")
             await save_session(session)
             await supabase_store.upsert_session_log(session)
-            await _send_returning_mcq_prompt(phone_number, "", _returning_profile_field_step())
+            await _send_returning_plain_mcq(phone_number, _returning_profile_field_step())
             return
         await _send_willing_to_create_project_prompt(session, phone_number)
-        await save_session(session)
-        await supabase_store.upsert_session_log(session)
         return
 
     if session.flow_state.get("awaiting_returning_profile_field"):
@@ -914,13 +973,12 @@ async def _handle_whatsapp_message_impl(
         if chosen == "continue":
             session.flow_state.pop("awaiting_returning_profile_field", None)
             await _send_willing_to_create_project_prompt(session, phone_number)
-            await save_session(session)
-            await supabase_store.upsert_session_log(session)
             return
         if chosen in {"client_name", "email", "property_location"}:
             session.flow_state.pop("awaiting_returning_profile_field", None)
             session.flow_state["awaiting_returning_profile_value"] = True
             session.flow_state["returning_profile_edit_field"] = chosen
+            _set_returning_user_phase(session, "profile_value")
             if chosen == "client_name":
                 prompt = "Please type your name."
             elif chosen == "email":
@@ -931,10 +989,10 @@ async def _handle_whatsapp_message_impl(
             await supabase_store.upsert_session_log(session)
             await send_whatsapp_message(to=phone_number, body=prompt)
             return
-        await _send_returning_mcq_prompt(
+        await _send_returning_plain_mcq(
             phone_number,
-            "Please choose *Name*, *Email*, *Property location*, or *Continue*.",
             _returning_profile_field_step(),
+            context_body="Please choose *Name*, *Email*, *Property location*, or *Continue*.",
         )
         return
 
@@ -968,13 +1026,26 @@ async def _handle_whatsapp_message_impl(
         session.flow_state.pop("awaiting_returning_profile_value", None)
         session.flow_state.pop("returning_profile_edit_field", None)
         session.flow_state["awaiting_returning_profile_field"] = True
+        _set_returning_user_phase(session, "profile_field")
         await save_session(session)
         await supabase_store.upsert_session_log(session)
-        await _send_returning_mcq_prompt(
+        await _send_returning_plain_mcq(
             phone_number,
-            "Updated successfully.",
             _returning_profile_field_step(),
+            context_body="Updated successfully.",
         )
+        return
+
+    # Registered user already finished the edit prompt — do not restart it from the controller.
+    if (
+        session.flow_state.get("returning_edit_flow_complete")
+        and is_greeting_message(user_message)
+    ):
+        step = hybrid_flow.get_current_step(session)
+        hold = "Please continue with the current question below."
+        if step:
+            hold += f"\n\n{hybrid_flow.format_step_message(step, include_stage=False)}"
+        await send_whatsapp_message(to=phone_number, body=hold)
         return
 
     if session.flow_state.get("awaiting_more_upload_decision"):
@@ -1117,6 +1188,14 @@ async def _handle_whatsapp_message_impl(
         reply = "Thanks — could you repeat that? Please continue with the current step."
 
     pending_mcq = session_out.flow_state.pop("pending_outbound_mcq", None)
+    if pending_mcq:
+        from backend.agents.chat.twilio_client import RETURNING_MCQ_FIELDS
+        pending_field = str(pending_mcq.get("field") or "")
+        if pending_field in RETURNING_MCQ_FIELDS and (
+            session_out.flow_state.get("returning_edit_flow_complete")
+            or session_out.flow_state.get("existing_user_flow_started")
+        ):
+            pending_mcq = None
     if pending_mcq:
         await send_context_then_mcq_list(phone_number, reply, pending_mcq)
         return
