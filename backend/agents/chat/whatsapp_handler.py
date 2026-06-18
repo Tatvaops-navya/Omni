@@ -161,6 +161,43 @@ def _first_name(name: str) -> str:
     return parts[0] if parts else ""
 
 
+def _touch_session_activity(session: Session) -> None:
+    session.last_active = datetime.utcnow()
+
+
+def _returning_profile_selection(
+    *,
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
+    user_message: str = "",
+) -> str:
+    """Normalize list tap or typed reply for returning-user profile edit menu."""
+    for raw in (list_id, button_payload, button_text, user_message):
+        selected = (raw or "").strip().lower()
+        if not selected:
+            continue
+        if selected in {"client_name", "name"}:
+            return "client_name"
+        if selected == "email":
+            return "email"
+        if selected in {"continue", "no", "n", "skip", "done"}:
+            return "continue"
+    return ""
+
+
+async def _send_returning_mcq_prompt(
+    phone_number: str,
+    context_body: str,
+    step: dict,
+) -> None:
+    await send_context_then_mcq_list(
+        phone_number,
+        context_body,
+        enrich_whatsapp_mcq_step(step),
+    )
+
+
 def _returning_edit_decision_step() -> dict:
     return {
         "id": "returning_edit_decision",
@@ -296,9 +333,11 @@ def _prepare_returning_user_client_stage(session: Session) -> None:
     session.flow_state["returning_user_reentry"] = True
     session.flow_state.pop("current_step_id", None)
     se.reconcile_session(session)
+    _touch_session_activity(session)
 
 
 async def _send_returning_user_reentry_prompt(session: Session, phone_number: str) -> None:
+    _touch_session_activity(session)
     session.flow_state["awaiting_returning_edit_decision"] = True
     await save_session(session)
     await supabase_store.upsert_session_log(session)
@@ -311,11 +350,15 @@ async def _send_returning_user_reentry_prompt(session: Session, phone_number: st
 
 async def _send_willing_to_create_project_prompt(session: Session, phone_number: str) -> None:
     _prepare_returning_user_client_stage(session)
+    _touch_session_activity(session)
     step = hybrid_flow.get_current_step(session)
-    body = hybrid_flow.format_step_message(step, include_stage=False) if step else (
-        "Would you like to proceed with creating your project?"
-    )
-    await send_whatsapp_flow(to=phone_number, body=body, step=step)
+    if step:
+        await _send_returning_mcq_prompt(phone_number, "", step)
+    else:
+        await send_whatsapp_message(
+            to=phone_number,
+            body="Would you like to proceed with creating your project?",
+        )
 
 
 def _in_file_upload_flow(session: Session) -> bool:
@@ -571,6 +614,9 @@ async def _handle_whatsapp_message_impl(
     media_items = media_items or []
     session = await get_session(session_id)
 
+    if session and (user_message or num_media > 0):
+        _touch_session_activity(session)
+
     # In-progress chat idle > N minutes — reset and send EVA intro; discard stale reply.
     if session and (user_message or num_media > 0) and is_session_idle_expired(session):
         stale_session = session
@@ -696,12 +742,7 @@ async def _handle_whatsapp_message_impl(
             session.flow_state["awaiting_returning_profile_field"] = True
             await save_session(session)
             await supabase_store.upsert_session_log(session)
-            step = _returning_profile_field_step()
-            await send_whatsapp_flow(
-                to=phone_number,
-                body=hybrid_flow.format_step_message(step, include_stage=False),
-                step=step,
-            )
+            await _send_returning_mcq_prompt(phone_number, "", _returning_profile_field_step())
             return
         await _send_willing_to_create_project_prompt(session, phone_number)
         await save_session(session)
@@ -709,36 +750,36 @@ async def _handle_whatsapp_message_impl(
         return
 
     if session.flow_state.get("awaiting_returning_profile_field"):
-        selected = (list_id or button_payload or button_text or user_message or "").strip().lower()
-        if selected in {"client_name", "name"}:
-            chosen_field = "client_name"
-        elif selected in {"email"}:
-            chosen_field = "email"
-        elif selected in {"continue"}:
+        chosen = _returning_profile_selection(
+            list_id=list_id,
+            button_payload=button_payload,
+            button_text=button_text,
+            user_message=user_message,
+        )
+        if chosen == "continue":
             session.flow_state.pop("awaiting_returning_profile_field", None)
             await _send_willing_to_create_project_prompt(session, phone_number)
             await save_session(session)
             await supabase_store.upsert_session_log(session)
             return
-        else:
-            step = _returning_profile_field_step()
-            await send_whatsapp_flow(
-                to=phone_number,
-                body="Please choose Name, Email, or Continue.",
-                step=step,
+        if chosen in {"client_name", "email"}:
+            session.flow_state.pop("awaiting_returning_profile_field", None)
+            session.flow_state["awaiting_returning_profile_value"] = True
+            session.flow_state["returning_profile_edit_field"] = chosen
+            prompt = (
+                "Please type your name."
+                if chosen == "client_name"
+                else "Please type your Gmail address (or reply skip)."
             )
+            await save_session(session)
+            await supabase_store.upsert_session_log(session)
+            await send_whatsapp_message(to=phone_number, body=prompt)
             return
-        session.flow_state.pop("awaiting_returning_profile_field", None)
-        session.flow_state["awaiting_returning_profile_value"] = True
-        session.flow_state["returning_profile_edit_field"] = chosen_field
-        prompt = (
-            "Please type your name."
-            if chosen_field == "client_name"
-            else "Please type your Gmail address (or reply skip)."
+        await _send_returning_mcq_prompt(
+            phone_number,
+            "Please choose *Name*, *Email*, or *Continue*.",
+            _returning_profile_field_step(),
         )
-        await save_session(session)
-        await supabase_store.upsert_session_log(session)
-        await send_whatsapp_message(to=phone_number, body=prompt)
         return
 
     if session.flow_state.get("awaiting_returning_profile_value"):
@@ -765,11 +806,10 @@ async def _handle_whatsapp_message_impl(
         session.flow_state["awaiting_returning_profile_field"] = True
         await save_session(session)
         await supabase_store.upsert_session_log(session)
-        step = _returning_profile_field_step()
-        await send_whatsapp_flow(
-            to=phone_number,
-            body="Updated successfully. Do you want to edit anything else?",
-            step=step,
+        await _send_returning_mcq_prompt(
+            phone_number,
+            "Updated successfully.",
+            _returning_profile_field_step(),
         )
         return
 

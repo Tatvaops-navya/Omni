@@ -17,6 +17,7 @@ from backend.agents.chat.whatsapp_handler import (
     _parse_yes_no_choice,
     _returning_edit_decision_step,
     _returning_profile_field_step,
+    _returning_profile_selection,
     _returning_user_greeting_text,
     _is_in_returning_user_prompt,
     _debounced_file_upload_follow_up,
@@ -176,6 +177,127 @@ def test_returning_user_steps_and_greeting():
     assert "Welcome back, Rahul" in text
     assert "rahul@gmail.com" in text
     assert _first_name("Rahul Sharma") == "Rahul"
+
+
+def test_returning_profile_field_uses_interactive_list(monkeypatch):
+    from backend.agents.chat import twilio_client
+    from backend.agents.chat.twilio_client import enrich_whatsapp_mcq_step, mcq_uses_interactive_delivery
+    from backend.config import get_settings
+
+    monkeypatch.setenv("TWILIO_MCQ_LIST_3_CONTENT_SID", "HX3row000000000000000000000000001")
+    monkeypatch.setenv("TWILIO_WHATSAPP_QUICK_REPLY", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr(twilio_client, "settings", get_settings())
+
+    step = enrich_whatsapp_mcq_step(_returning_profile_field_step())
+    assert step["twilio_content_sid"] == "HX3row000000000000000000000000001"
+    assert mcq_uses_interactive_delivery(step) is True
+
+
+def test_returning_profile_selection_maps_no_to_continue():
+    assert _returning_profile_selection(user_message="no") == "continue"
+    assert _returning_profile_selection(list_id="client_name") == "client_name"
+    assert _returning_profile_selection(user_message="name") == "client_name"
+    assert _returning_profile_selection(user_message="continue") == "continue"
+
+
+@pytest.mark.asyncio
+async def test_returning_user_yes_to_edit_sends_list_template(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    session.flow_state["awaiting_returning_edit_decision"] = True
+
+    sent: list[tuple[str, str]] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_upsert_session_log(_session):
+        return None
+
+    async def fake_send_returning_mcq_prompt(_phone, context, _step):
+        sent.append((context, str(_step.get("field"))))
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
+    monkeypatch.setattr(wh, "_send_returning_mcq_prompt", fake_send_returning_mcq_prompt)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_test",
+        "whatsapp:+91999",
+        "yes",
+        list_id="yes",
+    )
+
+    assert sent == [("", "__returning_profile_field__")]
+    assert session.flow_state.get("awaiting_returning_profile_field") is True
+
+
+@pytest.mark.asyncio
+async def test_returning_user_no_after_name_update_continues(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    session.extracted_fields["tatva_user_id"] = "abc"
+    session.flow_state["awaiting_returning_profile_field"] = True
+
+    willing_calls: list[str] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_upsert_session_log(_session):
+        return None
+
+    async def fake_send_willing(_s, phone):
+        willing_calls.append(phone)
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
+    monkeypatch.setattr(wh, "_send_willing_to_create_project_prompt", fake_send_willing)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_test",
+        "whatsapp:+91999",
+        "no",
+    )
+
+    assert willing_calls == ["whatsapp:+91999"]
+    assert "awaiting_returning_profile_field" not in session.flow_state
+
+
+def test_touch_activity_prevents_false_idle_reset():
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+        summary_generated=False,
+        last_active=datetime.utcnow() - timedelta(hours=2),
+    )
+    session.last_active = datetime.utcnow()
+    assert not is_session_idle_expired(session)
 
 
 def test_returning_user_prompt_blocks_duplicate_greeting_restart():
