@@ -163,6 +163,7 @@ def format_tatva_enquiry_summary_whatsapp(
     attachments: list[Any] | None = None,
 ) -> str:
     """Format Tatva API enquiry.summary object for WhatsApp confirmation."""
+    _ = attachments  # files are sent as separate CTA button messages after the summary
     lines: list[str] = []
     for key, label in _TATVA_ENQUIRY_SUMMARY_LABELS:
         value = summary.get(key)
@@ -172,10 +173,6 @@ def format_tatva_enquiry_summary_whatsapp(
         if not text:
             continue
         lines.append(f"*{label}*\n{text}")
-
-    attachment_section = format_attachments_section_whatsapp(attachments)
-    if attachment_section:
-        lines.append(attachment_section)
 
     return "\n\n".join(lines)
 
