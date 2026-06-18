@@ -89,12 +89,9 @@ def test_format_tatva_enquiry_summary_whatsapp():
     assert "sdffdsds" in text
     assert "*Estimated Scope*" in text
     assert "₹25 Lakhs" in text
-    assert "*Attachments*" in text
-    assert "↗ View image" in text
-    assert "↗ View PDF" in text
-    assert "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" not in text
-    assert text.index("*Estimated Scope*") < text.index("*Attachments*")
-    assert text.index("↗ View image") < text.index("↗ View PDF")
+    assert "*Attachments*" not in text
+    assert "View image" not in text
+    assert "View PDF" not in text
 
     text_without_files = format_tatva_enquiry_summary_whatsapp(summary)
     assert "*Attachments*" not in text_without_files
@@ -184,9 +181,8 @@ def test_client_confirmation_uses_tatva_api_summary():
     assert "Your enquiry has been successfully received" in text
     assert "*Project Overview*" in text
     assert "sdffdsds" in text
-    assert "*Attachments*" in text
-    assert "↗ View image" in text
-    assert "https://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" not in text
+    assert "*Attachments*" not in text
+    assert "View image" not in text
     assert "Location:" not in text
     assert "Assigned Specialist:" not in text
 
