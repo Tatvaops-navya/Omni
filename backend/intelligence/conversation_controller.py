@@ -230,22 +230,29 @@ class ConversationController:
                         })
 
         if session.summary_generated or session.conversation_stage == ConversationStage.SUMMARY_GENERATED:
-            lower = user_message.lower().strip()
-            if lower.startswith(("thank", "thx", "ty ", "ty")) or lower in ("ty", "thanks", "thank you", "thankyou"):
-                thanks = (
-                    "You're welcome! 😊\n\n"
-                    "Your enquiry is already with our team — we'll contact you during your preferred time.\n\n"
-                    "Thank you for choosing TatvaOps."
-                )
-            else:
-                thanks = (
-                    "Your enquiry has already been submitted. "
-                    "Our team will contact you during your preferred time.\n\n"
-                    "Thank you for choosing TatvaOps."
-                )
-            session.add_message(MessageRole.USER, user_message)
-            session.add_message(MessageRole.ASSISTANT, thanks)
-            return AgentResponse(text=thanks, session=session)
+            in_returning_reentry = bool(
+                session.flow_state.get("awaiting_returning_edit_decision")
+                or session.flow_state.get("awaiting_returning_profile_field")
+                or session.flow_state.get("awaiting_returning_profile_value")
+                or session.flow_state.get("returning_user_reentry")
+            )
+            if not in_returning_reentry:
+                lower = user_message.lower().strip()
+                if lower.startswith(("thank", "thx", "ty ", "ty")) or lower in ("ty", "thanks", "thank you", "thankyou"):
+                    thanks = (
+                        "You're welcome! 😊\n\n"
+                        "Your enquiry is already with our team — we'll contact you during your preferred time.\n\n"
+                        "Thank you for choosing TatvaOps."
+                    )
+                else:
+                    thanks = (
+                        "Your enquiry has already been submitted. "
+                        "Our team will contact you during your preferred time.\n\n"
+                        "Thank you for choosing TatvaOps."
+                    )
+                session.add_message(MessageRole.USER, user_message)
+                session.add_message(MessageRole.ASSISTANT, thanks)
+                return AgentResponse(text=thanks, session=session)
 
         if session.flow_state.get("project_declined"):
             session.add_message(MessageRole.USER, user_message)

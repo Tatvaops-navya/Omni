@@ -75,6 +75,60 @@ async def send_whatsapp_message(to: str, body: str) -> bool:
     return ok
 
 
+async def send_whatsapp_media(to: str, media_url: str, *, body: str = "") -> bool:
+    """Send a WhatsApp media message (image/PDF/video) with an optional caption."""
+    url = (media_url or "").strip()
+    if not url:
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        caption = (body or "").strip()
+
+        def _create():
+            kwargs: dict[str, object] = {
+                "from_": settings.twilio_whatsapp_from,
+                "to": to,
+                "media_url": [url],
+            }
+            if caption:
+                kwargs["body"] = caption
+            return client.messages.create(**kwargs)
+
+        await loop.run_in_executor(None, _create)
+        return True
+    except Exception as exc:
+        print(f"[Twilio] Media send error: {exc}")
+        return False
+
+
+async def send_whatsapp_attachment_links(to: str, attachments: list | None) -> None:
+    """
+    Deliver enquiry attachments as tap-to-open WhatsApp media messages.
+    Caption uses the friendly label (e.g. ↗ View image) instead of a raw URL.
+    """
+    if not attachments:
+        return
+    try:
+        from backend.integrations.tatva_enquiry_submit import list_tatva_attachment_links
+    except ImportError:
+        return
+
+    import asyncio
+
+    for link in list_tatva_attachment_links(attachments):
+        label = link["label"]
+        url = link["url"]
+        sent = await send_whatsapp_media(to, url, body=label)
+        if not sent:
+            await send_whatsapp_message(to, f"{label} {url}")
+        await asyncio.sleep(0.4)
+
+
 async def send_context_then_mcq_list(
     to: str,
     context_body: str,
