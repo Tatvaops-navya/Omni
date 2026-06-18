@@ -725,21 +725,23 @@ def refresh_attachment_field_count(session: Session) -> None:
     sync_attachment_fields(session, complete_step=not holding)
 
 
+def additional_file_upload_prompt() -> str:
+    """Short nudge when the user chose to upload more files — no stage bridge or service prompt."""
+    return "Please upload your file(s). You can send multiple files."
+
+
 def complete_attachment_upload(session: Session) -> str:
     """
     Called after WhatsApp media is saved. Completes the current file step and advances.
     """
     se.reconcile_session(session)
     sync_attachment_fields(session)
-    field = resolve_file_upload_field(session)
     session.flow_state.pop("current_step_id", None)
     se.maybe_advance_current_stage(session)
     if se.can_enter_final_review(session):
         return _enter_final_review(session)
-    step = get_current_step(session)
-    if step:
-        return format_step_message(step)
-    return "Thank you! Your file has been saved."
+    msg = _next_step_message(session)
+    return msg or "Thank you! Your file has been saved."
 
 
 def pending_file_upload(session: Session) -> bool:
