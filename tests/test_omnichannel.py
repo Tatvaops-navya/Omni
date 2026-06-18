@@ -287,6 +287,104 @@ async def test_returning_user_no_after_name_update_continues(monkeypatch):
     assert "awaiting_returning_profile_field" not in session.flow_state
 
 
+def test_returning_user_prepare_clears_prior_enquiry_fields():
+    from backend.agents.chat.whatsapp_handler import _prepare_returning_user_client_stage
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+        service_category=ServiceCategory.ELECTRICAL,
+    )
+    session.extracted_fields.update({
+        "client_name": "Shree",
+        "email": "navya@gmail.com",
+        "city": "Hyderabad",
+        "property_location": "Madhapur",
+        "preferred_contact_time": "morning",
+        "willing_to_create_project": "yes",
+        "service_category": "electrical",
+        "service_q1": "new_wiring_rewiring",
+        "service_q2": "residential_apartment",
+        "tatva_user_id": "abc123",
+    })
+    session.completed_fields = [
+        "client_name", "city", "property_location", "preferred_contact_time",
+        "willing_to_create_project", "service_category", "service_q1", "service_q2",
+        "tatva_user_id",
+    ]
+    session.flow_state["service_questionnaire_required_fields"] = [
+        "service_q1", "service_q2", "service_q3", "service_q4", "attachments",
+    ]
+
+    _prepare_returning_user_client_stage(session)
+
+    assert session.service_category is None
+    assert "service_category" not in session.completed_fields
+    assert "willing_to_create_project" not in session.completed_fields
+    assert "service_q1" not in session.extracted_fields
+    assert se.needs_client_details(session)
+    assert not se.needs_service_selection(session)
+    step = hybrid_flow.get_current_step(session)
+    assert step is not None
+    assert step.get("field") == "willing_to_create_project"
+
+
+@pytest.mark.asyncio
+async def test_returning_user_yes_then_service_selection_not_stale():
+    from backend.agents.chat.whatsapp_handler import _prepare_returning_user_client_stage
+    from backend.intelligence.conversation_controller import ConversationController
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+        service_category=ServiceCategory.ELECTRICAL,
+    )
+    session.extracted_fields.update({
+        "client_name": "Shree",
+        "email": "navya@gmail.com",
+        "city": "Hyderabad",
+        "property_location": "Madhapur",
+        "preferred_contact_time": "morning",
+        "willing_to_create_project": "yes",
+        "service_category": "electrical",
+        "service_q1": "new_wiring_rewiring",
+        "tatva_user_id": "abc123",
+    })
+    session.completed_fields = [
+        "client_name", "city", "property_location", "preferred_contact_time",
+        "willing_to_create_project", "service_category", "service_q1", "tatva_user_id",
+    ]
+
+    _prepare_returning_user_client_stage(session)
+    controller = ConversationController()
+
+    yes_resp = await controller.process_message(session, "yes", channel="whatsapp", list_id="yes")
+    assert "didn't quite get that" not in (yes_resp.text or "").lower()
+    assert se.needs_service_selection(session)
+
+    stale = hybrid_flow.check_stale_interactive_selection(
+        session,
+        list_id="electrical",
+    )
+    assert stale is None
+
+    svc_resp = await controller.process_message(
+        session,
+        "",
+        channel="whatsapp",
+        list_id="electrical",
+        button_text="Electrical",
+    )
+    assert "already answered that question" not in (svc_resp.text or "").lower()
+    assert session.service_category == ServiceCategory.ELECTRICAL
+
+
 def test_touch_activity_prevents_false_idle_reset():
     session = Session(
         session_id="wa_test",
@@ -453,7 +551,29 @@ async def test_additional_file_upload_follow_up_advances_flow(monkeypatch):
     assert "awaiting_additional_file_upload" not in session.flow_state
 
 
-def test_complete_attachment_upload_skips_duplicate_stage_bridge():
+def test_strip_post_upload_follow_up_removes_file_prompt():
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+        service_category=ServiceCategory.ELECTRICAL,
+    )
+    se.on_service_selected(session, ServiceCategory.ELECTRICAL)
+    noisy = (
+        "Thanks for sharing. Let us understand your requirements.\n\n"
+        "Upload electrical layout, existing panel photos, or any related drawings.\n\n"
+        "(Reply *skip* if nothing to upload.)"
+    )
+    cleaned = hybrid_flow.strip_post_upload_follow_up(session, noisy)
+    assert "Thanks for sharing" not in cleaned
+    assert "electrical layout" not in cleaned
+    assert "skip" not in cleaned.lower()
+
+
+@pytest.mark.asyncio
+async def test_post_upload_follow_up_sends_ack_then_next_mcq_only(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
     from backend.schemas.session import AttachmentMeta
 
     session = Session(
@@ -461,14 +581,14 @@ def test_complete_attachment_upload_skips_duplicate_stage_bridge():
         phone_number="whatsapp:+91999",
         channel="whatsapp",
         conversation_stage=ConversationStage.DETAIL_COLLECTION,
-        service_category=ServiceCategory.HOME_INTERIORS,
+        service_category=ServiceCategory.ELECTRICAL,
     )
-    se.on_service_selected(session, ServiceCategory.HOME_INTERIORS)
+    se.on_service_selected(session, ServiceCategory.ELECTRICAL)
     for field, value in (
-        ("service_q1", "modular_kitchen"),
-        ("service_q2", "minimalist"),
-        ("service_q3", "5_15_lakhs"),
-        ("service_q4", "2BHK kitchen redesign"),
+        ("service_q1", "new_wiring_rewiring"),
+        ("service_q2", "residential_apartment"),
+        ("service_q3", "urgent_breakdown_hazard"),
+        ("service_q4", "Need rewiring"),
     ):
         se.mark_field_validated(session, field, value)
     session.flow_state["last_stage_shown"] = "service_questionnaire"
@@ -481,10 +601,59 @@ def test_complete_attachment_upload_skips_duplicate_stage_bridge():
         )
     )
 
+    sent: list[tuple[str, object]] = []
+
+    async def fake_send_context_then_mcq_list(_phone, context_body, step):
+        sent.append((context_body, step))
+
+    monkeypatch.setattr(wh, "send_context_then_mcq_list", fake_send_context_then_mcq_list)
+
+    await wh._send_file_upload_follow_up(
+        session,
+        "whatsapp:+91999",
+        ask_for_more=False,
+    )
+
+    assert len(sent) == 1
+    context_body, _step = sent[0]
+    assert context_body == "Thank you! We received your file."
+    assert "Thanks for sharing" not in context_body
+    assert "electrical layout" not in context_body
+
+
+def test_complete_attachment_upload_skips_duplicate_stage_bridge():
+    from backend.schemas.session import AttachmentMeta
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+        service_category=ServiceCategory.ELECTRICAL,
+    )
+    se.on_service_selected(session, ServiceCategory.ELECTRICAL)
+    session.flow_state["current_stage"] = "service_questionnaire"
+    session.flow_state["last_stage_shown"] = "service_questionnaire"
+    for field, value in (
+        ("service_q1", "new_wiring_rewiring"),
+        ("service_q2", "residential_apartment"),
+        ("service_q3", "urgent_breakdown_hazard"),
+        ("service_q4", "Need rewiring"),
+    ):
+        se.mark_field_validated(session, field, value)
+    session.flow_state["current_step_id"] = "service_q5"
+    session.attachments.append(
+        AttachmentMeta(
+            file_name="plan.png",
+            file_url="https://x/plan.png",
+            mime_type="image/png",
+        )
+    )
+
     msg = hybrid_flow.complete_attachment_upload(session)
 
-    assert "Thanks for sharing" not in msg
-    assert msg
+    assert "Thanks for sharing" not in (msg or "")
+    assert "electrical layout" not in (msg or "").lower()
 
 
 def test_additional_file_upload_prompt_is_short():
