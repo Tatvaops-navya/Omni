@@ -97,8 +97,8 @@ def _attachment_kind(*, url: str, key: str = "", mime: str = "") -> str:
     return "file"
 
 
-def _attachment_whatsapp_blocks(attachments: list[Any] | None) -> list[str]:
-    """One label + URL block per attachment (paired for WhatsApp tap-to-open)."""
+def list_tatva_attachment_links(attachments: list[Any] | None) -> list[dict[str, str]]:
+    """Label + URL pairs for tap-to-open attachment delivery on WhatsApp."""
     items = _normalize_attachments(attachments)
     if not items:
         return []
@@ -109,15 +109,24 @@ def _attachment_whatsapp_blocks(attachments: list[Any] | None) -> list[str]:
         kind_totals[kind] = kind_totals.get(kind, 0) + 1
 
     kind_seen: dict[str, int] = {}
-    blocks: list[str] = []
+    links: list[dict[str, str]] = []
     for item in items:
         kind = _attachment_kind(**item)
         label = _ATTACHMENT_KIND_LABELS[kind]
         if kind_totals[kind] > 1:
             kind_seen[kind] = kind_seen.get(kind, 0) + 1
             label = f"{label} {kind_seen[kind]}"
-        blocks.append(f"↗ {label}\n{item['url']}")
-    return blocks
+        links.append({
+            "label": f"↗ {label}",
+            "url": item["url"],
+            "kind": kind,
+        })
+    return links
+
+
+def _attachment_whatsapp_blocks(attachments: list[Any] | None) -> list[str]:
+    """Short labels only — URLs are sent as separate tap-to-open WhatsApp messages."""
+    return [link["label"] for link in list_tatva_attachment_links(attachments)]
 
 
 def extract_tatva_attachment_urls(attachments: list[Any] | None) -> list[str]:
