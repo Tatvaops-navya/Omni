@@ -34,6 +34,7 @@ from backend.agents.chat.twilio_client import (
     send_context_then_mcq_list,
     send_whatsapp_message,
     send_whatsapp_flow,
+    send_whatsapp_attachment_cta_links,
     twiml_response,
 )
 from backend.agents.chat.whatsapp_interactive import build_inbound_user_message, parse_list_selection_id
@@ -935,6 +936,9 @@ async def _handle_whatsapp_message_impl(
         confirmation = (agent_response.text or "").strip()
         if confirmation:
             await send_whatsapp_message(to=phone_number, body=confirmation)
+        tatva_attachments = agent_response.session.flow_state.get("tatva_enquiry_attachments")
+        if isinstance(tatva_attachments, list) and tatva_attachments:
+            await send_whatsapp_attachment_cta_links(phone_number, tatva_attachments)
         follow_up = (agent_response.follow_up_text or "").strip()
         if follow_up:
             await send_whatsapp_message(to=phone_number, body=follow_up)

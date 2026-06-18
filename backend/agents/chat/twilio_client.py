@@ -75,6 +75,97 @@ async def send_whatsapp_message(to: str, body: str) -> bool:
     return ok
 
 
+_CTA_CONTENT_SID_BY_KIND: dict[str, str] = {}
+
+
+def _cta_content_sid_for_kind(kind: str) -> str:
+    global _CTA_CONTENT_SID_BY_KIND
+    if not _CTA_CONTENT_SID_BY_KIND:
+        _CTA_CONTENT_SID_BY_KIND = {
+            "image": str(getattr(settings, "twilio_cta_view_image_content_sid", "") or "").strip(),
+            "pdf": str(getattr(settings, "twilio_cta_view_pdf_content_sid", "") or "").strip(),
+            "video": str(getattr(settings, "twilio_cta_view_video_content_sid", "") or "").strip(),
+            "document": str(getattr(settings, "twilio_cta_view_file_content_sid", "") or "").strip(),
+            "file": str(getattr(settings, "twilio_cta_view_file_content_sid", "") or "").strip(),
+        }
+    return _CTA_CONTENT_SID_BY_KIND.get(kind, "") or _CTA_CONTENT_SID_BY_KIND.get("file", "")
+
+
+async def send_whatsapp_content_cta(
+    to: str,
+    content_sid: str,
+    *,
+    content_variables: dict[str, str],
+) -> bool:
+    """Send a Twilio Content call-to-action message (tappable URL button, no raw URL text)."""
+    sid = (content_sid or "").strip()
+    if not sid:
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+
+        def _create():
+            return client.messages.create(
+                from_=settings.twilio_whatsapp_from,
+                to=to,
+                content_sid=sid,
+                content_variables=json.dumps(content_variables),
+            )
+
+        await loop.run_in_executor(None, _create)
+        return True
+    except Exception as exc:
+        print(f"[Twilio] CTA send error: {exc}")
+        return False
+
+
+async def send_whatsapp_attachment_cta_links(to: str, attachments: list | None) -> None:
+    """
+    Send one CTA button message per attachment so users can open files without seeing raw URLs.
+    Requires TWILIO_CTA_VIEW_* content templates — see scripts/create_attachment_cta_content.py
+    """
+    if not attachments:
+        return
+    try:
+        from backend.integrations.tatva_enquiry_submit import (
+            list_tatva_attachment_links,
+            url_suffix_for_cta,
+        )
+    except ImportError:
+        return
+
+    cdn_base = str(getattr(settings, "tatva_attachment_cdn_base_url", "") or "").strip()
+    if not cdn_base:
+        print("[Twilio] Attachment CTA skipped: TATVA_ATTACHMENT_CDN_BASE_URL not set")
+        return
+
+    import asyncio
+
+    for link in list_tatva_attachment_links(attachments):
+        kind = link.get("kind") or "file"
+        content_sid = _cta_content_sid_for_kind(kind)
+        if not content_sid:
+            print(f"[Twilio] Attachment CTA skipped: no content SID for kind={kind!r}")
+            continue
+        suffix = url_suffix_for_cta(link["url"], cdn_base=cdn_base)
+        if not suffix:
+            print(f"[Twilio] Attachment CTA skipped: URL host mismatch for {link['url'][:80]!r}")
+            continue
+        label = link["label"].removeprefix("↗ ").strip()
+        sent = await send_whatsapp_content_cta(
+            to,
+            content_sid,
+            content_variables={"1": label, "2": suffix},
+        )
+        if sent:
+            await asyncio.sleep(0.35)
+
+
 async def send_context_then_mcq_list(
     to: str,
     context_body: str,
