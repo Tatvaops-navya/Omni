@@ -21,7 +21,20 @@ from backend.intelligence.nova_router import (
 from backend.intelligence.consultants.registry import get_service_label
 from backend.schemas.service import CONSULTANT_IDS
 from backend.summarizer.summary_generator import get_summary_generator
-from backend.integrations.tatva_users import register_tatva_user_for_session, VENDOR_BLOCKED_MESSAGE
+from backend.integrations.tatva_users import (
+    check_tatva_phone_for_session,
+    register_new_tatva_user_for_session,
+    VENDOR_BLOCKED_MESSAGE,
+)
+from backend.integrations.returning_user_flow import (
+    complete_existing_user_edit_email,
+    complete_existing_user_edit_name,
+    continue_existing_user_from_city,
+    existing_user_welcome_text,
+    parse_yes_no_choice,
+    returning_edit_decision_step,
+    start_existing_user_edit_name,
+)
 from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
 from backend.integrations.tatva_enquiry_submit import submit_service_questionnaire
 from backend.utils.logger import log_event
@@ -134,9 +147,68 @@ class ConversationController:
             button_text=button_text, button_payload=button_payload, list_id=list_id,
         )
         if handled and hybrid_reply:
+            vendor_msg = await register_new_tatva_user_for_session(session)
+            if vendor_msg:
+                session.add_message(MessageRole.ASSISTANT, vendor_msg)
+                return AgentResponse(text=vendor_msg, session=session)
             session.add_message(MessageRole.ASSISTANT, hybrid_reply)
             return AgentResponse(text=hybrid_reply, session=session)
         return None
+
+    async def _handle_existing_user_flow(
+        self,
+        session: Session,
+        user_message: str,
+        *,
+        button_text: str | None = None,
+        button_payload: str | None = None,
+        list_id: str | None = None,
+    ) -> AgentResponse | None:
+        if session.flow_state.get("awaiting_returning_edit_decision"):
+            wants_edit = parse_yes_no_choice(
+                user_message,
+                list_id=list_id or "",
+                button_payload=button_payload or "",
+                button_text=button_text or "",
+            )
+            if wants_edit is None:
+                msg = "Please choose *Yes* or *No*."
+                session.flow_state["pending_outbound_mcq"] = returning_edit_decision_step()
+                session.add_message(MessageRole.ASSISTANT, msg)
+                return AgentResponse(text=msg, session=session)
+            session.flow_state.pop("awaiting_returning_edit_decision", None)
+            if wants_edit:
+                msg = start_existing_user_edit_name(session)
+            else:
+                msg = continue_existing_user_from_city(session)
+            session.add_message(MessageRole.ASSISTANT, msg)
+            return AgentResponse(text=msg, session=session)
+
+        if session.flow_state.get("awaiting_returning_edit_name"):
+            err, msg = complete_existing_user_edit_name(session, user_message)
+            if err:
+                session.add_message(MessageRole.ASSISTANT, err)
+                return AgentResponse(text=err, session=session)
+            session.add_message(MessageRole.ASSISTANT, msg)
+            return AgentResponse(text=msg, session=session)
+
+        if session.flow_state.get("awaiting_returning_edit_email"):
+            err, msg = await complete_existing_user_edit_email(session, user_message)
+            if err:
+                session.add_message(MessageRole.ASSISTANT, err)
+                return AgentResponse(text=err, session=session)
+            session.add_message(MessageRole.ASSISTANT, msg)
+            return AgentResponse(text=msg, session=session)
+
+        return None
+
+    def _start_existing_user_welcome(self, session: Session) -> AgentResponse:
+        session.flow_state["existing_user_flow_started"] = True
+        session.flow_state["awaiting_returning_edit_decision"] = True
+        welcome = existing_user_welcome_text(session)
+        session.add_message(MessageRole.ASSISTANT, welcome)
+        session.flow_state["pending_outbound_mcq"] = returning_edit_decision_step()
+        return AgentResponse(text=welcome, session=session)
 
     async def process_message(
         self,
@@ -195,10 +267,12 @@ class ConversationController:
         ):
             session.add_message(MessageRole.USER, user_message)
             _reset_session_to_eva_start(session)
-            vendor_msg = await register_tatva_user_for_session(session)
+            vendor_msg = await check_tatva_phone_for_session(session)
             if vendor_msg:
                 session.add_message(MessageRole.ASSISTANT, vendor_msg)
                 return AgentResponse(text=vendor_msg, session=session)
+            if session.flow_state.get("tatva_phone_is_user"):
+                return self._start_existing_user_welcome(session)
             intro = hybrid_flow.first_client_message()
             session.add_message(MessageRole.ASSISTANT, intro)
             session.flow_state["last_stage_shown"] = "client_details"
@@ -276,17 +350,32 @@ class ConversationController:
 
         session.add_message(MessageRole.USER, user_message)
 
+        existing_resp = await self._handle_existing_user_flow(
+            session,
+            user_message,
+            button_text=button_text,
+            button_payload=button_payload,
+            list_id=list_id,
+        )
+        if existing_resp:
+            return existing_resp
+
         if _is_off_topic(user_message) and not _should_skip_off_topic_guardrail(session):
             session.add_message(MessageRole.ASSISTANT, GUARDRAIL_REDIRECT)
             return AgentResponse(text=GUARDRAIL_REDIRECT, session=session)
 
         if se.needs_client_details(session) and not session.flow_state.get("final_review_shown"):
             se.start_client_stage(session)
-            if not session.flow_state.get("tatva_register_attempted"):
-                vendor_msg = await register_tatva_user_for_session(session)
+            if not session.flow_state.get("tatva_phone_checked"):
+                vendor_msg = await check_tatva_phone_for_session(session)
                 if vendor_msg:
                     session.add_message(MessageRole.ASSISTANT, vendor_msg)
                     return AgentResponse(text=vendor_msg, session=session)
+            if (
+                session.flow_state.get("tatva_phone_is_user")
+                and not session.flow_state.get("existing_user_flow_started")
+            ):
+                return self._start_existing_user_welcome(session)
             if _should_send_eva_intro_for_greeting(session, user_message):
                 intro = hybrid_flow.first_client_message()
                 session.add_message(MessageRole.ASSISTANT, intro)

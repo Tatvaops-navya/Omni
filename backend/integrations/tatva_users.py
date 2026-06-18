@@ -9,10 +9,13 @@ from typing import Any, Optional
 import httpx
 
 from backend.config import get_settings
+from backend.intelligence import stage_engine as se
 from backend.schemas.session import Session
 from backend.utils.logger import log_event
 
+CHECK_PHONE_PATH = "/users/api/users/check-phone"
 REGISTER_PHONE_PATH = "/users/api/users/register-phone"
+TATVA_HTTP_HEADERS = {"User-Agent": "TatvaOps-Omni/1.0", "Accept": "application/json"}
 
 VENDOR_BLOCKED_MESSAGE = (
     "Sorry, this phone number is already registered as a TatvaOps vendor.\n\n"
@@ -34,6 +37,14 @@ def normalize_phone_for_tatva(phone: str) -> str:
     return digits
 
 
+def _session_phone(session: Session) -> str:
+    return str(
+        session.extracted_fields.get("phone_number")
+        or session.phone_number
+        or ""
+    )
+
+
 def _extract_user_id(payload: dict[str, Any]) -> Optional[str]:
     data = payload.get("data") or {}
     user = data.get("user") or {}
@@ -41,13 +52,119 @@ def _extract_user_id(payload: dict[str, Any]) -> Optional[str]:
     return str(user_id) if user_id else None
 
 
-def is_vendor_register_response(payload: dict[str, Any]) -> bool:
+def is_vendor_response(payload: dict[str, Any]) -> bool:
     return bool((payload.get("data") or {}).get("isVendor"))
+
+
+def is_unregistered_phone_response(payload: dict[str, Any]) -> bool:
+    data = payload.get("data") or {}
+    return (
+        not data.get("isUser")
+        and not data.get("isVendor")
+        and not data.get("user")
+    )
+
+
+def _hydrate_profile_from_user(session: Session, user: dict[str, Any]) -> None:
+    user_id = user.get("_id")
+    if user_id and not session.extracted_fields.get("tatva_user_id"):
+        session.extracted_fields["tatva_user_id"] = str(user_id)
+        if "tatva_user_id" not in session.completed_fields:
+            session.completed_fields.append("tatva_user_id")
+
+    name = (
+        user.get("fullName")
+        or user.get("name")
+        or user.get("firstName")
+        or user.get("displayName")
+        or ""
+    )
+    email = user.get("email") or ""
+    if name and not session.extracted_fields.get("client_name"):
+        session.extracted_fields["client_name"] = str(name).strip()
+    if email and not session.extracted_fields.get("email"):
+        session.extracted_fields["email"] = str(email).strip()
+
+
+async def check_phone_user(
+    phone_number: str,
+    *,
+    session_id: str = "unknown",
+) -> Optional[dict[str, Any]]:
+    """Check whether a phone belongs to an existing Tatva user or vendor."""
+    settings = get_settings()
+    normalized = normalize_phone_for_tatva(phone_number)
+    if not normalized:
+        await log_event(
+            "API_ERROR",
+            session_id=session_id,
+            data={"api": "tatva_check_phone", "error": "invalid_phone", "phone": phone_number},
+        )
+        return None
+
+    base_url = (settings.tatva_users_api_base_url or "").rstrip("/")
+    if not base_url:
+        await log_event(
+            "API_ERROR",
+            session_id=session_id,
+            data={"api": "tatva_check_phone", "error": "api_not_configured"},
+        )
+        return None
+
+    url = f"{base_url}{CHECK_PHONE_PATH}"
+    await log_event(
+        "TATVA_CHECK_PHONE",
+        session_id=session_id,
+        data={"api": "tatva_check_phone", "url": url, "phone": normalized},
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers=TATVA_HTTP_HEADERS) as client:
+            response = await client.post(url, json={"phoneNumber": normalized})
+            response.raise_for_status()
+            payload = response.json()
+    except Exception as exc:
+        await log_event(
+            "API_ERROR",
+            session_id=session_id,
+            data={
+                "api": "tatva_check_phone",
+                "error": str(exc),
+                "phone": normalized,
+            },
+        )
+        return None
+
+    if not payload.get("success"):
+        await log_event(
+            "API_ERROR",
+            session_id=session_id,
+            data={
+                "api": "tatva_check_phone",
+                "error": payload.get("message") or "unsuccessful_response",
+                "phone": normalized,
+            },
+        )
+        return None
+
+    await log_event(
+        "TATVA_CHECK_PHONE_OK",
+        session_id=session_id,
+        data={
+            "api": "tatva_check_phone",
+            "phone": normalized,
+            "is_user": (payload.get("data") or {}).get("isUser"),
+            "is_vendor": (payload.get("data") or {}).get("isVendor"),
+            "message": payload.get("message"),
+        },
+    )
+    return payload
 
 
 async def register_phone_user(
     phone_number: str,
     *,
+    full_name: str | None = None,
+    email: str | None = None,
     session_id: str = "unknown",
 ) -> Optional[dict[str, Any]]:
     """Register or look up a user by phone. Returns API JSON on success, else None."""
@@ -70,10 +187,27 @@ async def register_phone_user(
         )
         return None
 
+    body: dict[str, str] = {"phoneNumber": normalized}
+    if full_name and str(full_name).strip():
+        body["fullName"] = str(full_name).strip()
+    if email and str(email).strip():
+        body["email"] = str(email).strip()
+
     url = f"{base_url}{REGISTER_PHONE_PATH}"
+    await log_event(
+        "TATVA_REGISTER_PHONE",
+        session_id=session_id,
+        data={
+            "api": "tatva_register_phone",
+            "url": url,
+            "phone": normalized,
+            "has_full_name": bool(body.get("fullName")),
+            "has_email": bool(body.get("email")),
+        },
+    )
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, json={"phoneNumber": normalized})
+        async with httpx.AsyncClient(timeout=10.0, headers=TATVA_HTTP_HEADERS) as client:
+            response = await client.post(url, json=body)
             response.raise_for_status()
             payload = response.json()
     except Exception as exc:
@@ -103,32 +237,28 @@ async def register_phone_user(
     return payload
 
 
-async def register_tatva_user_for_session(session: Session) -> Optional[str]:
+async def check_tatva_phone_for_session(session: Session) -> Optional[str]:
     """
-    Call register-phone once per session and persist Tatva user _id.
-    Returns VENDOR_BLOCKED_MESSAGE when isVendor is true, else None.
+    Call check-phone once per session on first contact.
+    Returns VENDOR_BLOCKED_MESSAGE when isVendor is true.
     """
     if session.flow_state.get("vendor_blocked"):
         return VENDOR_BLOCKED_MESSAGE
 
-    if session.extracted_fields.get("tatva_user_id"):
-        return None
+    if session.flow_state.get("tatva_phone_checked"):
+        return VENDOR_BLOCKED_MESSAGE if session.flow_state.get("vendor_blocked") else None
 
-    if session.flow_state.get("tatva_register_attempted"):
-        return None
+    session.flow_state["tatva_phone_checked"] = True
 
-    session.flow_state["tatva_register_attempted"] = True
-
-    phone = (
-        session.extracted_fields.get("phone_number")
-        or session.phone_number
-        or ""
-    )
-    payload = await register_phone_user(phone, session_id=session.session_id)
+    phone = _session_phone(session)
+    payload = await check_phone_user(phone, session_id=session.session_id)
     if not payload:
         return None
 
-    if is_vendor_register_response(payload):
+    data = payload.get("data") or {}
+    session.flow_state["tatva_phone_check_data"] = data
+
+    if is_vendor_response(payload):
         session.flow_state["vendor_blocked"] = True
         session.flow_state["conversation_ended"] = True
         await log_event(
@@ -137,12 +267,150 @@ async def register_tatva_user_for_session(session: Session) -> Optional[str]:
             data={
                 "phone": normalize_phone_for_tatva(phone),
                 "message": payload.get("message"),
+                "source": "check_phone",
+            },
+        )
+        return VENDOR_BLOCKED_MESSAGE
+
+    is_user = bool(data.get("isUser"))
+    session.flow_state["tatva_phone_is_user"] = is_user
+
+    if is_user:
+        user = data.get("user") or {}
+        _hydrate_profile_from_user(session, user)
+        session.flow_state["tatva_user_registered"] = True
+        session.flow_state["tatva_needs_registration"] = False
+        await log_event(
+            "TATVA_USER_FOUND",
+            session_id=session.session_id,
+            data={
+                "tatva_user_id": session.extracted_fields.get("tatva_user_id"),
+                "message": payload.get("message"),
+            },
+        )
+        return None
+
+    if is_unregistered_phone_response(payload):
+        session.flow_state["tatva_needs_registration"] = True
+        await log_event(
+            "TATVA_USER_NOT_FOUND",
+            session_id=session.session_id,
+            data={
+                "phone": normalize_phone_for_tatva(phone),
+                "message": payload.get("message"),
+            },
+        )
+        return None
+
+    return None
+
+
+async def update_tatva_user_profile_for_session(session: Session) -> Optional[str]:
+    """Update an existing Tatva user profile via register-phone."""
+    if session.flow_state.get("vendor_blocked"):
+        return VENDOR_BLOCKED_MESSAGE
+
+    if not session.extracted_fields.get("tatva_user_id"):
+        return None
+
+    name = str(session.extracted_fields.get("client_name") or "").strip()
+    if not name:
+        return None
+
+    email_raw = str(session.extracted_fields.get("email") or "").strip()
+    email = email_raw if email_raw else None
+
+    phone = _session_phone(session)
+    payload = await register_phone_user(
+        phone,
+        full_name=name,
+        email=email,
+        session_id=session.session_id,
+    )
+    if not payload:
+        return None
+
+    if is_vendor_response(payload):
+        session.flow_state["vendor_blocked"] = True
+        session.flow_state["conversation_ended"] = True
+        return VENDOR_BLOCKED_MESSAGE
+
+    user = (payload.get("data") or {}).get("user") or {}
+    if user:
+        _hydrate_profile_from_user(session, user)
+
+    await log_event(
+        "TATVA_USER_PROFILE_UPDATED",
+        session_id=session.session_id,
+        data={
+            "tatva_user_id": session.extracted_fields.get("tatva_user_id"),
+            "message": payload.get("message"),
+            "has_email": bool(email),
+        },
+    )
+    return None
+
+
+async def register_new_tatva_user_for_session(session: Session) -> Optional[str]:
+    """
+    Register a new Tatva user after client name and email (optional) are collected.
+    Returns VENDOR_BLOCKED_MESSAGE when isVendor is true.
+    """
+    if session.flow_state.get("vendor_blocked"):
+        return VENDOR_BLOCKED_MESSAGE
+
+    if not session.flow_state.get("tatva_needs_registration"):
+        return None
+
+    if session.extracted_fields.get("tatva_user_id"):
+        return None
+
+    if session.flow_state.get("tatva_user_registered"):
+        return None
+
+    name = str(session.extracted_fields.get("client_name") or "").strip()
+    if not name:
+        return None
+
+    if not se.field_is_complete(session, "email"):
+        return None
+
+    if session.flow_state.get("tatva_register_attempted"):
+        return None
+
+    session.flow_state["tatva_register_attempted"] = True
+
+    email_raw = str(session.extracted_fields.get("email") or "").strip()
+    email = email_raw if se.is_valid_gmail_address(email_raw) else None
+
+    phone = _session_phone(session)
+    payload = await register_phone_user(
+        phone,
+        full_name=name,
+        email=email,
+        session_id=session.session_id,
+    )
+    if not payload:
+        session.flow_state["tatva_register_attempted"] = False
+        return None
+
+    if is_vendor_response(payload):
+        session.flow_state["vendor_blocked"] = True
+        session.flow_state["conversation_ended"] = True
+        await log_event(
+            "TATVA_VENDOR_BLOCKED",
+            session_id=session.session_id,
+            data={
+                "phone": normalize_phone_for_tatva(phone),
+                "message": payload.get("message"),
+                "source": "register_phone",
             },
         )
         return VENDOR_BLOCKED_MESSAGE
 
     user_id = _extract_user_id(payload)
     if not user_id:
+        session.flow_state["tatva_register_attempted"] = False
         await log_event(
             "API_ERROR",
             session_id=session.session_id,
@@ -152,6 +420,7 @@ async def register_tatva_user_for_session(session: Session) -> Optional[str]:
 
     session.extracted_fields["tatva_user_id"] = user_id
     session.flow_state["tatva_user_registered"] = True
+    session.flow_state["tatva_needs_registration"] = False
     if "tatva_user_id" not in session.completed_fields:
         session.completed_fields.append("tatva_user_id")
 
@@ -163,6 +432,37 @@ async def register_tatva_user_for_session(session: Session) -> Optional[str]:
             "created": (payload.get("data") or {}).get("created"),
             "is_vendor": False,
             "message": payload.get("message"),
+            "has_email": bool(email),
         },
     )
     return None
+
+
+async def register_tatva_user_for_session(session: Session) -> Optional[str]:
+    """
+    Ensure Tatva user exists for the session.
+    New users are registered after name + email; existing users are hydrated from check-phone.
+    """
+    if session.flow_state.get("vendor_blocked"):
+        return VENDOR_BLOCKED_MESSAGE
+
+    if session.extracted_fields.get("tatva_user_id"):
+        return None
+
+    if session.flow_state.get("tatva_needs_registration"):
+        return await register_new_tatva_user_for_session(session)
+
+    if not session.flow_state.get("tatva_phone_checked"):
+        blocked = await check_tatva_phone_for_session(session)
+        if blocked:
+            return blocked
+        if session.extracted_fields.get("tatva_user_id"):
+            return None
+        if session.flow_state.get("tatva_needs_registration"):
+            return await register_new_tatva_user_for_session(session)
+
+    return None
+
+
+# Back-compat alias used in tests
+is_vendor_register_response = is_vendor_response
