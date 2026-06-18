@@ -5,6 +5,7 @@ Interactive tap options require Twilio Content templates; falls back to formatte
 """
 from __future__ import annotations
 from typing import Any, Optional
+import asyncio
 import json
 import re
 
@@ -12,6 +13,9 @@ from backend.config import get_settings
 
 settings = get_settings()
 _twilio_client = None
+_outbound_locks: dict[str, asyncio.Lock] = {}
+_last_outbound_at: dict[str, float] = {}
+OUTBOUND_MIN_GAP_SEC = 1.5
 
 # Twilio WhatsApp body limit is 1600 chars (error 21617)
 WHATSAPP_MAX_CHARS = 1500
@@ -59,6 +63,19 @@ def _get_client():
         except Exception as e:
             print(f"[Twilio] Client init error: {e}")
     return _twilio_client
+
+
+async def _pace_outbound(to: str) -> None:
+    """Space outbound WhatsApp messages so list pickers are not dropped."""
+    import time
+
+    lock = _outbound_locks.setdefault(to, asyncio.Lock())
+    async with lock:
+        now = time.monotonic()
+        wait = OUTBOUND_MIN_GAP_SEC - (now - _last_outbound_at.get(to, 0.0))
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_outbound_at[to] = time.monotonic()
 
 
 async def send_whatsapp_message(to: str, body: str) -> bool:
@@ -175,20 +192,19 @@ async def send_context_then_mcq_list(
     Send a long text block first, then a separate WhatsApp list-picker.
     Avoids appending numbered fallbacks to a multi-paragraph summary.
     """
+    await _pace_outbound(to)
     enriched = enrich_whatsapp_mcq_step(step) if step else None
     if (
         enriched
         and enriched.get("type") == "mcq"
         and mcq_uses_interactive_delivery(enriched)
     ):
-        import asyncio
-
         list_prompt = str(
             enriched.get("twilio_list_prompt") or enriched.get("prompt") or "Choose option"
         ).strip()
         if (context_body or "").strip():
             await send_whatsapp_message(to, context_body.strip())
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(OUTBOUND_MIN_GAP_SEC)
         return await send_whatsapp_flow(to, list_prompt, step=enriched)
     if enriched and enriched.get("type") == "mcq":
         prompt_only = str(enriched.get("prompt") or "Please choose one option.").strip()
@@ -207,6 +223,7 @@ async def send_whatsapp_flow(to: str, body: str, step: Optional[dict[str, Any]] 
     TWILIO_WHATSAPP_QUICK_REPLY=true and Content SID is configured.
     Otherwise sends formatted text (user replies with number or option name).
     """
+    await _pace_outbound(to)
     if (
         step
         and step.get("type") == "mcq"
@@ -579,7 +596,8 @@ async def _send_interactive_options(
             )
 
         try:
-            await loop.run_in_executor(None, _create_with_variables)
+            msg = await loop.run_in_executor(None, _create_with_variables)
+            print(f"[Twilio] Interactive API Response | SID: {msg.sid} | Status: {msg.status}")
         except Exception as inner:
             err = str(inner)
             if require_variables:
@@ -587,7 +605,8 @@ async def _send_interactive_options(
                 return False
             if "Content Variables parameter is invalid" not in err:
                 raise
-            await loop.run_in_executor(None, _create_without_variables)
+            msg = await loop.run_in_executor(None, _create_without_variables)
+            print(f"[Twilio] Interactive API Response | SID: {msg.sid} | Status: {msg.status}")
         return True
     except Exception as e:
         print(f"[Twilio] Interactive send error: {e}")

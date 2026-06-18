@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from backend.config import get_settings
 from backend.schemas.session import Session, ConversationStage, MessageRole
@@ -20,6 +20,7 @@ from backend.intelligence.qualification_builder import get_final_review_outbound
 from backend.integrations.tatva_users import (
     check_phone_user,
     check_tatva_phone_for_session,
+    is_vendor_response,
     VENDOR_BLOCKED_MESSAGE,
 )
 from backend.integrations.returning_user_flow import (
@@ -51,17 +52,17 @@ router = APIRouter()
 _settings = get_settings()
 MEDIA_UPLOAD_DEBOUNCE_SEC = 2.5
 FILE_UPLOAD_STRAGGLER_WINDOW_SEC = 8.0
-_media_session_locks: dict[str, asyncio.Lock] = {}
+_session_locks: dict[str, asyncio.Lock] = {}
 MORE_FILE_UPLOAD_FIELD = "__more_file_upload__"
 RETURNING_EDIT_DECISION_FIELD = "__returning_edit_info__"
 RETURNING_PROFILE_FIELD = "__returning_profile_field__"
 
 
-def _media_session_lock(session_id: str) -> asyncio.Lock:
-    lock = _media_session_locks.get(session_id)
+def _session_lock(session_id: str) -> asyncio.Lock:
+    lock = _session_locks.get(session_id)
     if lock is None:
         lock = asyncio.Lock()
-        _media_session_locks[session_id] = lock
+        _session_locks[session_id] = lock
     return lock
 
 
@@ -189,6 +190,8 @@ def _returning_profile_selection(
             return "client_name"
         if selected == "email":
             return "email"
+        if selected in {"property_location", "property location", "location", "property"}:
+            return "property_location"
         if selected in {"continue", "no", "n", "skip", "done"}:
             return "continue"
     return ""
@@ -220,6 +223,7 @@ def _returning_profile_field_step() -> dict:
         "options": [
             {"label": "Name", "value": "client_name"},
             {"label": "Email", "value": "email"},
+            {"label": "Property location", "value": "property_location"},
             {"label": "Continue", "value": "continue"},
         ],
     }
@@ -293,8 +297,12 @@ def _is_in_returning_user_prompt(session: Session) -> bool:
     )
 
 
-async def _hydrate_returning_profile_from_tatva(session: Session) -> None:
-    if session.extracted_fields.get("client_name") and session.extracted_fields.get("email"):
+async def _hydrate_returning_profile_from_tatva(session: Session, *, force: bool = False) -> None:
+    if (
+        not force
+        and session.extracted_fields.get("client_name")
+        and session.extracted_fields.get("tatva_user_id")
+    ):
         return
     payload = await check_phone_user(session.phone_number or "", session_id=session.session_id)
     if not payload:
@@ -302,9 +310,12 @@ async def _hydrate_returning_profile_from_tatva(session: Session) -> None:
     data = payload.get("data") or {}
     if not data.get("isUser"):
         return
+    session.flow_state["tatva_phone_checked"] = True
+    session.flow_state["tatva_phone_is_user"] = True
+    session.flow_state["tatva_user_registered"] = True
     user = data.get("user") or {}
     user_id = user.get("_id")
-    if user_id and not session.extracted_fields.get("tatva_user_id"):
+    if user_id:
         session.extracted_fields["tatva_user_id"] = str(user_id)
         if "tatva_user_id" not in session.completed_fields:
             session.completed_fields.append("tatva_user_id")
@@ -316,11 +327,110 @@ async def _hydrate_returning_profile_from_tatva(session: Session) -> None:
         or ""
     )
     email = user.get("email") or ""
-    if name and not session.extracted_fields.get("client_name"):
+    if name:
         se.mark_field_validated(session, "client_name", str(name).strip())
-    if email and not session.extracted_fields.get("email"):
-        if se.is_valid_gmail_address(str(email).strip()):
-            se.mark_field_validated(session, "email", str(email).strip())
+    if email and se.is_valid_gmail_address(str(email).strip()):
+        se.mark_field_validated(session, "email", str(email).strip())
+    city = user.get("city") or ""
+    if city and not session.extracted_fields.get("city"):
+        se.mark_field_validated(session, "city", str(city).strip())
+    location = (
+        user.get("propertyLocation")
+        or user.get("property_location")
+        or user.get("address")
+        or ""
+    )
+    if location and not session.extracted_fields.get("property_location"):
+        se.mark_field_validated(session, "property_location", str(location).strip())
+
+
+def _reset_stale_flow_for_returning_greeting(session: Session) -> None:
+    """Drop stale qualification/review state before a returning-user welcome."""
+    edit_flow.clear_edit_mode(session)
+    for key in (
+        "conversation_ended",
+        "final_review_shown",
+        "final_review_outbound_step",
+        "current_step_id",
+        "current_question",
+        "pending_fields",
+        "pending_outbound_mcq",
+        "awaiting_returning_edit_decision",
+        "awaiting_returning_profile_field",
+        "awaiting_returning_profile_value",
+        "returning_profile_edit_field",
+        "returning_user_reentry",
+        "existing_user_flow_started",
+        "project_declined",
+    ):
+        session.flow_state.pop(key, None)
+
+
+async def _ensure_registered_user_from_tatva(session: Session) -> bool:
+    """Refresh Tatva check-phone and return True when this is a known user."""
+    if session.flow_state.get("vendor_blocked"):
+        return False
+
+    payload = await check_phone_user(session.phone_number or "", session_id=session.session_id)
+    if payload:
+        if is_vendor_response(payload):
+            session.flow_state["vendor_blocked"] = True
+            session.flow_state["tatva_phone_checked"] = True
+            return False
+        data = payload.get("data") or {}
+        is_user = bool(data.get("isUser"))
+        session.flow_state["tatva_phone_checked"] = True
+        session.flow_state["tatva_phone_is_user"] = is_user
+        if is_user:
+            session.flow_state["tatva_user_registered"] = True
+            await _hydrate_returning_profile_from_tatva(session, force=True)
+            return True
+        session.flow_state["tatva_user_registered"] = False
+        return False
+
+    return _is_registered_returning_user(session)
+
+
+async def _try_registered_user_greeting_restart(
+    session: Session | None,
+    session_id: str,
+    phone_number: str,
+    user_message: str,
+) -> bool:
+    """
+    Registered Tatva user said hi/hello — greet by name and offer edit Yes/No.
+    Handles stale sessions stuck at final review or mid-flow.
+    """
+    if not is_greeting_message(user_message):
+        return False
+    if session and _is_in_returning_user_prompt(session):
+        return False
+
+    if session is None:
+        session = Session(
+            session_id=session_id,
+            phone_number=phone_number,
+            channel="whatsapp",
+            conversation_stage=ConversationStage.ROUTING,
+            created_at=datetime.utcnow(),
+            last_active=datetime.utcnow(),
+        )
+        await log_event(
+            "SESSION_START",
+            session_id=session_id,
+            data={"phone": phone_number, "channel": "whatsapp", "reason": "returning_greeting"},
+        )
+
+    if not await _ensure_registered_user_from_tatva(session):
+        if session and not session.conversation_history:
+            await save_session(session)
+        return False
+
+    print(f"[WhatsApp] Returning-user greeting restart for {phone_number} msg={user_message!r}")
+    _reset_stale_flow_for_returning_greeting(session)
+    session.add_message(MessageRole.USER, user_message)
+    await _send_returning_user_reentry_prompt(session, phone_number)
+    return True
 
 
 def _returning_user_greeting_text(session: Session) -> str:
@@ -330,11 +440,13 @@ def _returning_user_greeting_text(session: Session) -> str:
 async def _send_returning_user_reentry_prompt(session: Session, phone_number: str) -> None:
     session.flow_state["existing_user_flow_started"] = True
     session.flow_state["awaiting_returning_edit_decision"] = True
+    greeting = _returning_user_greeting_text(session)
+    session.add_message(MessageRole.ASSISTANT, greeting)
     await save_session(session)
     await supabase_store.upsert_session_log(session)
     await send_context_then_mcq_list(
         phone_number,
-        _returning_user_greeting_text(session),
+        greeting,
         _returning_edit_decision_step(),
     )
 
@@ -344,7 +456,15 @@ async def _send_willing_to_create_project_prompt(session: Session, phone_number:
     _touch_session_activity(session)
     step = hybrid_flow.get_current_step(session)
     if step:
-        await _send_returning_mcq_prompt(phone_number, "", step)
+        # Plain text (not another list-picker) — WhatsApp often drops a second
+        # interactive list right after the profile-edit menu, especially when the
+        # user typed their reply instead of tapping the list.
+        plain_step = dict(step)
+        plain_step["force_plain_mcq"] = True
+        plain_step.pop("twilio_content_sid", None)
+        plain_step.pop("use_dynamic_list", None)
+        body = hybrid_flow.format_step_message(plain_step, include_stage=True)
+        await send_whatsapp_message(to=phone_number, body=body)
     else:
         await send_whatsapp_message(
             to=phone_number,
@@ -451,7 +571,7 @@ async def _debounced_file_upload_follow_up(
     batch_version: int,
 ) -> None:
     await asyncio.sleep(MEDIA_UPLOAD_DEBOUNCE_SEC)
-    async with _media_session_lock(session_id):
+    async with _session_lock(session_id):
         session = await get_session(session_id)
         if not session:
             return
@@ -526,10 +646,7 @@ def _validate_twilio_signature(request: Request, form_params: dict[str, str]) ->
 
 
 @router.post("/webhook/whatsapp")
-async def whatsapp_webhook(
-    background_tasks: BackgroundTasks,
-    request: Request,
-):
+async def whatsapp_webhook(request: Request):
     # Twilio signs every POST field — pass the full form body, not a hand-picked subset.
     raw_form = await request.form()
     form_params = {k: str(v) for k, v in raw_form.items()}
@@ -579,8 +696,9 @@ async def whatsapp_webhook(
         print(f"[WhatsApp] RESTART45 reset OK for {From}")
         return Response(content=twiml_response(reset_msg), media_type="application/xml")
 
-    background_tasks.add_task(
-        handle_whatsapp_message_bg,
+    # Process before returning TwiML — background tasks on Render free tier can be
+    # cut off before outbound Twilio sends complete, which looks like "no reply".
+    await handle_whatsapp_message_bg(
         session_id,
         phone_number,
         user_message,
@@ -607,17 +725,18 @@ async def handle_whatsapp_message_bg(
     button_payload: str = "",
     list_id: str = "",
 ):
-    try:
-        await _handle_whatsapp_message_impl(
-            session_id, phone_number, user_message, num_media, media_items or [],
-            button_text, button_payload, list_id,
-        )
-    except Exception as e:
-        import traceback
-        print(f"[WhatsApp] Background handler error: {e}")
-        traceback.print_exc()
-        await log_event("API_ERROR", session_id=session_id,
-                        data={"error": str(e), "phase": "whatsapp_handler_bg"})
+    async with _session_lock(session_id):
+        try:
+            await _handle_whatsapp_message_impl(
+                session_id, phone_number, user_message, num_media, media_items or [],
+                button_text, button_payload, list_id,
+            )
+        except Exception as e:
+            import traceback
+            print(f"[WhatsApp] Handler error: {e}")
+            traceback.print_exc()
+            await log_event("API_ERROR", session_id=session_id,
+                            data={"error": str(e), "phase": "whatsapp_handler"})
 
 
 async def _handle_whatsapp_message_impl(
@@ -636,12 +755,16 @@ async def _handle_whatsapp_message_impl(
     if session and (user_message or num_media > 0):
         _touch_session_activity(session)
 
-    # In-progress chat idle > N minutes — reset and send EVA intro; discard stale reply.
+    # In-progress chat idle > N minutes — reset; registered users get the welcome-back flow.
     if session and (user_message or num_media > 0) and is_session_idle_expired(session):
         stale_session = session
         print(f"[WhatsApp] Idle timeout reset for {phone_number} (>{_settings.session_idle_timeout_minutes}m)")
         await start_fresh_session(session_id, phone_number, reason="idle_timeout")
         session = await get_session(session_id)
+        if user_message and await _try_registered_user_greeting_restart(
+            session, session_id, phone_number, user_message
+        ):
+            return
         reply = build_idle_fresh_start_reply(stale_session, user_message)
         se.start_client_stage(session)
         session.add_message(MessageRole.ASSISTANT, reply)
@@ -650,8 +773,13 @@ async def _handle_whatsapp_message_impl(
         await send_whatsapp_message(to=phone_number, body=reply)
         return
 
-    # After submit: only greetings / explicit new-enquiry phrases restart EVA flow.
-    # Polite replies (Thank you, OK, etc.) keep the submitted session.
+    # Registered user said hi/hello — always welcome back by name (even from stale final review).
+    if user_message and await _try_registered_user_greeting_restart(
+        session, session_id, phone_number, user_message
+    ):
+        return
+
+    # After submit: polite replies keep the submitted session; other intents handled above for greetings.
     if (
         session
         and _session_is_submitted(session)
@@ -661,16 +789,10 @@ async def _handle_whatsapp_message_impl(
         and not _is_in_returning_user_prompt(session)
     ):
         print(f"[WhatsApp] New enquiry restart for {phone_number} msg={user_message!r}")
-        await _hydrate_returning_profile_from_tatva(session)
-        if _is_registered_returning_user(session):
-            await _send_returning_user_reentry_prompt(session, phone_number)
-            await save_session(session)
-            await supabase_store.upsert_session_log(session)
-            return
         await start_fresh_session(session_id, phone_number, reason="new_enquiry_after_submit")
         session = await get_session(session_id)
 
-    # Greeting mid-flow (Hi bro, Namaste, etc.) — restart with full EVA welcome + qualification flow.
+    # Greeting mid-flow (Hi bro, Namaste, etc.) — restart for new users only; registered users handled above.
     if (
         session
         and user_message
@@ -678,6 +800,7 @@ async def _handle_whatsapp_message_impl(
         and not session.flow_state.get("project_declined")
         and is_greeting_message(user_message)
         and had_conversation_progress(session)
+        and not _is_registered_returning_user(session)
     ):
         print(f"[WhatsApp] Greeting restart for {phone_number} msg={user_message!r}")
         await start_fresh_session(session_id, phone_number, reason="greeting_restart")
@@ -719,39 +842,38 @@ async def _handle_whatsapp_message_impl(
 
     # Media upload handling (stage 9 — attachments, or edit-details file update)
     if num_media > 0 and media_items:
-        async with _media_session_lock(session_id):
-            session = await get_session(session_id) or session
-            hybrid_flow.init_flow(session)
-            saved_any = False
-            for media_url, media_content_type in media_items:
-                meta = await save_attachment(session, media_url, media_content_type)
-                if meta:
-                    saved_any = True
-            if saved_any:
-                hybrid_flow.prepare_for_incoming_file_upload(session)
-                if session.flow_state.get("awaiting_more_upload_decision"):
-                    session.flow_state.pop("awaiting_more_upload_decision", None)
-                    session.flow_state["awaiting_additional_file_upload"] = True
-                if _in_file_upload_flow(session):
-                    await _schedule_file_upload_follow_up(session, phone_number)
-                    await save_session(session)
-                    await supabase_store.upsert_session_log(session)
-                    return
-                if _file_upload_recently_completed(session):
-                    hybrid_flow.refresh_attachment_field_count(session)
-                    await save_session(session)
-                    await supabase_store.upsert_session_log(session)
-                    return
-                session.mark_field_complete("has_attachments", True)
-                hybrid_flow.sync_attachment_fields(session)
+        session = await get_session(session_id) or session
+        hybrid_flow.init_flow(session)
+        saved_any = False
+        for media_url, media_content_type in media_items:
+            meta = await save_attachment(session, media_url, media_content_type)
+            if meta:
+                saved_any = True
+        if saved_any:
+            hybrid_flow.prepare_for_incoming_file_upload(session)
+            if session.flow_state.get("awaiting_more_upload_decision"):
+                session.flow_state.pop("awaiting_more_upload_decision", None)
+                session.flow_state["awaiting_additional_file_upload"] = True
+            if _in_file_upload_flow(session):
+                await _schedule_file_upload_follow_up(session, phone_number)
                 await save_session(session)
                 await supabase_store.upsert_session_log(session)
-                ack = (
-                    f"{hybrid_flow.file_upload_ack_message(session)} "
-                    f"Our team will review {'them' if hybrid_flow.attachment_count(session) > 1 else 'it'} with your enquiry."
-                )
-                await send_whatsapp_message(to=phone_number, body=ack)
                 return
+            if _file_upload_recently_completed(session):
+                hybrid_flow.refresh_attachment_field_count(session)
+                await save_session(session)
+                await supabase_store.upsert_session_log(session)
+                return
+            session.mark_field_complete("has_attachments", True)
+            hybrid_flow.sync_attachment_fields(session)
+            await save_session(session)
+            await supabase_store.upsert_session_log(session)
+            ack = (
+                f"{hybrid_flow.file_upload_ack_message(session)} "
+                f"Our team will review {'them' if hybrid_flow.attachment_count(session) > 1 else 'it'} with your enquiry."
+            )
+            await send_whatsapp_message(to=phone_number, body=ack)
+            return
 
     if not user_message:
         return
@@ -795,22 +917,23 @@ async def _handle_whatsapp_message_impl(
             await save_session(session)
             await supabase_store.upsert_session_log(session)
             return
-        if chosen in {"client_name", "email"}:
+        if chosen in {"client_name", "email", "property_location"}:
             session.flow_state.pop("awaiting_returning_profile_field", None)
             session.flow_state["awaiting_returning_profile_value"] = True
             session.flow_state["returning_profile_edit_field"] = chosen
-            prompt = (
-                "Please type your name."
-                if chosen == "client_name"
-                else "Please type your Gmail address (or reply skip)."
-            )
+            if chosen == "client_name":
+                prompt = "Please type your name."
+            elif chosen == "email":
+                prompt = "Please type your Gmail address (or reply skip)."
+            else:
+                prompt = "Where is your property located? (City, Locality)"
             await save_session(session)
             await supabase_store.upsert_session_log(session)
             await send_whatsapp_message(to=phone_number, body=prompt)
             return
         await _send_returning_mcq_prompt(
             phone_number,
-            "Please choose *Name*, *Email*, or *Continue*.",
+            "Please choose *Name*, *Email*, *Property location*, or *Continue*.",
             _returning_profile_field_step(),
         )
         return
@@ -834,6 +957,14 @@ async def _handle_whatsapp_message_impl(
                 await send_whatsapp_message(to=phone_number, body="Please type your name.")
                 return
             se.mark_field_validated(session, "client_name", text)
+        elif field == "property_location":
+            if not text:
+                await send_whatsapp_message(
+                    to=phone_number,
+                    body="Please type your property location (City, Locality).",
+                )
+                return
+            se.mark_field_validated(session, "property_location", text)
         session.flow_state.pop("awaiting_returning_profile_value", None)
         session.flow_state.pop("returning_profile_edit_field", None)
         session.flow_state["awaiting_returning_profile_field"] = True
