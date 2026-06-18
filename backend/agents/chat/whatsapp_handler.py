@@ -361,6 +361,7 @@ def _in_file_upload_flow(session: Session) -> bool:
     return bool(
         edit_flow.awaiting_file_upload(session)
         or hybrid_flow.pending_file_upload(session)
+        or hybrid_flow.has_pending_file_upload_step(session)
         or session.flow_state.get("awaiting_more_upload_decision")
         or session.flow_state.get("awaiting_additional_file_upload")
     )
@@ -391,6 +392,8 @@ async def _send_file_upload_follow_up(
 ) -> None:
     if ask_for_more:
         hybrid_flow.sync_attachment_fields(session, complete_step=False)
+    else:
+        hybrid_flow.prepare_for_incoming_file_upload(session)
     if file_ack is None:
         file_ack = hybrid_flow.file_upload_ack_message(session)
     if ask_for_more:
@@ -421,6 +424,11 @@ async def _send_file_upload_follow_up(
         )
 
     follow_up = hybrid_flow.strip_post_upload_follow_up(session, follow_up or "")
+    is_final_review = (
+        outbound_step
+        and outbound_step.get("type") == "mcq"
+        and outbound_step.get("field") == "__final_review__"
+    )
     if outbound_step and outbound_step.get("type") == "mcq":
         prompt_text = str(outbound_step.get("prompt", "")).strip()
         list_prompt = str(outbound_step.get("twilio_list_prompt", "")).strip()
@@ -431,7 +439,11 @@ async def _send_file_upload_follow_up(
                 if idx != -1:
                     cleaned_follow_up = cleaned_follow_up[:idx].strip()
         follow_up = cleaned_follow_up
-        context_body = (file_ack or "").strip()
+        if is_final_review:
+            parts = [p for p in ((file_ack or "").strip(), follow_up) if p]
+            context_body = "\n\n".join(parts)
+        else:
+            context_body = (file_ack or "").strip()
     else:
         context_body = f"{file_ack}\n\n{follow_up}".strip() if follow_up else (file_ack or "").strip()
 
@@ -454,6 +466,8 @@ async def _debounced_file_upload_follow_up(
             return
 
         hybrid_flow.init_flow(session)
+        hybrid_flow.prepare_for_incoming_file_upload(session)
+        early_file_upload_complete = session.flow_state.pop("early_file_upload_complete", False)
         awaiting_additional = session.flow_state.get("awaiting_additional_file_upload")
         awaiting_more = session.flow_state.get("awaiting_more_upload_decision")
         if (
@@ -473,7 +487,7 @@ async def _debounced_file_upload_follow_up(
         await _send_file_upload_follow_up(
             session,
             phone_number,
-            ask_for_more=not awaiting_additional,
+            ask_for_more=not awaiting_additional and not early_file_upload_complete,
         )
         await save_session(session)
         await supabase_store.upsert_session_log(session)
@@ -706,6 +720,7 @@ async def _handle_whatsapp_message_impl(
                 if meta:
                     saved_any = True
             if saved_any:
+                hybrid_flow.prepare_for_incoming_file_upload(session)
                 if session.flow_state.get("awaiting_more_upload_decision"):
                     session.flow_state.pop("awaiting_more_upload_decision", None)
                     session.flow_state["awaiting_additional_file_upload"] = True
