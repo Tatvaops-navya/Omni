@@ -125,8 +125,11 @@ def list_tatva_attachment_links(attachments: list[Any] | None) -> list[dict[str,
 
 
 def _attachment_whatsapp_blocks(attachments: list[Any] | None) -> list[str]:
-    """Short labels only — URLs are sent as separate tap-to-open WhatsApp messages."""
-    return [link["label"] for link in list_tatva_attachment_links(attachments)]
+    """Label on first line, clickable URL on second — no separate media message bubbles."""
+    return [
+        f"{link['label']}\n{link['url']}"
+        for link in list_tatva_attachment_links(attachments)
+    ]
 
 
 def extract_tatva_attachment_urls(attachments: list[Any] | None) -> list[str]:
