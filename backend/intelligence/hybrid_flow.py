@@ -395,6 +395,8 @@ def check_stale_interactive_selection(
     if not matched:
         return None
     matched_field = str(matched.get("field") or "")
+    if matched_field == "service_category" and se.needs_service_selection(session):
+        return None
     if allowed_field and matched_field == allowed_field:
         return None
     if is_stale_mcq_selection(session, matched):
@@ -730,18 +732,58 @@ def additional_file_upload_prompt() -> str:
     return "Please upload your file(s). You can send multiple files."
 
 
+def strip_post_upload_follow_up(session: Session, text: str) -> str:
+    """Remove file-upload step copy that must not repeat after files were received."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+
+    bridge = STAGE_BRIDGES.get("service_questionnaire", "")
+    if bridge:
+        cleaned = cleaned.replace(bridge, "").strip()
+
+    skip_hints = (
+        "(Reply *skip* if nothing to upload.)",
+        "(Reply skip if nothing to upload.)",
+    )
+    for step in qb.get_service_questionnaire_steps(session):
+        if step.get("type") != "file_request":
+            continue
+        for chunk in (
+            str(step.get("prompt") or "").strip(),
+            format_step_message(step, include_stage=False),
+            format_step_message(step, include_stage=True),
+        ):
+            if chunk and chunk in cleaned:
+                cleaned = cleaned.replace(chunk, "").strip()
+    for hint in skip_hints:
+        cleaned = cleaned.replace(hint, "").strip()
+
+    return "\n".join(line for line in cleaned.splitlines() if line.strip()).strip()
+
+
+def _force_advance_past_file_upload(session: Session) -> None:
+    """Ensure the file-upload step is completed and the flow moves forward."""
+    sync_attachment_fields(session, complete_step=True)
+    session.flow_state.pop("current_step_id", None)
+    se.maybe_advance_current_stage(session)
+
+
 def complete_attachment_upload(session: Session) -> str:
     """
     Called after WhatsApp media is saved. Completes the current file step and advances.
     """
-    se.reconcile_session(session)
-    sync_attachment_fields(session)
-    session.flow_state.pop("current_step_id", None)
-    se.maybe_advance_current_stage(session)
+    _force_advance_past_file_upload(session)
     if se.can_enter_final_review(session):
         return _enter_final_review(session)
+    step = get_current_step(session)
+    if step and step.get("type") == "file_request":
+        _force_advance_past_file_upload(session)
+        step = get_current_step(session)
+    if step and step.get("type") == "file_request":
+        return ""
     msg = _next_step_message(session)
-    return msg or "Thank you! Your file has been saved."
+    return strip_post_upload_follow_up(session, msg or "")
 
 
 def pending_file_upload(session: Session) -> bool:

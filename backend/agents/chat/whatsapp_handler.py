@@ -301,11 +301,7 @@ def _prepare_returning_user_client_stage(session: Session) -> None:
         "preferred_contact_time": str(session.extracted_fields.get("preferred_contact_time") or "").strip(),
         "phone_number": phone,
     }
-    session.summary_generated = False
-    session.summary = None
-    session.service_category = None
-    session.active_consultant = None
-    session.attachments = []
+    se.clear_prior_enquiry_qualification(session)
     session.conversation_stage = ConversationStage.ROUTING
     session.flow_state = {}
     edit_flow.clear_edit_mode(session)
@@ -414,18 +410,32 @@ async def _send_file_upload_follow_up(
         if se.fs_current_stage(session) == "final_review"
         else hybrid_flow.get_current_step(session)
     )
+    if outbound_step and outbound_step.get("type") == "file_request":
+        hybrid_flow._force_advance_past_file_upload(session)
+        follow_up = hybrid_flow._next_step_message(session) or ""
+        follow_up = hybrid_flow.strip_post_upload_follow_up(session, follow_up)
+        outbound_step = (
+            get_final_review_outbound_step(session)
+            if se.fs_current_stage(session) == "final_review"
+            else hybrid_flow.get_current_step(session)
+        )
+
+    follow_up = hybrid_flow.strip_post_upload_follow_up(session, follow_up or "")
     if outbound_step and outbound_step.get("type") == "mcq":
         prompt_text = str(outbound_step.get("prompt", "")).strip()
         list_prompt = str(outbound_step.get("twilio_list_prompt", "")).strip()
-        cleaned_follow_up = (follow_up or "").strip()
+        cleaned_follow_up = follow_up
         for chunk in (prompt_text, list_prompt):
             if chunk:
                 idx = cleaned_follow_up.find(chunk)
                 if idx != -1:
                     cleaned_follow_up = cleaned_follow_up[:idx].strip()
         follow_up = cleaned_follow_up
-    combined = f"{file_ack}\n\n{follow_up}".strip() if follow_up else file_ack
-    await send_context_then_mcq_list(phone_number, combined, outbound_step)
+        context_body = (file_ack or "").strip()
+    else:
+        context_body = f"{file_ack}\n\n{follow_up}".strip() if follow_up else (file_ack or "").strip()
+
+    await send_context_then_mcq_list(phone_number, context_body, outbound_step)
 
 
 async def _debounced_file_upload_follow_up(

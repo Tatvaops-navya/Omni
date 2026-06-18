@@ -288,6 +288,39 @@ def mark_field_validated(session: Session, field: str, value: Any) -> bool:
     return True
 
 
+_ENQUIRY_RESET_FIELDS = frozenset({
+    "willing_to_create_project",
+    "service_category",
+    "assigned_consultant",
+    "attachments",
+    "has_attachments",
+    "overview_property_type",
+})
+
+
+def _enquiry_fields_to_clear(session: Session) -> set[str]:
+    fs = session.flow_state or {}
+    dynamic = list(fs.get("service_questionnaire_required_fields") or [])
+    service_fields = [
+        f for f in session.extracted_fields
+        if f.startswith("service_q") or f.startswith("order_") or f.startswith("file_order_")
+    ]
+    return set(_ENQUIRY_RESET_FIELDS) | set(dynamic) | set(service_fields)
+
+
+def clear_prior_enquiry_qualification(session: Session) -> None:
+    """Remove a previous enquiry's service/qualification data for a fresh returning-user project."""
+    reset_fields = _enquiry_fields_to_clear(session)
+    session.completed_fields = [f for f in session.completed_fields if f not in reset_fields]
+    for field in reset_fields:
+        session.extracted_fields.pop(field, None)
+    session.service_category = None
+    session.active_consultant = None
+    session.attachments = []
+    session.summary_generated = False
+    session.summary = None
+
+
 def on_service_selected(session: Session, category: ServiceCategory) -> None:
     session.service_category = category
     session.active_consultant = None

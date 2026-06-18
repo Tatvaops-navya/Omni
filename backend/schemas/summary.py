@@ -8,7 +8,7 @@ from datetime import datetime
 from backend.intelligence.display_labels import display_label
 from backend.integrations.tatva_enquiry_submit import format_tatva_enquiry_summary_whatsapp
 
-TATVAOPS_PLATFORM_URL = "https://tatvaops.com/"
+TATVAOPS_PLATFORM_URL = "https://withtatva.ai/"
 
 CLIENT_PLATFORM_ADDRESS_CTA = (
     "📍 *Next step for you*\n\n"
