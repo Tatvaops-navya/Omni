@@ -167,6 +167,43 @@ def _first_name(name: str) -> str:
     return parts[0] if parts else ""
 
 
+def _touch_session_activity(session: Session) -> None:
+    session.last_active = datetime.utcnow()
+
+
+def _returning_profile_selection(
+    *,
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
+    user_message: str = "",
+) -> str:
+    """Normalize list tap or typed reply for returning-user profile edit menu."""
+    for raw in (list_id, button_payload, button_text, user_message):
+        selected = (raw or "").strip().lower()
+        if not selected:
+            continue
+        if selected in {"client_name", "name"}:
+            return "client_name"
+        if selected == "email":
+            return "email"
+        if selected in {"continue", "no", "n", "skip", "done"}:
+            return "continue"
+    return ""
+
+
+async def _send_returning_mcq_prompt(
+    phone_number: str,
+    context_body: str,
+    step: dict,
+) -> None:
+    await send_context_then_mcq_list(
+        phone_number,
+        context_body,
+        enrich_whatsapp_mcq_step(step),
+    )
+
+
 def _returning_edit_decision_step() -> dict:
     return returning_edit_decision_step()
 
@@ -176,6 +213,15 @@ def _is_registered_returning_user(session: Session) -> bool:
         session.extracted_fields.get("tatva_user_id")
         or session.flow_state.get("tatva_user_registered")
         or session.flow_state.get("tatva_phone_is_user")
+    )
+
+
+def _is_in_returning_user_prompt(session: Session) -> bool:
+    """True while the user is mid returning-user re-entry (edit decision / profile)."""
+    return bool(
+        session.flow_state.get("awaiting_returning_edit_decision")
+        or session.flow_state.get("awaiting_returning_profile_field")
+        or session.flow_state.get("awaiting_returning_profile_value")
     )
 
 
@@ -232,7 +278,8 @@ async def _send_file_upload_follow_up(
     file_ack: str | None = None,
     ask_for_more: bool = True,
 ) -> None:
-    hybrid_flow.sync_attachment_fields(session)
+    if ask_for_more:
+        hybrid_flow.sync_attachment_fields(session, complete_step=False)
     if file_ack is None:
         file_ack = hybrid_flow.file_upload_ack_message(session)
     if ask_for_more:
@@ -252,18 +299,32 @@ async def _send_file_upload_follow_up(
         if se.fs_current_stage(session) == "final_review"
         else hybrid_flow.get_current_step(session)
     )
+    if outbound_step and outbound_step.get("type") == "file_request":
+        hybrid_flow._force_advance_past_file_upload(session)
+        follow_up = hybrid_flow._next_step_message(session) or ""
+        follow_up = hybrid_flow.strip_post_upload_follow_up(session, follow_up)
+        outbound_step = (
+            get_final_review_outbound_step(session)
+            if se.fs_current_stage(session) == "final_review"
+            else hybrid_flow.get_current_step(session)
+        )
+
+    follow_up = hybrid_flow.strip_post_upload_follow_up(session, follow_up or "")
     if outbound_step and outbound_step.get("type") == "mcq":
         prompt_text = str(outbound_step.get("prompt", "")).strip()
         list_prompt = str(outbound_step.get("twilio_list_prompt", "")).strip()
-        cleaned_follow_up = (follow_up or "").strip()
+        cleaned_follow_up = follow_up
         for chunk in (prompt_text, list_prompt):
             if chunk:
                 idx = cleaned_follow_up.find(chunk)
                 if idx != -1:
                     cleaned_follow_up = cleaned_follow_up[:idx].strip()
         follow_up = cleaned_follow_up
-    combined = f"{file_ack}\n\n{follow_up}".strip() if follow_up else file_ack
-    await send_context_then_mcq_list(phone_number, combined, outbound_step)
+        context_body = (file_ack or "").strip()
+    else:
+        context_body = f"{file_ack}\n\n{follow_up}".strip() if follow_up else (file_ack or "").strip()
+
+    await send_context_then_mcq_list(phone_number, context_body, outbound_step)
 
 
 async def _debounced_file_upload_follow_up(
@@ -282,14 +343,27 @@ async def _debounced_file_upload_follow_up(
             return
 
         hybrid_flow.init_flow(session)
-        if not edit_flow.awaiting_file_upload(session) and not hybrid_flow.pending_file_upload(session):
+        awaiting_additional = session.flow_state.get("awaiting_additional_file_upload")
+        awaiting_more = session.flow_state.get("awaiting_more_upload_decision")
+        if (
+            not edit_flow.awaiting_file_upload(session)
+            and not hybrid_flow.pending_file_upload(session)
+            and not awaiting_additional
+            and not awaiting_more
+        ):
             return
 
         session.flow_state["media_upload_follow_up_sent"] = batch_version
         session.flow_state["file_upload_completed_at"] = datetime.utcnow().isoformat()
+        if awaiting_additional:
+            session.flow_state.pop("awaiting_additional_file_upload", None)
         await save_session(session)
         await supabase_store.upsert_session_log(session)
-        await _send_file_upload_follow_up(session, phone_number)
+        await _send_file_upload_follow_up(
+            session,
+            phone_number,
+            ask_for_more=not awaiting_additional,
+        )
         await save_session(session)
         await supabase_store.upsert_session_log(session)
 
@@ -439,6 +513,9 @@ async def _handle_whatsapp_message_impl(
     media_items = media_items or []
     session = await get_session(session_id)
 
+    if session and (user_message or num_media > 0):
+        _touch_session_activity(session)
+
     # In-progress chat idle > N minutes — reset and send EVA intro; discard stale reply.
     if session and (user_message or num_media > 0) and is_session_idle_expired(session):
         stale_session = session
@@ -461,6 +538,7 @@ async def _handle_whatsapp_message_impl(
         and (user_message or num_media > 0)
         and _is_new_enquiry_intent(user_message)
         and not _is_post_submit_polite_reply(user_message)
+        and not _is_in_returning_user_prompt(session)
     ):
         print(f"[WhatsApp] New enquiry restart for {phone_number} msg={user_message!r}")
         await _hydrate_returning_profile_from_tatva(session)
@@ -530,7 +608,10 @@ async def _handle_whatsapp_message_impl(
                 if meta:
                     saved_any = True
             if saved_any:
-                if edit_flow.awaiting_file_upload(session) or hybrid_flow.pending_file_upload(session):
+                if session.flow_state.get("awaiting_more_upload_decision"):
+                    session.flow_state.pop("awaiting_more_upload_decision", None)
+                    session.flow_state["awaiting_additional_file_upload"] = True
+                if _in_file_upload_flow(session):
                     await _schedule_file_upload_follow_up(session, phone_number)
                     await save_session(session)
                     await supabase_store.upsert_session_log(session)
@@ -569,10 +650,17 @@ async def _handle_whatsapp_message_impl(
             )
             return
         if wants_more:
-            prompt = hybrid_flow.file_request_prompt(session) or "Please upload your file."
-            await send_whatsapp_message(to=phone_number, body=prompt)
+            session.flow_state.pop("awaiting_more_upload_decision", None)
+            session.flow_state["awaiting_additional_file_upload"] = True
+            await save_session(session)
+            await supabase_store.upsert_session_log(session)
+            await send_whatsapp_message(
+                to=phone_number,
+                body=hybrid_flow.additional_file_upload_prompt(),
+            )
             return
         session.flow_state.pop("awaiting_more_upload_decision", None)
+        _cancel_pending_upload_follow_up(session)
         await save_session(session)
         await supabase_store.upsert_session_log(session)
         await _send_file_upload_follow_up(
@@ -583,6 +671,18 @@ async def _handle_whatsapp_message_impl(
         )
         await save_session(session)
         await supabase_store.upsert_session_log(session)
+        return
+
+    if (
+        _in_file_upload_flow(session)
+        and _looks_like_upload_filename(user_message)
+        and not _parse_yes_no_choice(
+            user_message,
+            list_id=list_id,
+            button_payload=button_payload,
+            button_text=button_text,
+        )
+    ):
         return
 
     if se.fs_current_stage(session) == "service_selection":

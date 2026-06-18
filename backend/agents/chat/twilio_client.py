@@ -16,6 +16,11 @@ _twilio_client = None
 # Twilio WhatsApp body limit is 1600 chars (error 21617)
 WHATSAPP_MAX_CHARS = 1500
 
+RETURNING_MCQ_FIELDS = frozenset({
+    "__returning_edit_info__",
+    "__returning_profile_field__",
+})
+
 
 def chunk_whatsapp_body(body: str, max_len: int = WHATSAPP_MAX_CHARS) -> list[str]:
     """Split long text into WhatsApp-safe chunks."""
@@ -216,7 +221,7 @@ def _should_send_interactive(step: dict[str, Any]) -> bool:
         return bool(_resolve_content_sid(step))
     if field == "service_category":
         return bool(getattr(settings, "twilio_service_selection_content_sid", ""))
-    if field in ("willing_to_create_project",) or field.startswith("__edit_") or field == "__final_review__":
+    if field in ("willing_to_create_project", *RETURNING_MCQ_FIELDS) or field.startswith("__edit_") or field == "__final_review__":
         return bool(_variable_mcq_list_sid(len([o for o in (step.get("options") or []) if not _is_other_option(o)])))
     return False
 
@@ -267,6 +272,7 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
             or field == "__final_review__"
             or field == "preferred_contact_time"
             or field == "willing_to_create_project"
+            or field in RETURNING_MCQ_FIELDS
         ):
             out["require_content_variables"] = True
         if _template_supports_row_descriptions(out):
@@ -459,6 +465,7 @@ async def _send_interactive_options(
         or str(step.get("field", "")).startswith("service_q")
         or str(step.get("field", "")).startswith("order_")
         or str(step.get("field", "")).startswith("file_order_")
+        or str(step.get("field", "")) in RETURNING_MCQ_FIELDS
     )
     try:
         import asyncio
