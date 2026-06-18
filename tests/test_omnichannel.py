@@ -209,6 +209,7 @@ async def test_returning_user_yes_to_edit_sends_list_template(monkeypatch):
         summary_generated=True,
     )
     session.flow_state["awaiting_returning_edit_decision"] = True
+    session.flow_state[wh.RETURNING_USER_PHASE] = "edit_decision"
 
     sent: list[tuple[str, str]] = []
 
@@ -221,13 +222,13 @@ async def test_returning_user_yes_to_edit_sends_list_template(monkeypatch):
     async def fake_upsert_session_log(_session):
         return None
 
-    async def fake_send_returning_mcq_prompt(_phone, context, _step):
-        sent.append((context, str(_step.get("field"))))
+    async def fake_send_returning_plain_mcq(_phone, step, *, context_body=""):
+        sent.append((context_body, str(step.get("field"))))
 
     monkeypatch.setattr(wh, "get_session", fake_get_session)
     monkeypatch.setattr(wh, "save_session", fake_save_session)
     monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
-    monkeypatch.setattr(wh, "_send_returning_mcq_prompt", fake_send_returning_mcq_prompt)
+    monkeypatch.setattr(wh, "_send_returning_plain_mcq", fake_send_returning_plain_mcq)
 
     await wh._handle_whatsapp_message_impl(
         "wa_test",
@@ -254,8 +255,8 @@ async def test_willing_to_create_project_after_continue_uses_plain_text(monkeypa
     session.extracted_fields.update({
         "client_name": "Madhu shree",
         "email": "test@gmail.com",
-        "city": "Hyderabad",
-        "property_location": "Madhapur",
+        "city": "Bengaluru",
+        "property_location": "HSR Layout",
         "preferred_contact_time": "morning",
         "tatva_user_id": "abc",
     })
@@ -490,14 +491,23 @@ def test_returning_user_prompt_blocks_duplicate_greeting_restart():
         conversation_stage=ConversationStage.SUMMARY_GENERATED,
         summary_generated=True,
     )
+    from backend.agents.chat.whatsapp_handler import RETURNING_USER_PHASE, _is_in_returning_user_prompt
+
     assert not _is_in_returning_user_prompt(session)
 
     session.flow_state["awaiting_returning_edit_decision"] = True
+    session.flow_state[RETURNING_USER_PHASE] = "edit_decision"
     assert _is_in_returning_user_prompt(session)
 
     session.flow_state.pop("awaiting_returning_edit_decision")
     session.flow_state["awaiting_returning_profile_field"] = True
+    session.flow_state[RETURNING_USER_PHASE] = "profile_field"
     assert _is_in_returning_user_prompt(session)
+
+    session.flow_state.pop("awaiting_returning_profile_field")
+    session.flow_state.pop(RETURNING_USER_PHASE, None)
+    session.flow_state["returning_edit_flow_complete"] = True
+    assert not _is_in_returning_user_prompt(session)
 
 
 @pytest.mark.asyncio
@@ -515,6 +525,7 @@ async def test_second_greeting_while_awaiting_edit_reprompts_not_welcome_back(mo
     session.extracted_fields["client_name"] = "Navya"
     session.extracted_fields["email"] = "navya@gmail.com"
     session.flow_state["awaiting_returning_edit_decision"] = True
+    session.flow_state[wh.RETURNING_USER_PHASE] = "edit_decision"
 
     sent_messages: list[str] = []
 
@@ -527,8 +538,8 @@ async def test_second_greeting_while_awaiting_edit_reprompts_not_welcome_back(mo
     async def fake_upsert_session_log(_session):
         return None
 
-    async def fake_send_context_then_mcq_list(_phone, body, _step):
-        sent_messages.append(body)
+    async def fake_send_returning_plain_mcq(_phone, _step, *, context_body=""):
+        sent_messages.append(context_body)
 
     async def fake_send_returning_user_reentry_prompt(_session, _phone):
         raise AssertionError("Welcome back should not fire again while awaiting edit decision")
@@ -536,7 +547,7 @@ async def test_second_greeting_while_awaiting_edit_reprompts_not_welcome_back(mo
     monkeypatch.setattr(wh, "get_session", fake_get_session)
     monkeypatch.setattr(wh, "save_session", fake_save_session)
     monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
-    monkeypatch.setattr(wh, "send_context_then_mcq_list", fake_send_context_then_mcq_list)
+    monkeypatch.setattr(wh, "_send_returning_plain_mcq", fake_send_returning_plain_mcq)
     monkeypatch.setattr(wh, "_send_returning_user_reentry_prompt", fake_send_returning_user_reentry_prompt)
 
     await wh._handle_whatsapp_message_impl(

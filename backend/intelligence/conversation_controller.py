@@ -81,6 +81,16 @@ def _should_send_eva_intro_for_greeting(session: Session, user_message: str) -> 
         return False
     if session.summary_generated or session.flow_state.get("project_declined"):
         return False
+    if session.flow_state.get("returning_edit_flow_complete"):
+        return False
+    if session.flow_state.get("existing_user_flow_started"):
+        return False
+    if session.flow_state.get("awaiting_returning_edit_decision"):
+        return False
+    if session.flow_state.get("awaiting_returning_profile_field"):
+        return False
+    if session.flow_state.get("awaiting_returning_profile_value"):
+        return False
     return True
 
 
@@ -234,7 +244,6 @@ class ConversationController:
                 session.flow_state.get("awaiting_returning_edit_decision")
                 or session.flow_state.get("awaiting_returning_profile_field")
                 or session.flow_state.get("awaiting_returning_profile_value")
-                or session.flow_state.get("returning_user_reentry")
             )
             if not in_returning_reentry:
                 lower = user_message.lower().strip()
@@ -381,6 +390,7 @@ class ConversationController:
             if (
                 session.flow_state.get("tatva_phone_is_user")
                 and not session.flow_state.get("existing_user_flow_started")
+                and not session.flow_state.get("returning_edit_flow_complete")
             ):
                 return self._start_existing_user_welcome(session)
             if _should_send_eva_intro_for_greeting(session, user_message):
