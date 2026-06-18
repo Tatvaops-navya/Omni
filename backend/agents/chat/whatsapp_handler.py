@@ -197,6 +197,15 @@ def _is_registered_returning_user(session: Session) -> bool:
     )
 
 
+def _is_in_returning_user_prompt(session: Session) -> bool:
+    """True while the user is mid returning-user re-entry (edit decision / profile)."""
+    return bool(
+        session.flow_state.get("awaiting_returning_edit_decision")
+        or session.flow_state.get("awaiting_returning_profile_field")
+        or session.flow_state.get("awaiting_returning_profile_value")
+    )
+
+
 async def _hydrate_returning_profile_from_tatva(session: Session) -> None:
     if session.extracted_fields.get("client_name") and session.extracted_fields.get("email"):
         return
@@ -584,6 +593,7 @@ async def _handle_whatsapp_message_impl(
         and (user_message or num_media > 0)
         and _is_new_enquiry_intent(user_message)
         and not _is_post_submit_polite_reply(user_message)
+        and not _is_in_returning_user_prompt(session)
     ):
         print(f"[WhatsApp] New enquiry restart for {phone_number} msg={user_message!r}")
         await _hydrate_returning_profile_from_tatva(session)
@@ -782,8 +792,10 @@ async def _handle_whatsapp_message_impl(
             session.flow_state["awaiting_additional_file_upload"] = True
             await save_session(session)
             await supabase_store.upsert_session_log(session)
-            prompt = hybrid_flow.file_request_prompt(session) or "Please upload your file."
-            await send_whatsapp_message(to=phone_number, body=prompt)
+            await send_whatsapp_message(
+                to=phone_number,
+                body=hybrid_flow.additional_file_upload_prompt(),
+            )
             return
         session.flow_state.pop("awaiting_more_upload_decision", None)
         _cancel_pending_upload_follow_up(session)
