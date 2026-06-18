@@ -786,6 +786,49 @@ def complete_attachment_upload(session: Session) -> str:
     return strip_post_upload_follow_up(session, msg or "")
 
 
+def _pending_file_upload_fields(session: Session) -> list[str]:
+    fields: list[str] = []
+    for step in qb.get_service_questionnaire_steps(session):
+        if step.get("type") != "file_request":
+            continue
+        field = str(step.get("field") or "attachments")
+        if not se.field_is_complete(session, field):
+            fields.append(field)
+    return fields
+
+
+def has_pending_file_upload_step(session: Session) -> bool:
+    se.reconcile_session(session)
+    return bool(_pending_file_upload_fields(session))
+
+
+def prepare_for_incoming_file_upload(session: Session) -> None:
+    """
+    When the user sends media before the file-upload question (e.g. on a descriptive step),
+    complete blocking text steps so the upload can finish the enquiry flow.
+    """
+    se.reconcile_session(session)
+    if not _pending_file_upload_fields(session):
+        return
+
+    steps = qb.get_service_questionnaire_steps(session)
+    file_step_ids = {str(s.get("id")) for s in steps if s.get("type") == "file_request"}
+    step = get_current_step(session)
+    skipped_descriptive = False
+    while step and str(step.get("id")) not in file_step_ids:
+        if step.get("type") != "descriptive":
+            break
+        field = str(step.get("field") or "")
+        value = "skipped" if step.get("optional") else "Provided via attachment"
+        se.mark_field_validated(session, field, value)
+        session.flow_state.pop("current_step_id", None)
+        skipped_descriptive = True
+        se.reconcile_session(session)
+        step = get_current_step(session)
+    if skipped_descriptive:
+        session.flow_state["early_file_upload_complete"] = True
+
+
 def pending_file_upload(session: Session) -> bool:
     se.reconcile_session(session)
     if (

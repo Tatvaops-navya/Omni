@@ -545,6 +545,108 @@ async def test_additional_file_upload_follow_up_advances_flow(monkeypatch):
     assert "awaiting_additional_file_upload" not in session.flow_state
 
 
+def _session_at_painting_descriptive_step() -> Session:
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Navya"),
+        ("city", "Hyderabad"),
+        ("property_location", "Madhapur"),
+        ("preferred_contact_time", "morning"),
+        ("willing_to_create_project", "yes"),
+    ):
+        se.mark_field_validated(session, field, value)
+    se.on_service_selected(session, ServiceCategory.PAINTING_WATERPROOFING)
+    for field, value in (
+        ("service_q1", "interior_painting"),
+        ("service_q2", "1500_3000_sqft"),
+        ("service_q3", "matt_flat"),
+    ):
+        se.mark_field_validated(session, field, value)
+    return session
+
+
+def test_prepare_for_incoming_file_upload_skips_descriptive_before_file_step():
+    from backend.schemas.session import AttachmentMeta
+
+    session = _session_at_painting_descriptive_step()
+
+    assert hybrid_flow.get_current_step(session)["type"] == "descriptive"
+    assert hybrid_flow.has_pending_file_upload_step(session)
+
+    session.attachments.append(
+        AttachmentMeta(
+            file_name="room.png",
+            file_url="https://x/room.png",
+            mime_type="image/png",
+        )
+    )
+    hybrid_flow.prepare_for_incoming_file_upload(session)
+
+    assert se.field_is_complete(session, "service_q4")
+    assert hybrid_flow.get_current_step(session)["type"] == "file_request"
+    assert hybrid_flow.pending_file_upload(session)
+
+    msg = hybrid_flow.complete_attachment_upload(session)
+    assert se.fs_current_stage(session) == "final_review"
+    assert "quick review" in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_media_on_descriptive_triggers_review_follow_up(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+    from backend.schemas.session import AttachmentMeta
+
+    session = _session_at_painting_descriptive_step()
+
+    sent: list[tuple[str, object]] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_upsert_session_log(_session):
+        return None
+
+    async def fake_send_context_then_mcq_list(_phone, context_body, step):
+        sent.append((context_body, step))
+
+    async def instant_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
+    monkeypatch.setattr(wh, "send_context_then_mcq_list", fake_send_context_then_mcq_list)
+    monkeypatch.setattr(wh.asyncio, "sleep", instant_sleep)
+    monkeypatch.setattr(wh, "_schedule_file_upload_follow_up", wh._debounced_file_upload_follow_up)
+
+    session.attachments.append(
+        AttachmentMeta(
+            file_name="room.png",
+            file_url="https://x/room.png",
+            mime_type="image/png",
+        )
+    )
+    session.flow_state["media_upload_batch_version"] = 1
+
+    await wh._debounced_file_upload_follow_up("wa_test", "whatsapp:+91999", 1)
+
+    assert len(sent) == 1
+    context_body, step = sent[0]
+    assert "Our team will review" not in context_body
+    assert "quick review" in context_body.lower()
+    assert step is not None
+    assert step.get("field") == "__final_review__"
+
+
 def test_strip_post_upload_follow_up_removes_file_prompt():
     session = Session(
         session_id="wa_test",
