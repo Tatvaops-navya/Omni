@@ -125,11 +125,24 @@ def list_tatva_attachment_links(attachments: list[Any] | None) -> list[dict[str,
 
 
 def _attachment_whatsapp_blocks(attachments: list[Any] | None) -> list[str]:
-    """Label on first line, clickable URL on second — no separate media message bubbles."""
-    return [
-        f"{link['label']}\n{link['url']}"
-        for link in list_tatva_attachment_links(attachments)
-    ]
+    """Friendly labels only — tap-to-open uses Twilio CTA buttons (no raw URLs in summary)."""
+    return [link["label"] for link in list_tatva_attachment_links(attachments)]
+
+
+def url_suffix_for_cta(full_url: str, *, cdn_base: str) -> str | None:
+    """Return the path+query suffix for a CDN URL used in Twilio CTA templates."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse((full_url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    expected = urlparse((cdn_base or "").strip() or "https://invalid/")
+    if parsed.netloc.lower() != (expected.netloc or "").lower():
+        return None
+    suffix = (parsed.path or "").lstrip("/")
+    if parsed.query:
+        suffix = f"{suffix}?{parsed.query}" if suffix else parsed.query
+    return suffix or None
 
 
 def extract_tatva_attachment_urls(attachments: list[Any] | None) -> list[str]:
