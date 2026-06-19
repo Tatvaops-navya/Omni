@@ -113,6 +113,21 @@ def test_list_tatva_attachment_links_preserves_urls_for_delivery():
     ]
 
 
+def test_list_tatva_attachment_links_no_sequence_numbers_for_same_kind():
+    attachments = [
+        {"key": "a.jpg", "url": "https://example.com/a.jpg"},
+        {"key": "b.jpg", "url": "https://example.com/b.jpg"},
+        {"key": "c.jpg", "url": "https://example.com/c.jpg"},
+    ]
+    links = list_tatva_attachment_links(attachments)
+    assert all(link["label"] == "↗ View image" for link in links)
+    assert [link["url"] for link in links] == [
+        "https://example.com/a.jpg",
+        "https://example.com/b.jpg",
+        "https://example.com/c.jpg",
+    ]
+
+
 def test_url_suffix_for_cta_matches_cdn_host():
     base = "https://d187u6mpwmtl08.cloudfront.net/"
     url = "https://d187u6mpwmtl08.cloudfront.net/enquiries/user/file.png"

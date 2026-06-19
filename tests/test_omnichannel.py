@@ -10,8 +10,6 @@ from backend.intelligence.lead_scorer import score_lead
 from backend.intelligence.conversation_controller import ConversationController, _is_off_topic
 from backend.intelligence.persona import GUARDRAIL_REDIRECT
 from backend.agents.chat.whatsapp_handler import (
-    _is_new_enquiry_intent,
-    _is_post_submit_polite_reply,
     _first_name,
     _more_file_upload_step,
     _parse_yes_no_choice,
@@ -132,11 +130,10 @@ def test_stale_intro_session_hello_no_timeout_banner():
     assert should_prepend_idle_notice(session, "hello") is False
 
 
-def test_post_submit_message_intent():
-    assert _is_post_submit_polite_reply("Thank you")
-    assert not _is_new_enquiry_intent("Thank you")
-    assert _is_new_enquiry_intent("Hello")
-    assert _is_new_enquiry_intent("Hi there")
+def test_greeting_after_submit_starts_fresh_enquiry():
+    assert not is_greeting_message("Thank you")
+    assert is_greeting_message("Hello")
+    assert is_greeting_message("Hi there")
 
 
 def test_more_file_upload_step_has_yes_no_options():
@@ -1130,6 +1127,27 @@ async def test_thank_you_after_submit_does_not_restart_flow():
     assert "I'm EVA" not in resp.text
     assert "You're welcome" in resp.text
     assert session.summary_generated is True
+
+
+@pytest.mark.asyncio
+async def test_clear_cached_session_removes_session_from_store():
+    from backend.storage.redis_store import save_session, get_session
+    from backend.utils.session_idle import clear_cached_session
+
+    session_id = "wa_whatsapp:+919111122222"
+    phone = "whatsapp:+919111122222"
+    session = Session(
+        session_id=session_id,
+        phone_number=phone,
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    await save_session(session)
+    assert await get_session(session_id) is not None
+
+    await clear_cached_session(session_id, reason="enquiry_submitted")
+    assert await get_session(session_id) is None
 
 
 def test_nova_detect_service_by_number():

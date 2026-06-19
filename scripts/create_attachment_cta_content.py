@@ -42,7 +42,7 @@ def _create_template(*, cfg, cdn_base: str, kind: str, button_title: str) -> str
         "friendly_name": f"tatvaops_attachment_{kind}_cta",
         "language": "en",
         "variables": {
-            "1": "View image 1",
+            "1": "View image",
             "2": "enquiries/sample/path/file.png",
         },
         "types": {
