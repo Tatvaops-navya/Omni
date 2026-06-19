@@ -65,6 +65,68 @@ def is_unregistered_phone_response(payload: dict[str, Any]) -> bool:
     )
 
 
+def _name_from_user(user: dict[str, Any]) -> str:
+    direct = (
+        user.get("fullName")
+        or user.get("name")
+        or user.get("displayName")
+        or ""
+    )
+    if str(direct).strip():
+        return str(direct).strip()
+    first = str(user.get("firstName") or "").strip()
+    last = str(user.get("lastName") or "").strip()
+    if first or last:
+        return " ".join(part for part in (first, last) if part)
+    return ""
+
+
+def _location_from_user(user: dict[str, Any]) -> tuple[str, str]:
+    city = str(user.get("city") or user.get("location") or "").strip()
+    prop = str(
+        user.get("propertyLocation")
+        or user.get("property_location")
+        or ""
+    ).strip()
+    address = user.get("address")
+    if isinstance(address, str) and address.strip():
+        if not prop:
+            prop = address.strip()
+    elif isinstance(address, dict):
+        city = city or str(address.get("city") or "").strip()
+        prop = prop or str(
+            address.get("propertyLocation")
+            or address.get("property_location")
+            or address.get("line1")
+            or address.get("address")
+            or ""
+        ).strip()
+    return city, prop
+
+
+def _apply_profile_fields(
+    session: Session,
+    *,
+    name: str = "",
+    email: str = "",
+    city: str = "",
+    property_location: str = "",
+) -> None:
+    if name and not session.extracted_fields.get("client_name"):
+        se.mark_field_validated(session, "client_name", name)
+    if email and not session.extracted_fields.get("email"):
+        if se.is_valid_gmail_address(email):
+            se.mark_field_validated(session, "email", email)
+        else:
+            session.extracted_fields["email"] = email
+            if "email" not in session.completed_fields:
+                session.completed_fields.append("email")
+    if city and not session.extracted_fields.get("city"):
+        se.mark_field_validated(session, "city", city)
+    if property_location and not session.extracted_fields.get("property_location"):
+        se.mark_field_validated(session, "property_location", property_location)
+
+
 def _hydrate_profile_from_user(session: Session, user: dict[str, Any]) -> None:
     user_id = user.get("_id")
     if user_id and not session.extracted_fields.get("tatva_user_id"):
@@ -72,18 +134,53 @@ def _hydrate_profile_from_user(session: Session, user: dict[str, Any]) -> None:
         if "tatva_user_id" not in session.completed_fields:
             session.completed_fields.append("tatva_user_id")
 
-    name = (
-        user.get("fullName")
-        or user.get("name")
-        or user.get("firstName")
-        or user.get("displayName")
-        or ""
+    city, prop = _location_from_user(user)
+    _apply_profile_fields(
+        session,
+        name=_name_from_user(user),
+        email=str(user.get("email") or "").strip(),
+        city=city,
+        property_location=prop,
     )
-    email = user.get("email") or ""
-    if name and not session.extracted_fields.get("client_name"):
-        session.extracted_fields["client_name"] = str(name).strip()
-    if email and not session.extracted_fields.get("email"):
-        session.extracted_fields["email"] = str(email).strip()
+
+
+async def hydrate_returning_user_profile(session: Session, *, force: bool = False) -> None:
+    """
+    Load returning-user name and location from Tatva check-phone, then fill gaps
+    from the most recent saved enquiry (Supabase). Tatva often returns only user id.
+    """
+    if (
+        not force
+        and session.extracted_fields.get("client_name")
+        and session.extracted_fields.get("tatva_user_id")
+        and (
+            session.extracted_fields.get("city")
+            or session.extracted_fields.get("property_location")
+        )
+    ):
+        return
+
+    phone = _session_phone(session)
+    payload = await check_phone_user(phone, session_id=session.session_id)
+    if payload:
+        data = payload.get("data") or {}
+        if data.get("isUser"):
+            session.flow_state["tatva_phone_checked"] = True
+            session.flow_state["tatva_phone_is_user"] = True
+            session.flow_state["tatva_user_registered"] = True
+            user = data.get("user") or {}
+            _hydrate_profile_from_user(session, user)
+
+    from backend.storage import supabase_store
+
+    saved = await supabase_store.get_latest_enquiry_profile_by_phone(phone)
+    _apply_profile_fields(
+        session,
+        name=str(saved.get("client_name") or ""),
+        email=str(saved.get("email") or ""),
+        city=str(saved.get("city") or ""),
+        property_location=str(saved.get("property_location") or ""),
+    )
 
 
 async def check_phone_user(

@@ -182,6 +182,27 @@ def complete_known_client_details_for_returning_user(
     se.mark_field_validated(session, "preferred_contact_time", contact)
 
 
+def willing_to_create_project_step() -> dict[str, Any] | None:
+    from backend.intelligence.qualification_builder import build_client_details_steps
+
+    for step in build_client_details_steps():
+        if step.get("field") == "willing_to_create_project":
+            return dict(step)
+    return None
+
+
+def position_session_for_project_decision(session: Session) -> dict[str, Any] | None:
+    """Prepare returning user and return the project-creation MCQ step."""
+    prepare_returning_user_for_project_decision(session)
+    step = willing_to_create_project_step()
+    if not step:
+        return None
+    session.flow_state["current_step_id"] = step["id"]
+    session.flow_state["current_stage"] = "client_details"
+    se.set_current_question(session, "willing_to_create_project")
+    return step
+
+
 def prepare_returning_user_for_project_decision(session: Session) -> str:
     """Clear the prior enquiry and position a returning user at willing_to_create_project."""
     preserved = collect_returning_user_preserved_profile(session)
@@ -207,9 +228,9 @@ def prepare_returning_user_for_project_decision(session: Session) -> str:
     session.flow_state["returning_edit_flow_complete"] = True
     session.flow_state.pop("current_step_id", None)
     se.reconcile_session(session)
-    step = hybrid_flow.get_current_step(session)
-    if step and step.get("field") == "willing_to_create_project":
-        return hybrid_flow.format_step_message(step, include_stage=False)
+    step = willing_to_create_project_step()
+    if step:
+        return str(step.get("twilio_list_prompt") or step.get("prompt") or "").strip()
     return WILLING_TO_CREATE_PROJECT_FALLBACK
 
 

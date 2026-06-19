@@ -191,11 +191,18 @@ class ConversationController:
             session.flow_state.pop("awaiting_returning_location_decision", None)
             if choice == "add_new_location":
                 session.flow_state["returning_wants_new_location"] = True
+            from backend.integrations.tatva_users import hydrate_returning_user_profile
+            from backend.integrations.returning_user_flow import position_session_for_project_decision
+
+            await hydrate_returning_user_profile(session, force=True)
+            step = position_session_for_project_decision(session)
+            if step:
+                session.flow_state["pending_outbound_mcq"] = step
+                prompt = str(step.get("twilio_list_prompt") or step.get("prompt") or "").strip()
+                session.add_message(MessageRole.ASSISTANT, prompt)
+                return AgentResponse(text="", session=session)
             msg = prepare_returning_user_for_project_decision(session)
             session.add_message(MessageRole.ASSISTANT, msg)
-            step = hybrid_flow.get_current_step(session)
-            if step and step.get("field") == "willing_to_create_project":
-                session.flow_state["pending_outbound_mcq"] = step
             return AgentResponse(text=msg, session=session)
 
         if session.flow_state.get("awaiting_returning_edit_decision"):

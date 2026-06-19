@@ -199,6 +199,53 @@ async def get_all_enquiries() -> list[dict]:
         return []
 
 
+def _phone_lookup_variants(phone_number: str) -> list[str]:
+    """Normalize WhatsApp/E.164 phone values for enquiry lookup."""
+    from backend.integrations.tatva_users import normalize_phone_for_tatva
+
+    raw = (phone_number or "").strip()
+    if not raw:
+        return []
+    digits = normalize_phone_for_tatva(raw)
+    variants: list[str] = []
+    for candidate in (raw, f"whatsapp:+91{digits}", f"whatsapp:{digits}", f"+91{digits}", digits):
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+    return variants
+
+
+async def get_latest_enquiry_profile_by_phone(phone_number: str) -> dict[str, str]:
+    """Most recent enquiry profile fields for a returning user (name, city, location)."""
+    if not is_configured():
+        return {}
+    variants = _phone_lookup_variants(phone_number)
+    if not variants:
+        return {}
+    try:
+        client = _get_client()
+        result = (
+            client.table("enquiries")
+            .select("extracted_fields,phone_number,updated_at")
+            .in_("phone_number", variants)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        if not rows:
+            return {}
+        extracted = rows[0].get("extracted_fields") or {}
+        profile: dict[str, str] = {}
+        for key in ("client_name", "city", "property_location", "email", "preferred_contact_time"):
+            value = str(extracted.get(key) or "").strip()
+            if value:
+                profile[key] = value
+        return profile
+    except Exception as e:
+        print(f"[Supabase] get_latest_enquiry_profile_by_phone error: {e}")
+        return {}
+
+
 async def get_all_summaries() -> list[dict]:
     if not is_configured():
         return []
