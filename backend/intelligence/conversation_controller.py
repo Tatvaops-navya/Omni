@@ -30,10 +30,10 @@ from backend.integrations.returning_user_flow import (
     complete_existing_user_edit_email,
     complete_existing_user_edit_name,
     existing_user_welcome_text,
+    parse_returning_location_choice,
     parse_yes_no_choice,
     prepare_returning_user_for_project_decision,
-    returning_edit_decision_step,
-    start_existing_user_edit_name,
+    returning_saved_location_step,
 )
 from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
 from backend.integrations.tatva_enquiry_submit import submit_service_questionnaire
@@ -84,6 +84,8 @@ def _should_send_eva_intro_for_greeting(session: Session, user_message: str) -> 
     if session.flow_state.get("returning_edit_flow_complete"):
         return False
     if session.flow_state.get("existing_user_flow_started"):
+        return False
+    if session.flow_state.get("awaiting_returning_location_decision"):
         return False
     if session.flow_state.get("awaiting_returning_edit_decision"):
         return False
@@ -174,23 +176,31 @@ class ConversationController:
         button_payload: str | None = None,
         list_id: str | None = None,
     ) -> AgentResponse | None:
-        if session.flow_state.get("awaiting_returning_edit_decision"):
-            wants_edit = parse_yes_no_choice(
+        if session.flow_state.get("awaiting_returning_location_decision"):
+            choice = parse_returning_location_choice(
                 user_message,
                 list_id=list_id or "",
                 button_payload=button_payload or "",
                 button_text=button_text or "",
             )
-            if wants_edit is None:
-                msg = "Please choose *Yes* or *No*."
-                session.flow_state["pending_outbound_mcq"] = returning_edit_decision_step()
+            if choice is None:
+                msg = "Please choose *Yes, this is correct* or *Add new location*."
                 session.add_message(MessageRole.ASSISTANT, msg)
+                session.flow_state["pending_outbound_mcq"] = returning_saved_location_step(session)
                 return AgentResponse(text=msg, session=session)
+            session.flow_state.pop("awaiting_returning_location_decision", None)
+            if choice == "add_new_location":
+                session.flow_state["returning_wants_new_location"] = True
+            msg = prepare_returning_user_for_project_decision(session)
+            session.add_message(MessageRole.ASSISTANT, msg)
+            step = hybrid_flow.get_current_step(session)
+            if step and step.get("field") == "willing_to_create_project":
+                session.flow_state["pending_outbound_mcq"] = step
+            return AgentResponse(text=msg, session=session)
+
+        if session.flow_state.get("awaiting_returning_edit_decision"):
             session.flow_state.pop("awaiting_returning_edit_decision", None)
-            if wants_edit:
-                msg = start_existing_user_edit_name(session)
-            else:
-                msg = prepare_returning_user_for_project_decision(session)
+            msg = prepare_returning_user_for_project_decision(session)
             session.add_message(MessageRole.ASSISTANT, msg)
             return AgentResponse(text=msg, session=session)
 
@@ -214,10 +224,10 @@ class ConversationController:
 
     def _start_existing_user_welcome(self, session: Session) -> AgentResponse:
         session.flow_state["existing_user_flow_started"] = True
-        session.flow_state["awaiting_returning_edit_decision"] = True
+        session.flow_state["awaiting_returning_location_decision"] = True
         welcome = existing_user_welcome_text(session)
         session.add_message(MessageRole.ASSISTANT, welcome)
-        session.flow_state["pending_outbound_mcq"] = returning_edit_decision_step()
+        session.flow_state["pending_outbound_mcq"] = returning_saved_location_step(session)
         return AgentResponse(text=welcome, session=session)
 
     async def process_message(
@@ -241,7 +251,8 @@ class ConversationController:
 
         if session.summary_generated or session.conversation_stage == ConversationStage.SUMMARY_GENERATED:
             in_returning_reentry = bool(
-                session.flow_state.get("awaiting_returning_edit_decision")
+                session.flow_state.get("awaiting_returning_location_decision")
+                or session.flow_state.get("awaiting_returning_edit_decision")
                 or session.flow_state.get("awaiting_returning_profile_field")
                 or session.flow_state.get("awaiting_returning_profile_value")
             )

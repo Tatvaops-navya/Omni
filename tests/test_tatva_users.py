@@ -413,8 +413,9 @@ async def test_first_message_existing_user_gets_welcome(monkeypatch):
     controller = ConversationController()
     resp = await controller.process_message(session, "Hi", channel="whatsapp")
     assert "Hi there John Doe" in resp.text
-    assert session.flow_state.get("awaiting_returning_edit_decision") is True
-    assert session.flow_state.get("pending_outbound_mcq") is not None
+    assert session.flow_state.get("awaiting_returning_location_decision") is True
+    pending = session.flow_state.get("pending_outbound_mcq") or {}
+    assert pending.get("field") == "__returning_location__"
 
 
 @pytest.mark.asyncio
