@@ -12,6 +12,7 @@ from backend.integrations.tatva_users import update_tatva_user_profile_for_sessi
 from backend.schemas.session import ConversationStage, Session
 
 RETURNING_EDIT_DECISION_FIELD = "__returning_edit_info__"
+RETURNING_LOCATION_FIELD = "__returning_location__"
 RETURNING_MISSING_LOCATION_PLACEHOLDER = "Not specified"
 
 WILLING_TO_CREATE_PROJECT_FALLBACK = (
@@ -50,6 +51,69 @@ def returning_edit_decision_step() -> dict[str, Any]:
             {"label": "No", "value": "no"},
         ],
     }
+
+
+def saved_location_display(session: Session) -> str:
+    """Format city / property location saved on the Tatva profile."""
+    preserved = collect_returning_user_preserved_profile(session)
+    city = preserved.get("city", "").strip()
+    prop = preserved.get("property_location", "").strip()
+    if city == RETURNING_MISSING_LOCATION_PLACEHOLDER:
+        city = ""
+    if prop == RETURNING_MISSING_LOCATION_PLACEHOLDER:
+        prop = ""
+    if not city and prop:
+        city = prop.split(",")[0].strip()
+
+    lines: list[str] = []
+    if city:
+        lines.append(f"📍 City: {city}")
+    if prop:
+        lines.append(f"📍 Property location: {prop}")
+    if not lines:
+        return "We don't have a saved location on file yet."
+    return "\n".join(lines)
+
+
+def returning_saved_location_context(session: Session) -> str:
+    display = saved_location_display(session)
+    return f"Here is your saved location:\n\n{display}\n\nIs this your location?"
+
+
+def returning_saved_location_step(session: Session) -> dict[str, Any]:
+    return {
+        "id": "returning_location_confirm",
+        "type": "mcq",
+        "field": RETURNING_LOCATION_FIELD,
+        "prompt": returning_saved_location_context(session),
+        "twilio_list_prompt": "Is this your location?",
+        "options": [
+            {"label": "Yes, this is correct", "value": "confirm_saved"},
+            {"label": "Add new location", "value": "add_new_location"},
+        ],
+    }
+
+
+def parse_returning_location_choice(
+    user_message: str,
+    *,
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
+) -> Optional[str]:
+    for raw in (list_id, button_payload, button_text, user_message):
+        selected = (raw or "").strip().lower()
+        if not selected:
+            continue
+        if selected in {"confirm_saved", "yes", "y", "correct", "this is correct"}:
+            return "confirm_saved"
+        if selected in {"add_new_location", "add new location", "new location", "new", "add"}:
+            return "add_new_location"
+        if "correct" in selected or selected.startswith("yes"):
+            return "confirm_saved"
+        if "new" in selected and "location" in selected:
+            return "add_new_location"
+    return None
 
 
 def existing_user_welcome_text(session: Session) -> str:

@@ -23,6 +23,7 @@ WHATSAPP_MAX_CHARS = 1500
 RETURNING_MCQ_FIELDS = frozenset({
     "__returning_edit_info__",
     "__returning_profile_field__",
+    "__returning_location__",
 })
 
 
