@@ -433,8 +433,6 @@ async def _try_registered_user_greeting_restart(
     """
     if not is_greeting_message(user_message):
         return False
-    if session and _is_in_returning_user_prompt(session):
-        return False
     if session and session.flow_state.get("returning_edit_flow_complete"):
         return False
 

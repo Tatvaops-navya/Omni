@@ -619,6 +619,53 @@ def test_returning_user_prompt_blocks_duplicate_greeting_restart():
 
 
 @pytest.mark.asyncio
+async def test_greeting_during_location_prompt_restarts_returning_welcome(monkeypatch):
+    """Registered user saying hi while location list is active should get the welcome flow again."""
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+    )
+    session.extracted_fields["tatva_user_id"] = "abc123"
+    session.extracted_fields["client_name"] = "Vidya"
+    session.flow_state["awaiting_returning_location_decision"] = True
+    session.flow_state[wh.RETURNING_USER_PHASE] = "location_decision"
+
+    reentry_calls: list[str] = []
+    reminder_messages: list[str] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_ensure_registered(_session):
+        return True
+
+    async def fake_send_returning_user_reentry_prompt(_session, phone):
+        reentry_calls.append(phone)
+
+    async def fake_send_whatsapp_message(*, to, body):
+        reminder_messages.append(body)
+        return True
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "_ensure_registered_user_from_tatva", fake_ensure_registered)
+    monkeypatch.setattr(wh, "_send_returning_user_reentry_prompt", fake_send_returning_user_reentry_prompt)
+    monkeypatch.setattr(wh, "send_whatsapp_message", fake_send_whatsapp_message)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_test",
+        "whatsapp:+91999",
+        "hii",
+    )
+
+    assert reentry_calls == ["whatsapp:+91999"]
+    assert reminder_messages == []
+
+
+@pytest.mark.asyncio
 async def test_second_greeting_after_project_prompt_does_not_welcome_back(monkeypatch):
     from backend.agents.chat import whatsapp_handler as wh
 
