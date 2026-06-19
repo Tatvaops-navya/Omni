@@ -361,7 +361,39 @@ async def test_willing_to_create_project_uses_interactive_template(monkeypatch):
     assert session.flow_state.get(wh.RETURNING_MCQ_SENT_FIELD) == "willing_to_create_project"
 
 
-def test_returning_profile_selection_maps_property_location():
+@pytest.mark.asyncio
+async def test_willing_to_create_project_uses_interactive_without_precompleted_fields(monkeypatch):
+    """Profile hydration + forced project step must still send the list template."""
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+    )
+    session.extracted_fields["tatva_user_id"] = "abc"
+
+    flow_calls: list[dict] = []
+
+    async def fake_hydrate(_session, *, force=False):
+        se.mark_field_validated(_session, "client_name", "Navya shree")
+        se.mark_field_validated(_session, "city", "hyderabad")
+        se.mark_field_validated(_session, "property_location", "Hyderabad , Miyapur")
+        se.mark_field_validated(_session, "preferred_contact_time", "morning")
+
+    async def fake_send_whatsapp_flow(*, to, body, step=None):
+        flow_calls.append(step or {})
+        return True
+
+    monkeypatch.setattr(wh, "_hydrate_returning_profile_from_tatva", fake_hydrate)
+    monkeypatch.setattr(wh, "send_whatsapp_flow", fake_send_whatsapp_flow)
+
+    await wh._send_willing_to_create_project_prompt(session, "whatsapp:+91999")
+
+    assert len(flow_calls) == 1
+    assert flow_calls[0].get("field") == "willing_to_create_project"
+    assert flow_calls[0].get("twilio_content_sid") or flow_calls[0].get("use_dynamic_list")
     assert _returning_profile_selection(user_message="property location") == "property_location"
     assert _returning_profile_selection(list_id="property_location") == "property_location"
 

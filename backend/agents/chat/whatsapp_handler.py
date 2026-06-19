@@ -26,6 +26,7 @@ from backend.integrations.tatva_users import (
 from backend.integrations.returning_user_flow import (
     existing_user_welcome_text,
     parse_returning_location_choice,
+    position_session_for_project_decision,
     prepare_returning_user_for_project_decision,
     returning_edit_decision_step,
     returning_saved_location_context,
@@ -325,50 +326,9 @@ def _is_in_returning_user_prompt(session: Session) -> bool:
 
 
 async def _hydrate_returning_profile_from_tatva(session: Session, *, force: bool = False) -> None:
-    if (
-        not force
-        and session.extracted_fields.get("client_name")
-        and session.extracted_fields.get("tatva_user_id")
-    ):
-        return
-    payload = await check_phone_user(session.phone_number or "", session_id=session.session_id)
-    if not payload:
-        return
-    data = payload.get("data") or {}
-    if not data.get("isUser"):
-        return
-    session.flow_state["tatva_phone_checked"] = True
-    session.flow_state["tatva_phone_is_user"] = True
-    session.flow_state["tatva_user_registered"] = True
-    user = data.get("user") or {}
-    user_id = user.get("_id")
-    if user_id:
-        session.extracted_fields["tatva_user_id"] = str(user_id)
-        if "tatva_user_id" not in session.completed_fields:
-            session.completed_fields.append("tatva_user_id")
-    name = (
-        user.get("name")
-        or user.get("fullName")
-        or user.get("firstName")
-        or user.get("displayName")
-        or ""
-    )
-    email = user.get("email") or ""
-    if name:
-        se.mark_field_validated(session, "client_name", str(name).strip())
-    if email and se.is_valid_gmail_address(str(email).strip()):
-        se.mark_field_validated(session, "email", str(email).strip())
-    city = user.get("city") or ""
-    if city and not session.extracted_fields.get("city"):
-        se.mark_field_validated(session, "city", str(city).strip())
-    location = (
-        user.get("propertyLocation")
-        or user.get("property_location")
-        or user.get("address")
-        or ""
-    )
-    if location and not session.extracted_fields.get("property_location"):
-        se.mark_field_validated(session, "property_location", str(location).strip())
+    from backend.integrations.tatva_users import hydrate_returning_user_profile
+
+    await hydrate_returning_user_profile(session, force=force)
 
 
 def _reset_stale_flow_for_returning_greeting(session: Session) -> None:
@@ -491,19 +451,21 @@ async def _send_returning_user_reentry_prompt(session: Session, phone_number: st
 async def _send_willing_to_create_project_prompt(session: Session, phone_number: str) -> None:
     _clear_returning_user_prompt_state(session)
     session.flow_state.pop(RETURNING_MCQ_SENT_FIELD, None)
-    prepare_returning_user_for_project_decision(session)
+    await _hydrate_returning_profile_from_tatva(session, force=True)
+    step = position_session_for_project_decision(session)
     _touch_session_activity(session)
-    step = hybrid_flow.get_current_step(session)
-    if step and step.get("field") == "willing_to_create_project":
-        outbound = dict(step)
-        outbound["twilio_list_prompt"] = str(step.get("prompt", "")).strip()
-        await _send_returning_interactive_mcq_once(session, phone_number, outbound)
+    if not step:
+        body = WILLING_TO_CREATE_PROJECT_FALLBACK
+        session.add_message(MessageRole.ASSISTANT, body)
+        await save_session(session)
+        await supabase_store.upsert_session_log(session)
+        await send_whatsapp_message(to=phone_number, body=body)
         return
-    body = WILLING_TO_CREATE_PROJECT_FALLBACK
-    session.add_message(MessageRole.ASSISTANT, body)
-    await save_session(session)
-    await supabase_store.upsert_session_log(session)
-    await send_whatsapp_message(to=phone_number, body=body)
+    outbound = dict(step)
+    outbound["twilio_list_prompt"] = str(
+        step.get("twilio_list_prompt") or step.get("prompt") or ""
+    ).strip()
+    await _send_returning_interactive_mcq_once(session, phone_number, outbound)
 
 
 def _in_file_upload_flow(session: Session) -> bool:
