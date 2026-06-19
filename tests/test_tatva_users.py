@@ -14,6 +14,7 @@ from backend.integrations.tatva_users import (
     _extract_user_id,
 )
 from backend.schemas.session import Session, ConversationStage
+from backend.intelligence import hybrid_flow
 from backend.intelligence import stage_engine as se
 from backend.intelligence.conversation_controller import ConversationController
 
@@ -365,8 +366,8 @@ async def test_check_tatva_phone_hydrates_existing_user(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_existing_user_no_edit_continues_from_city():
-    from backend.integrations.returning_user_flow import continue_existing_user_from_city
+async def test_existing_user_no_edit_continues_to_project_creation():
+    from backend.integrations.returning_user_flow import prepare_returning_user_for_project_decision
 
     session = Session(
         session_id="t",
@@ -377,11 +378,15 @@ async def test_existing_user_no_edit_continues_from_city():
     session.extracted_fields["client_name"] = "John Doe"
     session.extracted_fields["email"] = "pramod.d@tatvaops.com"
 
-    msg = continue_existing_user_from_city(session)
-    assert "city" in msg.lower()
+    msg = prepare_returning_user_for_project_decision(session)
+    assert "proceed with creating your project" in msg.lower()
+    assert "city" not in msg.lower() or "create" in msg.lower()
     assert se.field_is_complete(session, "client_name")
-    assert se.field_is_complete(session, "email")
-    assert not se.field_is_complete(session, "city")
+    assert se.field_is_complete(session, "city")
+    assert se.field_is_complete(session, "property_location")
+    step = hybrid_flow.get_current_step(session)
+    assert step is not None
+    assert step.get("field") == "willing_to_create_project"
 
 
 @pytest.mark.asyncio
@@ -407,7 +412,7 @@ async def test_first_message_existing_user_gets_welcome(monkeypatch):
 
     controller = ConversationController()
     resp = await controller.process_message(session, "Hi", channel="whatsapp")
-    assert "Hey John Doe" in resp.text
+    assert "Hi there John Doe" in resp.text
     assert session.flow_state.get("awaiting_returning_edit_decision") is True
     assert session.flow_state.get("pending_outbound_mcq") is not None
 

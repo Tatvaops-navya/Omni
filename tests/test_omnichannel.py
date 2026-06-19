@@ -170,7 +170,7 @@ def test_returning_user_steps_and_greeting():
     session.extracted_fields["client_name"] = "John Doe"
     session.extracted_fields["email"] = "pramod.d@tatvaops.com"
     text = _returning_user_greeting_text(session)
-    assert "Hey John Doe" in text
+    assert "Hi there John Doe" in text
     assert "EVA" in text
     assert _first_name("Rahul Sharma") == "Rahul"
 
@@ -373,7 +373,7 @@ async def test_returning_user_no_after_name_update_continues(monkeypatch):
 
 
 def test_returning_user_prepare_clears_prior_enquiry_fields():
-    from backend.agents.chat.whatsapp_handler import _prepare_returning_user_client_stage
+    from backend.integrations.returning_user_flow import prepare_returning_user_for_project_decision
 
     session = Session(
         session_id="wa_test",
@@ -404,7 +404,7 @@ def test_returning_user_prepare_clears_prior_enquiry_fields():
         "service_q1", "service_q2", "service_q3", "service_q4", "attachments",
     ]
 
-    _prepare_returning_user_client_stage(session)
+    prepare_returning_user_for_project_decision(session)
 
     assert session.service_category is None
     assert "service_category" not in session.completed_fields
@@ -418,8 +418,38 @@ def test_returning_user_prepare_clears_prior_enquiry_fields():
 
 
 @pytest.mark.asyncio
+async def test_returning_user_without_city_yes_to_project_goes_to_services():
+    """Regression: 'yes' to project creation must not be consumed as a city answer."""
+    from backend.integrations.returning_user_flow import prepare_returning_user_for_project_decision
+    from backend.intelligence.conversation_controller import ConversationController
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    session.extracted_fields.update({
+        "client_name": "Madhu shree",
+        "email": "test@gmail.com",
+        "tatva_user_id": "abc123",
+    })
+
+    prepare_returning_user_for_project_decision(session)
+    step = hybrid_flow.get_current_step(session)
+    assert step is not None
+    assert step.get("field") == "willing_to_create_project"
+
+    controller = ConversationController()
+    yes_resp = await controller.process_message(session, "yes", channel="whatsapp")
+    assert "which city" not in (yes_resp.text or "").lower()
+    assert se.needs_service_selection(session)
+
+
+@pytest.mark.asyncio
 async def test_returning_user_yes_then_service_selection_not_stale():
-    from backend.agents.chat.whatsapp_handler import _prepare_returning_user_client_stage
+    from backend.integrations.returning_user_flow import prepare_returning_user_for_project_decision
     from backend.intelligence.conversation_controller import ConversationController
 
     session = Session(
@@ -446,7 +476,7 @@ async def test_returning_user_yes_then_service_selection_not_stale():
         "willing_to_create_project", "service_category", "service_q1", "tatva_user_id",
     ]
 
-    _prepare_returning_user_client_stage(session)
+    prepare_returning_user_for_project_decision(session)
     controller = ConversationController()
 
     yes_resp = await controller.process_message(session, "yes", channel="whatsapp", list_id="yes")
