@@ -88,12 +88,41 @@ def get_cached_steps(session: Session) -> list[dict]:
     return list((session.flow_state or {}).get("dynamic_questionnaire_steps") or [])
 
 
+def questionnaire_cache_matches_session(session: Session) -> bool:
+    """True when cached Tatva/static steps belong to the currently selected service."""
+    category = session.service_category
+    if not category:
+        return False
+    cached = get_cached_steps(session)
+    if not cached:
+        return False
+    cached_category = str((session.flow_state or {}).get("questionnaire_service_category") or "")
+    return cached_category == category.value
+
+
+def clear_questionnaire_cache(session: Session) -> None:
+    """Drop cached questionnaire steps so the next load fetches for the active service."""
+    for key in (
+        "dynamic_questionnaire_steps",
+        "service_questionnaire_required_fields",
+        "questionnaire_source",
+        "questionnaire_service_category",
+        "tatva_service_id",
+        "pending_questions",
+        "completed_questions",
+    ):
+        session.flow_state.pop(key, None)
+    session.extracted_fields.pop("tatva_service_name", None)
+
+
 def sync_questionnaire_state(session: Session, steps: list[dict], *, source: str) -> None:
     """Persist fetched steps and derived required-field list on the session."""
     required = required_fields_from_steps(steps)
     session.flow_state["dynamic_questionnaire_steps"] = steps
     session.flow_state["service_questionnaire_required_fields"] = required
     session.flow_state["questionnaire_source"] = source
+    if session.service_category:
+        session.flow_state["questionnaire_service_category"] = session.service_category.value
     session.flow_state["pending_questions"] = [
         f for f in required if f not in session.flow_state.get("completed_questions", [])
     ]
@@ -267,6 +296,7 @@ async def ensure_questionnaire_loaded(session: Session) -> list[dict]:
     """
     Load Tatva questionnaire when missing or still on static fallback.
     Re-fetches from the API so resumed sessions and transient API failures recover.
+    Always reloads when the cached questionnaire belongs to a different service.
     """
     category = session.service_category
     if not category:
@@ -274,7 +304,7 @@ async def ensure_questionnaire_loaded(session: Session) -> list[dict]:
 
     cached = get_cached_steps(session)
     source = (session.flow_state or {}).get("questionnaire_source")
-    if cached and source == "tatva_api":
+    if cached and source == "tatva_api" and questionnaire_cache_matches_session(session):
         return cached
 
     return await load_questionnaire_for_session(session, category)

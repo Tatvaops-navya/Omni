@@ -51,6 +51,7 @@ from backend.utils.session_idle import (
     is_greeting_message,
     had_conversation_progress,
     build_idle_fresh_start_reply,
+    clear_cached_session,
     start_fresh_session,
 )
 
@@ -101,33 +102,8 @@ def _normalize_restart_command(message: str) -> str:
     return (message or "").strip().upper().replace(" ", "")
 
 
-def _normalize_user_text(message: str) -> str:
-    return (message or "").strip().upper().replace(" ", "")
-
-
 def _is_restart_command(message: str) -> bool:
     return _normalize_restart_command(message) == "RESTART45"
-
-
-def _is_post_submit_polite_reply(message: str) -> bool:
-    """Thanks / OK after submit — do not start a new qualification flow."""
-    norm = _normalize_user_text(message)
-    if not norm:
-        return False
-    polite_prefixes = ("THANK", "THX", "TY", "OK", "OKAY", "GOTIT", "CHEERS", "COOL")
-    return any(norm.startswith(p) for p in polite_prefixes)
-
-
-def _is_new_enquiry_intent(message: str) -> bool:
-    """Explicit signal to start a fresh enquiry after a previous submit."""
-    return is_greeting_message(message)
-
-
-def _session_is_submitted(session: Session) -> bool:
-    return bool(
-        session.summary_generated
-        or session.conversation_stage == ConversationStage.SUMMARY_GENERATED
-    )
 
 
 async def _handle_restart45(session_id: str, phone_number: str) -> str:
@@ -839,24 +815,10 @@ async def _handle_whatsapp_message_impl(
     ):
         return
 
-    # After submit: polite replies keep the submitted session; other intents handled above for greetings.
-    if (
-        session
-        and _session_is_submitted(session)
-        and (user_message or num_media > 0)
-        and _is_new_enquiry_intent(user_message)
-        and not _is_post_submit_polite_reply(user_message)
-        and not _is_in_returning_user_prompt(session)
-    ):
-        print(f"[WhatsApp] New enquiry restart for {phone_number} msg={user_message!r}")
-        await start_fresh_session(session_id, phone_number, reason="new_enquiry_after_submit")
-        session = await get_session(session_id)
-
     # Greeting mid-flow (Hi bro, Namaste, etc.) — restart for new users only; registered users handled above.
     if (
         session
         and user_message
-        and not _session_is_submitted(session)
         and not session.flow_state.get("project_declined")
         and is_greeting_message(user_message)
         and had_conversation_progress(session)
@@ -1113,7 +1075,6 @@ async def _handle_whatsapp_message_impl(
         await send_whatsapp_message(to=phone_number, body=fallback)
         return
 
-    await save_session(agent_response.session)
     await supabase_store.upsert_session_log(agent_response.session)
 
     session_out = agent_response.session
@@ -1142,14 +1103,10 @@ async def _handle_whatsapp_message_impl(
             session_id=session_id,
             data={"reason": "enquiry_submitted", "channel": "whatsapp"},
         )
+        await clear_cached_session(session_id, reason="enquiry_submitted")
         return
 
-    # Already submitted — send text only (no review list / MCQ follow-ups).
-    if _session_is_submitted(session_out):
-        reply = (agent_response.text or "").strip()
-        if reply:
-            await send_whatsapp_message(to=phone_number, body=reply)
-        return
+    await save_session(agent_response.session)
 
     if session_out.flow_state.get("project_declined"):
         await supabase_store.persist_terminal_enquiry(session_out)

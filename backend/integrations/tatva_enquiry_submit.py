@@ -103,19 +103,10 @@ def list_tatva_attachment_links(attachments: list[Any] | None) -> list[dict[str,
     if not items:
         return []
 
-    kind_totals: dict[str, int] = {}
-    for item in items:
-        kind = _attachment_kind(**item)
-        kind_totals[kind] = kind_totals.get(kind, 0) + 1
-
-    kind_seen: dict[str, int] = {}
     links: list[dict[str, str]] = []
     for item in items:
         kind = _attachment_kind(**item)
         label = _ATTACHMENT_KIND_LABELS[kind]
-        if kind_totals[kind] > 1:
-            kind_seen[kind] = kind_seen.get(kind, 0) + 1
-            label = f"{label} {kind_seen[kind]}"
         links.append({
             "label": f"↗ {label}",
             "url": item["url"],

@@ -255,3 +255,70 @@ async def test_ensure_questionnaire_loaded_retries_after_static_fallback(monkeyp
     second = await ensure_questionnaire_loaded(session)
     assert session.flow_state["questionnaire_source"] == "tatva_api"
     assert second[0]["field"] == "order_1"
+
+
+@pytest.mark.asyncio
+async def test_ensure_questionnaire_reloads_when_service_changes(monkeypatch):
+    """Stale painting questionnaire must not be reused after selecting residential construction."""
+    from backend.integrations.tatva_service_questions import sync_questionnaire_state
+
+    session = Session(
+        session_id="svc-switch",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Vidya"),
+        ("city", "Bengaluru"),
+        ("property_location", "HSR Layout"),
+        ("preferred_contact_time", "afternoon"),
+        ("willing_to_create_project", "yes"),
+    ):
+        se.mark_field_validated(session, field, value)
+
+    se.on_service_selected(session, ServiceCategory.PAINTING_WATERPROOFING)
+    painting_steps = [
+        {
+            "id": "paint_q1",
+            "stage": "service_questionnaire",
+            "type": "mcq",
+            "field": "order_1",
+            "prompt": "What type of painting service do you require?",
+            "options": [{"label": "Walls / Ceiling", "value": "walls"}],
+        }
+    ]
+    sync_questionnaire_state(session, painting_steps, source="tatva_api")
+    se.reconcile_session(session)
+    assert "painting" in hybrid_flow.get_current_step(session)["prompt"].lower()
+
+    fetch_calls: list[str] = []
+
+    async def fake_fetch(service_id, *, session_id="unknown"):
+        fetch_calls.append(service_id)
+        return {
+            "success": True,
+            "data": {
+                "serviceId": service_id,
+                "serviceName": "Residential Construction",
+                "questions": RESIDENTIAL_API_QUESTIONS,
+            },
+        }
+
+    monkeypatch.setattr(
+        "backend.integrations.tatva_service_questions.fetch_service_questions",
+        fake_fetch,
+    )
+
+    se.on_service_selected(session, ServiceCategory.RESIDENTIAL_CONSTRUCTION)
+    steps = await ensure_questionnaire_loaded(session)
+    se.reconcile_session(session)
+
+    assert fetch_calls
+    assert steps[0]["prompt"].startswith("What type of residential")
+    assert session.flow_state["questionnaire_service_category"] == "residential_construction"
+    first = hybrid_flow.get_current_step(session)
+    assert first is not None
+    assert first["field"] == "order_1"
+    assert "residential" in first["prompt"].lower()
