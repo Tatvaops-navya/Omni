@@ -477,8 +477,12 @@ def _compact_list_title(full: str) -> str:
 
     if "(" in full and ")" in full:
         inner = full[full.index("(") + 1 : full.index(")")].strip()
-        if inner and len(inner) <= WHATSAPP_LIST_TITLE_MAX:
+        # Use parenthetical text only when it is a real descriptor, not a short acronym (e.g. "JD").
+        if inner and len(inner) <= WHATSAPP_LIST_TITLE_MAX and (len(inner) >= 8 or " " in inner):
             return inner
+        prefix = full[: full.index("(")].strip()
+        if prefix and len(prefix) <= WHATSAPP_LIST_TITLE_MAX:
+            return prefix
 
     for sep in (" – ", " - ", " / "):
         if sep in full:

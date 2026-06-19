@@ -26,6 +26,15 @@ def test_compact_title_prefers_parenthetical():
     assert _compact_list_title("Full Property (Interior + Exterior)") == "Interior + Exterior"
 
 
+def test_compact_title_joint_development_not_abbreviated_to_jd():
+    assert _compact_list_title("Joint Development (JD/JV)") == "Joint Development"
+    assert _compact_list_title("Joint Development (JD) / JV") == "Joint Development"
+    title, desc = _twilio_list_row("Joint Development (JD) / JV")
+    assert title == "Joint Development"
+    assert "Joint Development" in desc
+    assert desc == "Joint Development (JD) / JV"
+
+
 def test_compact_title_prefers_second_segment():
     assert _compact_list_title("Residential – Independent Home") == "Independent Home"
     title = _compact_list_title("Industrial / Manufacturing Plant")
