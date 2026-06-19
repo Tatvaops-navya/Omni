@@ -574,6 +574,7 @@ async def _send_interactive_options(
         or str(step.get("field", "")).startswith("service_q")
         or str(step.get("field", "")).startswith("order_")
         or str(step.get("field", "")).startswith("file_order_")
+        or str(step.get("field", "")) == "willing_to_create_project"
         or str(step.get("field", "")) in RETURNING_MCQ_FIELDS
     )
     try:

@@ -81,12 +81,13 @@ def returning_saved_location_context(session: Session) -> str:
 
 
 def returning_saved_location_step(session: Session) -> dict[str, Any]:
+    context = returning_saved_location_context(session)
     return {
         "id": "returning_location_confirm",
         "type": "mcq",
         "field": RETURNING_LOCATION_FIELD,
-        "prompt": returning_saved_location_context(session),
-        "twilio_list_prompt": "Is this your location?",
+        "prompt": context,
+        "twilio_list_prompt": context,
         "options": [
             {"label": "Yes, this is correct", "value": "confirm_saved"},
             {"label": "Add new location", "value": "add_new_location"},

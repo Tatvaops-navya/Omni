@@ -345,22 +345,23 @@ async def test_willing_to_create_project_uses_interactive_template(monkeypatch):
     for field in ("client_name", "city", "property_location", "preferred_contact_time"):
         se.mark_field_validated(session, field, session.extracted_fields.get(field, ""))
 
-    list_calls: list[dict] = []
+    flow_calls: list[dict] = []
 
     async def fake_get_session(_session_id):
         return session
 
-    async def fake_send_context_then_mcq_list(_phone, _context, step):
-        list_calls.append(step or {})
+    async def fake_send_whatsapp_flow(*, to, body, step=None):
+        flow_calls.append(step or {})
         return True
 
     monkeypatch.setattr(wh, "get_session", fake_get_session)
-    monkeypatch.setattr(wh, "send_context_then_mcq_list", fake_send_context_then_mcq_list)
+    monkeypatch.setattr(wh, "send_whatsapp_flow", fake_send_whatsapp_flow)
 
     await wh._send_willing_to_create_project_prompt(session, "whatsapp:+91999")
 
-    assert len(list_calls) == 1
-    assert list_calls[0].get("field") == "willing_to_create_project"
+    assert len(flow_calls) == 1
+    assert flow_calls[0].get("field") == "willing_to_create_project"
+    assert session.flow_state.get(wh.RETURNING_MCQ_SENT_FIELD) == "willing_to_create_project"
 
 
 def test_returning_profile_selection_maps_property_location():

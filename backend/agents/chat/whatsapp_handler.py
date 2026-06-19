@@ -37,6 +37,7 @@ from backend.storage import supabase_store
 from backend.storage.media_store import save_attachment
 from backend.agents.chat.twilio_client import (
     enrich_whatsapp_mcq_step,
+    mcq_uses_interactive_delivery,
     send_context_then_mcq_list,
     send_whatsapp_message,
     send_whatsapp_flow,
@@ -63,6 +64,7 @@ RETURNING_EDIT_DECISION_FIELD = "__returning_edit_info__"
 RETURNING_LOCATION_FIELD = "__returning_location__"
 RETURNING_PROFILE_FIELD = "__returning_profile_field__"
 RETURNING_USER_PHASE = "returning_user_phase"
+RETURNING_MCQ_SENT_FIELD = "returning_mcq_sent_field"
 
 
 def _returning_user_phase(session: Session) -> str:
@@ -201,6 +203,57 @@ def _first_name(name: str) -> str:
 
 def _touch_session_activity(session: Session) -> None:
     session.last_active = datetime.utcnow()
+
+
+async def _send_returning_interactive_mcq_once(
+    session: Session,
+    phone_number: str,
+    step: dict,
+) -> None:
+    """Send a single WhatsApp list-picker — never a separate plain-text copy of the question."""
+    outbound = enrich_whatsapp_mcq_step(dict(step))
+    field = str(outbound.get("field") or "")
+    body = str(
+        outbound.get("twilio_list_prompt")
+        or outbound.get("prompt")
+        or ""
+    ).strip()
+    session.flow_state[RETURNING_MCQ_SENT_FIELD] = field
+    session.add_message(MessageRole.ASSISTANT, body)
+    await save_session(session)
+    await supabase_store.upsert_session_log(session)
+    if mcq_uses_interactive_delivery(outbound):
+        await send_whatsapp_flow(to=phone_number, body=body, step=outbound)
+        return
+    menu = hybrid_flow.format_mcq_message(outbound)
+    await send_whatsapp_message(to=phone_number, body=menu)
+
+
+def _clear_returning_mcq_sent_if_complete(session: Session) -> None:
+    sent = session.flow_state.get(RETURNING_MCQ_SENT_FIELD)
+    if sent and se.field_is_complete(session, str(sent)):
+        session.flow_state.pop(RETURNING_MCQ_SENT_FIELD, None)
+
+
+def _should_skip_duplicate_returning_outbound(session: Session, outbound_step: dict | None) -> bool:
+    if not outbound_step:
+        return False
+    sent = str(session.flow_state.get(RETURNING_MCQ_SENT_FIELD) or "")
+    field = str(outbound_step.get("field") or "")
+    return bool(sent and field and sent == field)
+
+
+def _strip_outbound_prompt_from_reply(reply: str, outbound_step: dict) -> str:
+    cleaned = (reply or "").strip()
+    for chunk in (
+        str(outbound_step.get("prompt", "")).strip(),
+        str(outbound_step.get("twilio_list_prompt", "")).strip(),
+    ):
+        if chunk:
+            idx = cleaned.find(chunk)
+            if idx != -1:
+                cleaned = cleaned[:idx].strip()
+    return cleaned
 
 
 def _returning_profile_selection(
@@ -443,13 +496,11 @@ def _returning_user_greeting_text(session: Session) -> str:
 async def _send_returning_location_prompt(session: Session, phone_number: str) -> None:
     session.flow_state["awaiting_returning_location_decision"] = True
     _set_returning_user_phase(session, "location_decision")
-    step = returning_saved_location_step(session)
-    context = returning_saved_location_context(session)
-    outbound = enrich_whatsapp_mcq_step(dict(step))
-    session.add_message(MessageRole.ASSISTANT, context)
-    await save_session(session)
-    await supabase_store.upsert_session_log(session)
-    await send_context_then_mcq_list(phone_number, context, outbound)
+    await _send_returning_interactive_mcq_once(
+        session,
+        phone_number,
+        returning_saved_location_step(session),
+    )
 
 
 async def _send_returning_user_reentry_prompt(session: Session, phone_number: str) -> None:
@@ -465,16 +516,14 @@ async def _send_returning_user_reentry_prompt(session: Session, phone_number: st
 
 async def _send_willing_to_create_project_prompt(session: Session, phone_number: str) -> None:
     _clear_returning_user_prompt_state(session)
+    session.flow_state.pop(RETURNING_MCQ_SENT_FIELD, None)
     prepare_returning_user_for_project_decision(session)
     _touch_session_activity(session)
     step = hybrid_flow.get_current_step(session)
     if step and step.get("field") == "willing_to_create_project":
-        outbound = enrich_whatsapp_mcq_step(dict(step))
-        prompt = str(outbound.get("prompt", "")).strip()
-        session.add_message(MessageRole.ASSISTANT, prompt or WILLING_TO_CREATE_PROJECT_FALLBACK)
-        await save_session(session)
-        await supabase_store.upsert_session_log(session)
-        await send_context_then_mcq_list(phone_number, "", outbound)
+        outbound = dict(step)
+        outbound["twilio_list_prompt"] = str(step.get("prompt", "")).strip()
+        await _send_returning_interactive_mcq_once(session, phone_number, outbound)
         return
     body = WILLING_TO_CREATE_PROJECT_FALLBACK
     session.add_message(MessageRole.ASSISTANT, body)
@@ -889,12 +938,9 @@ async def _handle_whatsapp_message_impl(
         if choice is None:
             if not (user_message or list_id or button_payload or button_text):
                 return
-            step = returning_saved_location_step(session)
-            outbound = enrich_whatsapp_mcq_step(dict(step))
-            await send_context_then_mcq_list(
-                phone_number,
-                "Please choose *Yes, this is correct* or *Add new location*.",
-                outbound,
+            await send_whatsapp_message(
+                to=phone_number,
+                body="Please tap *Choose option* above and pick *Yes, this is correct* or *Add new location*.",
             )
             return
         session.flow_state.pop("awaiting_returning_location_decision", None)
@@ -1070,6 +1116,9 @@ async def _handle_whatsapp_message_impl(
     await save_session(agent_response.session)
     await supabase_store.upsert_session_log(agent_response.session)
 
+    session_out = agent_response.session
+    _clear_returning_mcq_sent_if_complete(session_out)
+
     if agent_response.summary_generated and agent_response.session.summary:
         await supabase_store.persist_terminal_enquiry(agent_response.session)
         try:
@@ -1096,7 +1145,6 @@ async def _handle_whatsapp_message_impl(
         return
 
     # Already submitted — send text only (no review list / MCQ follow-ups).
-    session_out = agent_response.session
     if _session_is_submitted(session_out):
         reply = (agent_response.text or "").strip()
         if reply:
@@ -1162,6 +1210,13 @@ async def _handle_whatsapp_message_impl(
                 if menu_body not in reply:
                     reply = f"{reply}\n\n{menu_body}".strip() if reply else menu_body
     outbound_step = enrich_whatsapp_mcq_step(outbound_step)
+    if _should_skip_duplicate_returning_outbound(session_out, outbound_step):
+        transition = _strip_outbound_prompt_from_reply(reply, outbound_step)
+        if transition:
+            await send_whatsapp_message(to=phone_number, body=transition)
+        await save_session(session_out)
+        return
+
     uses_interactive_list = (
         outbound_step
         and outbound_step.get("type") == "mcq"
