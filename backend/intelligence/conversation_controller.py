@@ -29,9 +29,9 @@ from backend.integrations.tatva_users import (
 from backend.integrations.returning_user_flow import (
     complete_existing_user_edit_email,
     complete_existing_user_edit_name,
-    continue_existing_user_from_city,
     existing_user_welcome_text,
     parse_yes_no_choice,
+    prepare_returning_user_for_project_decision,
     returning_edit_decision_step,
     start_existing_user_edit_name,
 )
@@ -190,7 +190,7 @@ class ConversationController:
             if wants_edit:
                 msg = start_existing_user_edit_name(session)
             else:
-                msg = continue_existing_user_from_city(session)
+                msg = prepare_returning_user_for_project_decision(session)
             session.add_message(MessageRole.ASSISTANT, msg)
             return AgentResponse(text=msg, session=session)
 

@@ -25,7 +25,9 @@ from backend.integrations.tatva_users import (
 )
 from backend.integrations.returning_user_flow import (
     existing_user_welcome_text,
+    prepare_returning_user_for_project_decision,
     returning_edit_decision_step,
+    WILLING_TO_CREATE_PROJECT_FALLBACK,
 )
 from backend.storage.redis_store import get_session, save_session
 from backend.storage import supabase_store
@@ -263,77 +265,9 @@ def _returning_profile_field_step() -> dict:
     }
 
 
-def _complete_known_client_details_for_returning_user(
-    session: Session,
-    preserved: dict[str, str],
-) -> None:
-    """Mark profile fields complete so the next step is willing_to_create_project."""
-    se.mark_field_validated(session, "ava_intro_shown", True)
-    phone = preserved.get("phone", "")
-    if phone:
-        se.mark_field_validated(session, "phone_number", phone)
-
-    if preserved.get("client_name"):
-        se.mark_field_validated(session, "client_name", preserved["client_name"])
-
-    email = preserved.get("email", "")
-    if email and se.is_valid_gmail_address(email):
-        se.mark_field_validated(session, "email", email)
-    else:
-        se.mark_field_validated(session, "email", "")
-
-    city = preserved.get("city", "")
-    prop = preserved.get("property_location", "")
-    if not city and prop:
-        city = prop.split(",")[0].strip()
-    if city:
-        se.mark_field_validated(session, "city", city)
-
-    if prop:
-        se.mark_field_validated(session, "property_location", prop)
-
-    contact = preserved.get("preferred_contact_time", "")
-    if not contact:
-        contact = "morning"
-    se.mark_field_validated(session, "preferred_contact_time", contact)
-
-
 def _prepare_returning_user_client_stage(session: Session) -> None:
     """Clear the prior enquiry and position a returning user at willing_to_create_project."""
-    phone = (session.extracted_fields.get("phone_number") or session.phone_number or "").strip()
-    if phone.lower().startswith("whatsapp:"):
-        phone = phone.split(":", 1)[-1]
-    preserved = {
-        "phone": phone,
-        "tatva_user_id": str(session.extracted_fields.get("tatva_user_id") or "").strip(),
-        "client_name": str(session.extracted_fields.get("client_name") or "").strip(),
-        "email": str(session.extracted_fields.get("email") or "").strip(),
-        "city": str(session.extracted_fields.get("city") or "").strip(),
-        "property_location": str(session.extracted_fields.get("property_location") or "").strip(),
-        "preferred_contact_time": str(session.extracted_fields.get("preferred_contact_time") or "").strip(),
-    }
-    se.clear_prior_enquiry_qualification(session)
-    edit_flow.clear_edit_mode(session)
-    session.conversation_stage = ConversationStage.DETAIL_COLLECTION
-    for key in (
-        "conversation_ended",
-        "final_review_shown",
-        "final_review_outbound_step",
-        "tatva_enquiry_submitted",
-        "tatva_enquiry_summary",
-        "tatva_enquiry_attachments",
-        "tatva_enquiry_id",
-    ):
-        session.flow_state.pop(key, None)
-    hybrid_flow.init_flow(session)
-    _complete_known_client_details_for_returning_user(session, preserved)
-    if preserved["tatva_user_id"]:
-        session.extracted_fields["tatva_user_id"] = preserved["tatva_user_id"]
-        if "tatva_user_id" not in session.completed_fields:
-            session.completed_fields.append("tatva_user_id")
-    session.flow_state["returning_edit_flow_complete"] = True
-    session.flow_state.pop("current_step_id", None)
-    se.reconcile_session(session)
+    prepare_returning_user_for_project_decision(session)
     _touch_session_activity(session)
 
 
@@ -513,7 +447,7 @@ async def _send_returning_user_reentry_prompt(session: Session, phone_number: st
 
 async def _send_willing_to_create_project_prompt(session: Session, phone_number: str) -> None:
     _clear_returning_user_prompt_state(session)
-    _prepare_returning_user_client_stage(session)
+    body = prepare_returning_user_for_project_decision(session)
     _touch_session_activity(session)
     step = hybrid_flow.get_current_step(session)
     if step and step.get("field") == "willing_to_create_project":
@@ -522,21 +456,12 @@ async def _send_willing_to_create_project_prompt(session: Session, phone_number:
         plain_step.pop("twilio_content_sid", None)
         plain_step.pop("use_dynamic_list", None)
         body = hybrid_flow.format_step_message(plain_step, include_stage=False)
-        session.add_message(MessageRole.ASSISTANT, body)
-        await save_session(session)
-        await supabase_store.upsert_session_log(session)
-        await send_whatsapp_message(to=phone_number, body=body)
-    else:
-        fallback = (
-            "Would you like to proceed with creating your project? "
-            "Once created, a dedicated Relationship Manager will guide you through every step.\n\n"
-            "• Yes, Create My Project\n"
-            "• No, I'm Just Exploring"
-        )
-        session.add_message(MessageRole.ASSISTANT, fallback)
-        await save_session(session)
-        await supabase_store.upsert_session_log(session)
-        await send_whatsapp_message(to=phone_number, body=fallback)
+    elif not body:
+        body = WILLING_TO_CREATE_PROJECT_FALLBACK
+    session.add_message(MessageRole.ASSISTANT, body)
+    await save_session(session)
+    await supabase_store.upsert_session_log(session)
+    await send_whatsapp_message(to=phone_number, body=body)
 
 
 def _in_file_upload_flow(session: Session) -> bool:
