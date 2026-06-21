@@ -135,7 +135,7 @@ def returning_saved_location_step(session: Session) -> dict[str, Any]:
                 "label": address_short_list_label(i),
                 "value": str(addr.get("_id") or ""),
             })
-        options.append({"label": "Add new location", "value": "add_new_location"})
+        options.append({"label": "Other address", "value": "add_new_location"})
         return {
             "id": "returning_location_confirm",
             "type": "mcq",
@@ -153,7 +153,7 @@ def returning_saved_location_step(session: Session) -> dict[str, Any]:
         "twilio_list_prompt": context,
         "options": [
             {"label": "Yes, this is correct", "value": "confirm_saved"},
-            {"label": "Add new location", "value": "add_new_location"},
+            {"label": "Other address", "value": "add_new_location"},
         ],
     }
 
@@ -179,7 +179,15 @@ def parse_returning_location_choice(
                 return by_index
         if selected_l in {"confirm_saved", "yes", "y", "correct", "this is correct"}:
             return "confirm_saved"
-        if selected_l in {"add_new_location", "add new location", "new location", "new", "add"}:
+        if selected_l in {
+            "add_new_location",
+            "add new location",
+            "other address",
+            "other",
+            "new location",
+            "new",
+            "add",
+        }:
             return "add_new_location"
         if "correct" in selected_l or selected_l.startswith("yes"):
             return "confirm_saved"

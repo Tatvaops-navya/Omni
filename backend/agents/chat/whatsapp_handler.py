@@ -879,9 +879,9 @@ async def _handle_whatsapp_message_impl(
                 return
             hint = (
                 "Please tap *Choose option* above and pick one of your saved locations, "
-                "or *Add new location*."
+                "or *Other address*."
                 if get_cached_user_addresses(session)
-                else "Please tap *Choose option* above and pick *Yes, this is correct* or *Add new location*."
+                else "Please tap *Choose option* above and pick *Yes, this is correct* or *Other address*."
             )
             await send_whatsapp_message(to=phone_number, body=hint)
             return
