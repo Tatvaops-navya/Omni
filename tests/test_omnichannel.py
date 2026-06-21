@@ -175,6 +175,29 @@ def test_returning_saved_location_step_shows_profile_data():
     assert values == ["confirm_saved", "add_new_location"]
 
 
+def test_returning_saved_location_step_shows_tatva_api_addresses():
+    from backend.integrations.returning_user_flow import returning_saved_location_step
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+    )
+    session.flow_state["tatva_user_addresses"] = [
+        {
+            "_id": "addr1",
+            "formattedAddress": "HSR Layout, Bengaluru",
+            "locality": "Bengaluru",
+            "district": "Bengaluru Urban",
+            "isDefault": True,
+        }
+    ]
+    step = returning_saved_location_step(session)
+    assert "Here are your saved locations" in step["prompt"]
+    assert "HSR Layout" in step["prompt"]
+    assert step["options"][-1]["value"] == "add_new_location"
+
+
 def test_returning_user_steps_and_greeting():
     session = Session(
         session_id="wa_test",

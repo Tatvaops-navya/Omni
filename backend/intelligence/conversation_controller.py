@@ -30,8 +30,10 @@ from backend.integrations.returning_user_flow import (
     complete_existing_user_edit_email,
     complete_existing_user_edit_name,
     existing_user_welcome_text,
+    apply_returning_location_choice,
     parse_returning_location_choice,
     parse_yes_no_choice,
+    position_session_for_project_decision,
     prepare_returning_user_for_project_decision,
     returning_saved_location_step,
 )
@@ -182,17 +184,16 @@ class ConversationController:
                 list_id=list_id or "",
                 button_payload=button_payload or "",
                 button_text=button_text or "",
+                session=session,
             )
             if choice is None:
-                msg = "Please choose *Yes, this is correct* or *Add new location*."
+                msg = "Please choose one of your saved locations, or *Add new location*."
                 session.add_message(MessageRole.ASSISTANT, msg)
                 session.flow_state["pending_outbound_mcq"] = returning_saved_location_step(session)
                 return AgentResponse(text=msg, session=session)
             session.flow_state.pop("awaiting_returning_location_decision", None)
-            if choice == "add_new_location":
-                session.flow_state["returning_wants_new_location"] = True
+            apply_returning_location_choice(session, choice)
             from backend.integrations.tatva_users import hydrate_returning_user_profile
-            from backend.integrations.returning_user_flow import position_session_for_project_decision
 
             await hydrate_returning_user_profile(session, force=True)
             step = position_session_for_project_decision(session)
@@ -229,7 +230,10 @@ class ConversationController:
 
         return None
 
-    def _start_existing_user_welcome(self, session: Session) -> AgentResponse:
+    async def _start_existing_user_welcome(self, session: Session) -> AgentResponse:
+        from backend.integrations.tatva_user_addresses import load_user_addresses_for_session
+
+        await load_user_addresses_for_session(session, force=True)
         session.flow_state["existing_user_flow_started"] = True
         session.flow_state["awaiting_returning_location_decision"] = True
         welcome = existing_user_welcome_text(session)
@@ -306,7 +310,7 @@ class ConversationController:
                 session.add_message(MessageRole.ASSISTANT, vendor_msg)
                 return AgentResponse(text=vendor_msg, session=session)
             if session.flow_state.get("tatva_phone_is_user"):
-                return self._start_existing_user_welcome(session)
+                return await self._start_existing_user_welcome(session)
             intro = hybrid_flow.first_client_message()
             session.add_message(MessageRole.ASSISTANT, intro)
             session.flow_state["last_stage_shown"] = "client_details"
@@ -410,7 +414,7 @@ class ConversationController:
                 and not session.flow_state.get("existing_user_flow_started")
                 and not session.flow_state.get("returning_edit_flow_complete")
             ):
-                return self._start_existing_user_welcome(session)
+                return await self._start_existing_user_welcome(session)
             if _should_send_eva_intro_for_greeting(session, user_message):
                 intro = hybrid_flow.first_client_message()
                 session.add_message(MessageRole.ASSISTANT, intro)

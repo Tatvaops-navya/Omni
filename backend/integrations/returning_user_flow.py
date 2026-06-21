@@ -9,6 +9,13 @@ from backend.intelligence import hybrid_flow
 from backend.intelligence import stage_engine as se
 from backend.intelligence import edit_flow
 from backend.integrations.tatva_users import update_tatva_user_profile_for_session
+from backend.integrations.tatva_user_addresses import (
+    address_list_label,
+    apply_tatva_address_to_session,
+    get_cached_user_addresses,
+    is_tatva_address_id,
+    saved_addresses_display,
+)
 from backend.schemas.session import ConversationStage, Session
 
 RETURNING_EDIT_DECISION_FIELD = "__returning_edit_info__"
@@ -54,7 +61,11 @@ def returning_edit_decision_step() -> dict[str, Any]:
 
 
 def saved_location_display(session: Session) -> str:
-    """Format city / property location saved on the Tatva profile."""
+    """Format saved locations from Tatva address API or profile fallback."""
+    api_display = saved_addresses_display(session)
+    if api_display:
+        return api_display
+
     preserved = collect_returning_user_preserved_profile(session)
     city = preserved.get("city", "").strip()
     prop = preserved.get("property_location", "").strip()
@@ -77,11 +88,35 @@ def saved_location_display(session: Session) -> str:
 
 def returning_saved_location_context(session: Session) -> str:
     display = saved_location_display(session)
+    addresses = get_cached_user_addresses(session)
+    if addresses:
+        return (
+            f"Here are your saved locations:\n\n{display}\n\n"
+            "Please choose your location below, or add a new one."
+        )
     return f"Here is your saved location:\n\n{display}\n\nIs this your location?"
 
 
 def returning_saved_location_step(session: Session) -> dict[str, Any]:
     context = returning_saved_location_context(session)
+    addresses = get_cached_user_addresses(session)
+    if addresses:
+        options: list[dict[str, str]] = []
+        for addr in addresses[:5]:
+            options.append({
+                "label": address_list_label(addr),
+                "value": str(addr.get("_id") or ""),
+            })
+        options.append({"label": "Add new location", "value": "add_new_location"})
+        return {
+            "id": "returning_location_confirm",
+            "type": "mcq",
+            "field": RETURNING_LOCATION_FIELD,
+            "prompt": context,
+            "twilio_list_prompt": "Choose your saved location",
+            "options": options,
+        }
+
     return {
         "id": "returning_location_confirm",
         "type": "mcq",
@@ -101,20 +136,34 @@ def parse_returning_location_choice(
     list_id: str = "",
     button_payload: str = "",
     button_text: str = "",
+    session: Session | None = None,
 ) -> Optional[str]:
     for raw in (list_id, button_payload, button_text, user_message):
-        selected = (raw or "").strip().lower()
+        selected = (raw or "").strip()
         if not selected:
             continue
-        if selected in {"confirm_saved", "yes", "y", "correct", "this is correct"}:
+        selected_l = selected.lower()
+        if session and is_tatva_address_id(selected, session):
+            return selected
+        if selected_l in {"confirm_saved", "yes", "y", "correct", "this is correct"}:
             return "confirm_saved"
-        if selected in {"add_new_location", "add new location", "new location", "new", "add"}:
+        if selected_l in {"add_new_location", "add new location", "new location", "new", "add"}:
             return "add_new_location"
-        if "correct" in selected or selected.startswith("yes"):
+        if "correct" in selected_l or selected_l.startswith("yes"):
             return "confirm_saved"
-        if "new" in selected and "location" in selected:
+        if "new" in selected_l and "location" in selected_l:
             return "add_new_location"
     return None
+
+
+def apply_returning_location_choice(session: Session, choice: str) -> None:
+    """Persist the user's location selection on the session."""
+    if choice == "add_new_location":
+        session.flow_state["returning_wants_new_location"] = True
+        return
+    if choice == "confirm_saved":
+        return
+    apply_tatva_address_to_session(session, choice)
 
 
 def existing_user_welcome_text(session: Session) -> str:
