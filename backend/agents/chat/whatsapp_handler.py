@@ -128,7 +128,7 @@ async def _send_say_hi_gate(session: Session, phone_number: str, *, remind: bool
     """Show the Say Hi template until the user taps it."""
     body = hybrid_flow.say_hi_welcome_text(remind=remind)
     if not any(
-        m.role == MessageRole.ASSISTANT and "Say Hi" in (m.content or "")
+        m.role == MessageRole.ASSISTANT and "tap on one of these options" in (m.content or "").lower()
         for m in session.conversation_history
     ):
         session.add_message(MessageRole.ASSISTANT, body)

@@ -1133,6 +1133,7 @@ def test_greeting_detection_not_name_false_positive():
 def test_is_say_hi_tap_only_for_template():
     assert hybrid_flow.is_say_hi_tap(list_id="hi")
     assert hybrid_flow.is_say_hi_tap(button_payload="hi")
+    assert hybrid_flow.is_say_hi_tap(button_text="Hi")
     assert hybrid_flow.is_say_hi_tap(button_text="Say Hi 👋")
     assert not hybrid_flow.is_say_hi_tap(user_message="hello")
     assert not hybrid_flow.is_say_hi_tap(user_message="bonjour")

@@ -71,19 +71,37 @@ def _get_client():
     return _twilio_client
 
 
+async def _pace_outbound(to: str) -> None:
+    """Space outbound messages to the same recipient (Twilio/WhatsApp ordering)."""
+    lock = _outbound_locks.setdefault(to, asyncio.Lock())
+    async with lock:
+        import time
+        now = time.monotonic()
+        last = _last_outbound_at.get(to, 0.0)
+        wait = OUTBOUND_MIN_GAP_SEC - (now - last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_outbound_at[to] = time.monotonic()
+
+
 async def send_say_hi_prompt(to: str, *, remind: bool = False) -> bool:
-    """Send the initial Say Hi tap-to-start template (or plain-text fallback)."""
+    """Send initial Say Hi as a WhatsApp quick-reply button (image-1 style)."""
     from backend.intelligence import hybrid_flow
 
     body = hybrid_flow.say_hi_welcome_text(remind=remind)
-    step = enrich_whatsapp_mcq_step(hybrid_flow.say_hi_prompt_step())
-    if step and not mcq_uses_interactive_delivery(step):
-        body = _format_mcq_plain_fallback(body, step)
-        return await _send_plain(to, body)
-    sent = await send_whatsapp_flow(to, body, step=step)
-    if sent:
-        return True
-    fallback = _format_mcq_plain_fallback(body, step or {})
+    sid = str(getattr(settings, "twilio_say_hi_quick_reply_content_sid", "") or "").strip()
+    if sid:
+        sent = await send_whatsapp_content_cta(
+            to,
+            sid,
+            content_variables={"1": body},
+        )
+        if sent:
+            return True
+        print("[Twilio] Say Hi quick-reply failed — falling back to plain text.")
+
+    step = hybrid_flow.say_hi_prompt_step()
+    fallback = _format_mcq_plain_fallback(body, step)
     return await _send_plain(to, fallback)
 
 
