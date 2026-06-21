@@ -42,6 +42,7 @@ from backend.agents.chat.twilio_client import (
     enrich_whatsapp_mcq_step,
     mcq_uses_interactive_delivery,
     send_context_then_mcq_list,
+    send_say_hi_prompt,
     send_whatsapp_message,
     send_whatsapp_flow,
     send_whatsapp_attachment_cta_links,
@@ -110,15 +111,54 @@ def _is_restart_command(message: str) -> bool:
 
 
 async def _handle_restart45(session_id: str, phone_number: str) -> str:
-    """Clear session and return EVA welcome."""
+    """Clear session and prompt user to tap Say Hi."""
     await start_fresh_session(session_id, phone_number, reason="RESTART45")
     session = await get_session(session_id)
-    intro = hybrid_flow.first_client_message()
     if session:
-        session.add_message(MessageRole.ASSISTANT, intro)
-        se.start_client_stage(session)
+        session.flow_state["awaiting_say_hi"] = True
         await save_session(session)
-    return "Session reset.\n\n" + intro
+    await send_say_hi_prompt(phone_number)
+    return "Session reset.\n\n" + hybrid_flow.say_hi_welcome_text()
+
+
+async def _send_say_hi_gate(session: Session, phone_number: str, *, remind: bool = False) -> None:
+    """Show the Say Hi template until the user taps it."""
+    body = hybrid_flow.say_hi_welcome_text(remind=remind)
+    if not any(
+        m.role == MessageRole.ASSISTANT and "Say Hi" in (m.content or "")
+        for m in session.conversation_history
+    ):
+        session.add_message(MessageRole.ASSISTANT, body)
+    session.flow_state["awaiting_say_hi"] = True
+    await save_session(session)
+    await send_say_hi_prompt(phone_number, remind=remind)
+
+
+async def _start_chat_after_say_hi(session: Session, phone_number: str) -> None:
+    """Begin EVA flow after the user taps Say Hi."""
+    session.flow_state.pop("awaiting_say_hi", None)
+    se.start_client_stage(session)
+    vendor_msg = await check_tatva_phone_for_session(session)
+    if vendor_msg:
+        body = vendor_msg
+        session.add_message(MessageRole.ASSISTANT, body)
+        await save_session(session)
+        await send_whatsapp_message(to=phone_number, body=body)
+        return
+    if session.flow_state.get("tatva_phone_is_user"):
+        session.flow_state["existing_user_flow_started"] = True
+        session.flow_state["awaiting_returning_edit_decision"] = True
+        body = existing_user_welcome_text(session)
+        session.add_message(MessageRole.ASSISTANT, body)
+        await save_session(session)
+        await send_context_then_mcq_list(
+            phone_number, body, returning_edit_decision_step()
+        )
+        return
+    body = hybrid_flow.first_client_message()
+    session.add_message(MessageRole.ASSISTANT, body)
+    await save_session(session)
+    await send_whatsapp_message(to=phone_number, body=body)
 
 
 def _collect_twilio_media_items(form_params: dict[str, str]) -> list[tuple[str, str]]:
@@ -789,7 +829,36 @@ async def _handle_whatsapp_message_impl(
     if user_message and await _try_registered_user_greeting_restart(
         session, session_id, phone_number, user_message
     ):
-        return
+        print(f"[WhatsApp] New enquiry restart for {phone_number} msg={user_message!r}")
+        await _hydrate_returning_profile_from_tatva(session)
+        if _is_registered_returning_user(session):
+            await _send_returning_user_reentry_prompt(session, phone_number)
+            await save_session(session)
+            await supabase_store.upsert_session_log(session)
+            return
+        await start_fresh_session(session_id, phone_number, reason="new_enquiry_after_submit")
+        session = await get_session(session_id)
+        if session:
+            session.flow_state["awaiting_say_hi"] = True
+            await save_session(session)
+
+    # Say Hi gate — new WhatsApp users must tap the template (sends "hi") before chat starts.
+    if session and session.flow_state.get("awaiting_say_hi"):
+        if hybrid_flow.is_say_hi_tap(
+            list_id=list_id,
+            button_payload=button_payload,
+            button_text=button_text,
+            user_message=user_message,
+        ):
+            session.add_message(MessageRole.USER, hybrid_flow.SAY_HI_PAYLOAD)
+            _touch_session_activity(session)
+            await save_session(session)
+            await _start_chat_after_say_hi(session, phone_number)
+            return
+        if user_message or num_media > 0:
+            print(f"[WhatsApp] Awaiting Say Hi tap for {phone_number} msg={user_message!r}")
+            await _send_say_hi_gate(session, phone_number, remind=bool(user_message))
+            return
 
     # Greeting mid-flow (Hi bro, Namaste, etc.) — restart for new users only; registered users handled above.
     if (
@@ -815,21 +884,20 @@ async def _handle_whatsapp_message_impl(
         )
         await log_event("SESSION_START", session_id=session_id,
                         data={"phone": phone_number, "channel": "whatsapp"})
+        session.flow_state["awaiting_say_hi"] = True
         await save_session(session)
-        if not user_message and num_media == 0:
-            se.start_client_stage(session)
-            vendor_msg = await check_tatva_phone_for_session(session)
-            if vendor_msg:
-                body = vendor_msg
-            elif session.flow_state.get("tatva_phone_is_user"):
-                await _send_returning_user_reentry_prompt(session, phone_number)
-                return
-            else:
-                body = hybrid_flow.first_client_message()
-            session.add_message(MessageRole.ASSISTANT, body)
+        if hybrid_flow.is_say_hi_tap(
+            list_id=list_id,
+            button_payload=button_payload,
+            button_text=button_text,
+            user_message=user_message,
+        ):
+            session.add_message(MessageRole.USER, hybrid_flow.SAY_HI_PAYLOAD)
             await save_session(session)
-            await send_whatsapp_message(to=phone_number, body=body)
+            await _start_chat_after_say_hi(session, phone_number)
             return
+        await _send_say_hi_gate(session, phone_number, remind=bool(user_message))
+        return
 
     # Media upload handling (stage 9 — attachments, or edit-details file update)
     if num_media > 0 and media_items:

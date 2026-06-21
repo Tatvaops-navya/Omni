@@ -642,6 +642,56 @@ def eva_intro_text() -> str:
     )
 
 
+SAY_HI_PAYLOAD = "hi"
+SAY_HI_FIELD = "__say_hi__"
+
+
+def say_hi_welcome_text(*, remind: bool = False) -> str:
+    """Short welcome shown before EVA intro — user must tap Say Hi to continue."""
+    base = (
+        "Welcome to TatvaOps! 👋\n\n"
+        "Tap *Say Hi* below to start your conversation with EVA, "
+        "your home project assistant."
+    )
+    if remind:
+        return (
+            "Please tap *Say Hi* below to get started.\n\n"
+            "Typed greetings like hello or bonjour won't start the chat — "
+            "use the button so we can connect you correctly."
+        )
+    return base
+
+
+def say_hi_prompt_step() -> dict[str, Any]:
+    """Single-option WhatsApp list for the initial Say Hi tap."""
+    return {
+        "id": "say_hi",
+        "type": "mcq",
+        "field": SAY_HI_FIELD,
+        "twilio_list_prompt": "Tap below to get started.",
+        "prompt": say_hi_welcome_text(),
+        "options": [{"label": "Say Hi 👋", "value": SAY_HI_PAYLOAD}],
+        "require_content_variables": True,
+    }
+
+
+def is_say_hi_tap(
+    *,
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
+    user_message: str = "",
+) -> bool:
+    """True only for the Say Hi template tap — not typed hello/bonjour/etc."""
+    for raw in (list_id, button_payload):
+        if (raw or "").strip().lower() == SAY_HI_PAYLOAD:
+            return True
+    btn = (button_text or "").strip().lower()
+    if btn.startswith("say hi"):
+        return True
+    return False
+
+
 def first_client_message() -> str:
     steps = qb.build_client_details_steps()
     intro = eva_intro_text()
