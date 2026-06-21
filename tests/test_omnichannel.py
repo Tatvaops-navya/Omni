@@ -1133,10 +1133,16 @@ def test_greeting_detection_not_name_false_positive():
 def test_is_say_hi_tap_only_for_template():
     assert hybrid_flow.is_say_hi_tap(list_id="hi")
     assert hybrid_flow.is_say_hi_tap(button_payload="hi")
+    assert hybrid_flow.is_say_hi_tap(button_text="Hi")
     assert hybrid_flow.is_say_hi_tap(button_text="Say Hi 👋")
     assert not hybrid_flow.is_say_hi_tap(user_message="hello")
     assert not hybrid_flow.is_say_hi_tap(user_message="bonjour")
     assert not hybrid_flow.is_say_hi_tap(user_message="Hi")
+    assert hybrid_flow.is_typed_hi_message("hiii")
+    assert hybrid_flow.is_typed_hi_message("Hi")
+    assert not hybrid_flow.is_typed_hi_message("hello")
+    assert hybrid_flow.accepts_say_hi_start(user_message="hiii")
+    assert not hybrid_flow.accepts_say_hi_start(user_message="bonjour")
 
 
 @pytest.mark.asyncio
@@ -1213,6 +1219,48 @@ async def test_say_hi_tap_starts_eva_flow(monkeypatch):
     assert sent
     assert "I'm EVA" in sent[0]
     assert "What is your full name?" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_typed_hiii_starts_eva_flow(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_whatsapp:+919999999999",
+        phone_number="whatsapp:+919999999999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+    )
+    session.flow_state["awaiting_say_hi"] = True
+    sent: list[str] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_check_tatva(_session):
+        return None
+
+    async def fake_send_whatsapp_message(*, to, body):
+        sent.append(body)
+        return True
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh, "check_tatva_phone_for_session", fake_check_tatva)
+    monkeypatch.setattr(wh, "send_whatsapp_message", fake_send_whatsapp_message)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_whatsapp:+919999999999",
+        "whatsapp:+919999999999",
+        "hiii",
+    )
+
+    assert session.flow_state.get("awaiting_say_hi") is None
+    assert sent
+    assert "I'm EVA" in sent[0]
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,7 @@ from backend.agents.chat.twilio_client import (
     send_whatsapp_flow,
     send_whatsapp_attachment_cta_links,
     twiml_response,
+    _format_mcq_plain_fallback,
 )
 from backend.agents.chat.whatsapp_interactive import build_inbound_user_message, parse_list_selection_id
 from backend.utils.logger import log_event
@@ -111,21 +112,23 @@ def _is_restart_command(message: str) -> bool:
 
 
 async def _handle_restart45(session_id: str, phone_number: str) -> str:
-    """Clear session and prompt user to tap Say Hi."""
+    """Clear session and return immediate TwiML (outbound Say Hi sent in background)."""
     await start_fresh_session(session_id, phone_number, reason="RESTART45")
     session = await get_session(session_id)
     if session:
         session.flow_state["awaiting_say_hi"] = True
         await save_session(session)
-    await send_say_hi_prompt(phone_number)
-    return "Session reset.\n\n" + hybrid_flow.say_hi_welcome_text()
+    step = hybrid_flow.say_hi_prompt_step()
+    return "Session reset.\n\n" + _format_mcq_plain_fallback(
+        hybrid_flow.say_hi_welcome_text(), step
+    )
 
 
 async def _send_say_hi_gate(session: Session, phone_number: str, *, remind: bool = False) -> None:
     """Show the Say Hi template until the user taps it."""
     body = hybrid_flow.say_hi_welcome_text(remind=remind)
     if not any(
-        m.role == MessageRole.ASSISTANT and "Say Hi" in (m.content or "")
+        m.role == MessageRole.ASSISTANT and "tap on one of these options" in (m.content or "").lower()
         for m in session.conversation_history
     ):
         session.add_message(MessageRole.ASSISTANT, body)
@@ -745,6 +748,7 @@ async def whatsapp_webhook(request: Request):
     # RESTART45 — reply in TwiML immediately (does not depend on outbound Twilio API / tunnel follow-up)
     if _is_restart_command(user_message):
         reset_msg = await _handle_restart45(session_id, phone_number)
+        asyncio.create_task(send_say_hi_prompt(phone_number))
         print(f"[WhatsApp] RESTART45 reset OK for {From}")
         return Response(content=twiml_response(reset_msg), media_type="application/xml")
 
@@ -789,6 +793,16 @@ async def handle_whatsapp_message_bg(
             traceback.print_exc()
             await log_event("API_ERROR", session_id=session_id,
                             data={"error": str(e), "phase": "whatsapp_handler"})
+            try:
+                await send_whatsapp_message(
+                    to=phone_number,
+                    body=(
+                        "Sorry, something went wrong on our side. "
+                        "Please reply *Hi* or tap *Say Hi* to start again."
+                    ),
+                )
+            except Exception:
+                pass
 
 
 async def _handle_whatsapp_message_impl(
@@ -844,7 +858,7 @@ async def _handle_whatsapp_message_impl(
 
     # Say Hi gate — new WhatsApp users must tap the template (sends "hi") before chat starts.
     if session and session.flow_state.get("awaiting_say_hi"):
-        if hybrid_flow.is_say_hi_tap(
+        if hybrid_flow.accepts_say_hi_start(
             list_id=list_id,
             button_payload=button_payload,
             button_text=button_text,
@@ -886,7 +900,7 @@ async def _handle_whatsapp_message_impl(
                         data={"phone": phone_number, "channel": "whatsapp"})
         session.flow_state["awaiting_say_hi"] = True
         await save_session(session)
-        if hybrid_flow.is_say_hi_tap(
+        if hybrid_flow.accepts_say_hi_start(
             list_id=list_id,
             button_payload=button_payload,
             button_text=button_text,
