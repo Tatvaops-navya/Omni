@@ -182,6 +182,11 @@ async def hydrate_returning_user_profile(session: Session, *, force: bool = Fals
         property_location=str(saved.get("property_location") or ""),
     )
 
+    if session.extracted_fields.get("tatva_user_id"):
+        from backend.integrations.tatva_user_addresses import load_user_addresses_for_session
+
+        await load_user_addresses_for_session(session)
+
 
 async def check_phone_user(
     phone_number: str,

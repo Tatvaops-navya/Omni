@@ -27,12 +27,14 @@ from backend.integrations.returning_user_flow import (
     existing_user_welcome_text,
     parse_returning_location_choice,
     position_session_for_project_decision,
+    apply_returning_location_choice,
     prepare_returning_user_for_project_decision,
     returning_edit_decision_step,
     returning_saved_location_context,
     returning_saved_location_step,
     WILLING_TO_CREATE_PROJECT_FALLBACK,
 )
+from backend.integrations.tatva_user_addresses import get_cached_user_addresses
 from backend.storage.redis_store import get_session, save_session
 from backend.storage import supabase_store
 from backend.storage.media_store import save_attachment
@@ -428,6 +430,9 @@ def _returning_user_greeting_text(session: Session) -> str:
 
 
 async def _send_returning_location_prompt(session: Session, phone_number: str) -> None:
+    from backend.integrations.tatva_user_addresses import load_user_addresses_for_session
+
+    await load_user_addresses_for_session(session, force=True)
     session.flow_state["awaiting_returning_location_decision"] = True
     _set_returning_user_phase(session, "location_decision")
     await _send_returning_interactive_mcq_once(
@@ -856,19 +861,22 @@ async def _handle_whatsapp_message_impl(
             list_id=list_id,
             button_payload=button_payload,
             button_text=button_text,
+            session=session,
         )
         if choice is None:
             if not (user_message or list_id or button_payload or button_text):
                 return
-            await send_whatsapp_message(
-                to=phone_number,
-                body="Please tap *Choose option* above and pick *Yes, this is correct* or *Add new location*.",
+            hint = (
+                "Please tap *Choose option* above and pick one of your saved locations, "
+                "or *Add new location*."
+                if get_cached_user_addresses(session)
+                else "Please tap *Choose option* above and pick *Yes, this is correct* or *Add new location*."
             )
+            await send_whatsapp_message(to=phone_number, body=hint)
             return
         session.flow_state.pop("awaiting_returning_location_decision", None)
         _set_returning_user_phase(session, "")
-        if choice == "add_new_location":
-            session.flow_state["returning_wants_new_location"] = True
+        apply_returning_location_choice(session, choice)
         await _send_willing_to_create_project_prompt(session, phone_number)
         return
 
