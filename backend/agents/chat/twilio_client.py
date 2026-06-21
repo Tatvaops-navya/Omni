@@ -77,7 +77,14 @@ async def send_say_hi_prompt(to: str, *, remind: bool = False) -> bool:
 
     body = hybrid_flow.say_hi_welcome_text(remind=remind)
     step = enrich_whatsapp_mcq_step(hybrid_flow.say_hi_prompt_step())
-    return await send_whatsapp_flow(to, body, step=step)
+    if step and not mcq_uses_interactive_delivery(step):
+        body = _format_mcq_plain_fallback(body, step)
+        return await _send_plain(to, body)
+    sent = await send_whatsapp_flow(to, body, step=step)
+    if sent:
+        return True
+    fallback = _format_mcq_plain_fallback(body, step or {})
+    return await _send_plain(to, fallback)
 
 
 async def send_whatsapp_message(to: str, body: str) -> bool:
@@ -247,6 +254,8 @@ async def send_whatsapp_flow(to: str, body: str, step: Optional[dict[str, Any]] 
                 "Check TWILIO_WHATSAPP_QUICK_REPLY, Content SIDs, and Render logs."
             )
             body = _format_mcq_plain_fallback(body, step)
+    elif step and step.get("type") == "mcq":
+        body = _format_mcq_plain_fallback(body, step)
     return await _send_plain(to, body)
 
 

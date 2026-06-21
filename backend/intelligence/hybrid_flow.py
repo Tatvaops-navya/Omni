@@ -692,6 +692,29 @@ def is_say_hi_tap(
     return False
 
 
+def is_typed_hi_message(message: str) -> bool:
+    """Typed hi/hii/hiii — not hello, hey, bonjour, etc."""
+    import re
+    norm = re.sub(r"[^\w]", "", (message or "").strip().lower())
+    return bool(re.fullmatch(r"h+i+", norm))
+
+
+def accepts_say_hi_start(
+    *,
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
+    user_message: str = "",
+) -> bool:
+    """Button tap or a strict typed hi/hii/hiii."""
+    return is_say_hi_tap(
+        list_id=list_id,
+        button_payload=button_payload,
+        button_text=button_text,
+        user_message=user_message,
+    ) or is_typed_hi_message(user_message)
+
+
 def first_client_message() -> str:
     steps = qb.build_client_details_steps()
     intro = eva_intro_text()
