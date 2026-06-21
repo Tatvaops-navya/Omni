@@ -34,7 +34,7 @@ SAMPLE_ADDRESSES = [
 ]
 
 
-def test_normalize_user_addresses_dedupes_and_prioritizes_default():
+def test_normalize_keeps_all_formatted_addresses():
     raw = SAMPLE_ADDRESSES + [
         {
             "_id": "dup",
@@ -43,8 +43,31 @@ def test_normalize_user_addresses_dedupes_and_prioritizes_default():
         }
     ]
     result = normalize_user_addresses(raw)
-    assert len(result) == 2
+    assert len(result) == 3
     assert result[0]["_id"] == "69d393184d8aa84fc60b95b1"
+
+
+def test_saved_addresses_display_uses_formatted_address_only():
+    session = Session(session_id="t", phone_number="+1", channel="whatsapp")
+    session.flow_state["tatva_user_addresses"] = [
+        {
+            "_id": "6a3819cd122d62e1c4bc2caf",
+            "formattedAddress": "6-2-881, kharthibad, 2nd floor, hyderabad, hyderabad, Telangana, 500004",
+            "subType": "WORK",
+            "isDefault": False,
+        },
+        {
+            "_id": "6a38196e122d62e1c4bc2ca4",
+            "formattedAddress": "883, 24th Cross Rd, Manjunatha Layout, 7th Sector, HSR Layout, Bengaluru, Karnataka 560102, India",
+            "subType": "HOME",
+            "isDefault": False,
+        },
+    ]
+    text = saved_addresses_display(session)
+    assert "6-2-881, kharthibad, 2nd floor, hyderabad, hyderabad, Telangana, 500004" in text
+    assert "883, 24th Cross Rd, Manjunatha Layout" in text
+    assert "WORK:" not in text
+    assert "HOME:" not in text
 
 
 def test_saved_addresses_display_lists_all():

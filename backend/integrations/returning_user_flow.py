@@ -10,8 +10,8 @@ from backend.intelligence import stage_engine as se
 from backend.intelligence import edit_flow
 from backend.integrations.tatva_users import update_tatva_user_profile_for_session
 from backend.integrations.tatva_user_addresses import (
-    address_list_label,
     apply_tatva_address_to_session,
+    formatted_address_text,
     get_cached_user_addresses,
     is_tatva_address_id,
     saved_addresses_display,
@@ -104,7 +104,7 @@ def returning_saved_location_step(session: Session) -> dict[str, Any]:
         options: list[dict[str, str]] = []
         for addr in addresses[:5]:
             options.append({
-                "label": address_list_label(addr),
+                "label": formatted_address_text(addr),
                 "value": str(addr.get("_id") or ""),
             })
         options.append({"label": "Add new location", "value": "add_new_location"})

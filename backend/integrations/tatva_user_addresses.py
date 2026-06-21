@@ -33,19 +33,17 @@ def _build_formatted_address(addr: dict[str, Any]) -> str:
     return ", ".join(p for p in parts if p)
 
 
+def formatted_address_text(addr: dict[str, Any]) -> str:
+    """Primary display text — always prefer API formattedAddress."""
+    return str(addr.get("formattedAddress") or "").strip() or _build_formatted_address(addr)
+
+
 def normalize_user_addresses(addresses: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Dedupe by formatted address; default address first."""
-    seen: dict[str, dict[str, Any]] = {}
-    for addr in addresses:
-        if not isinstance(addr, dict):
-            continue
-        key = _build_formatted_address(addr).lower()
-        if not key:
-            key = str(addr.get("_id") or "")
-        existing = seen.get(key)
-        if not existing or addr.get("isDefault"):
-            seen[key] = addr
-    result = list(seen.values())
+    """Keep every API address that has a formattedAddress; default first, then newest."""
+    result = [
+        addr for addr in addresses
+        if isinstance(addr, dict) and formatted_address_text(addr)
+    ]
     defaults = [a for a in result if a.get("isDefault")]
     others = [a for a in result if not a.get("isDefault")]
     defaults.sort(key=lambda a: str(a.get("updatedAt") or ""), reverse=True)
@@ -54,30 +52,22 @@ def normalize_user_addresses(addresses: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def format_address_display_line(addr: dict[str, Any], *, index: int | None = None) -> str:
-    text = _build_formatted_address(addr)
+    text = formatted_address_text(addr)
     prefix = f"{index}. " if index is not None else "📍 "
     suffix = " (Default)" if addr.get("isDefault") else ""
-    label = str(addr.get("subTypeLabel") or "").strip()
-    if label:
-        return f"{prefix}{label}: {text}{suffix}"
     return f"{prefix}{text}{suffix}"
 
 
 def address_list_label(addr: dict[str, Any]) -> str:
-    """Short label for WhatsApp list row."""
-    label = str(addr.get("subTypeLabel") or "").strip()
-    locality = str(addr.get("locality") or addr.get("district") or "").strip()
-    if label and locality:
-        return f"{label} - {locality}"
-    if locality:
-        return locality
-    formatted = _build_formatted_address(addr)
-    return formatted[:40] + ("…" if len(formatted) > 40 else "")
+    """WhatsApp list row label from formattedAddress."""
+    from backend.agents.chat.twilio_client import _compact_list_title
+
+    return _compact_list_title(formatted_address_text(addr))
 
 
 def profile_fields_from_address(addr: dict[str, Any]) -> dict[str, str]:
     city = str(addr.get("district") or addr.get("locality") or "").strip()
-    prop = _build_formatted_address(addr)
+    prop = formatted_address_text(addr)
     return {"city": city or prop.split(",")[0].strip(), "property_location": prop}
 
 
