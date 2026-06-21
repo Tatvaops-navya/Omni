@@ -397,6 +397,9 @@ def check_stale_interactive_selection(
     matched_field = str(matched.get("field") or "")
     if matched_field == "service_category" and se.needs_service_selection(session):
         return None
+    from backend.agents.chat.twilio_client import RETURNING_MCQ_FIELDS
+    if matched_field in RETURNING_MCQ_FIELDS and session.flow_state.get("returning_edit_flow_complete"):
+        return None
     if allowed_field and matched_field == allowed_field:
         return None
     if is_stale_mcq_selection(session, matched):

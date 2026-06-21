@@ -97,27 +97,43 @@ def _attachment_kind(*, url: str, key: str = "", mime: str = "") -> str:
     return "file"
 
 
-def _attachment_whatsapp_blocks(attachments: list[Any] | None) -> list[str]:
-    """One label + URL block per attachment (paired for WhatsApp tap-to-open)."""
+def list_tatva_attachment_links(attachments: list[Any] | None) -> list[dict[str, str]]:
+    """Label + URL pairs for tap-to-open attachment delivery on WhatsApp."""
     items = _normalize_attachments(attachments)
     if not items:
         return []
 
-    kind_totals: dict[str, int] = {}
-    for item in items:
-        kind = _attachment_kind(**item)
-        kind_totals[kind] = kind_totals.get(kind, 0) + 1
-
-    kind_seen: dict[str, int] = {}
-    blocks: list[str] = []
+    links: list[dict[str, str]] = []
     for item in items:
         kind = _attachment_kind(**item)
         label = _ATTACHMENT_KIND_LABELS[kind]
-        if kind_totals[kind] > 1:
-            kind_seen[kind] = kind_seen.get(kind, 0) + 1
-            label = f"{label} {kind_seen[kind]}"
-        blocks.append(f"↗ {label}\n{item['url']}")
-    return blocks
+        links.append({
+            "label": f"↗ {label}",
+            "url": item["url"],
+            "kind": kind,
+        })
+    return links
+
+
+def _attachment_whatsapp_blocks(attachments: list[Any] | None) -> list[str]:
+    """Friendly labels only — tap-to-open uses Twilio CTA buttons (no raw URLs in summary)."""
+    return [link["label"] for link in list_tatva_attachment_links(attachments)]
+
+
+def url_suffix_for_cta(full_url: str, *, cdn_base: str) -> str | None:
+    """Return the path+query suffix for a CDN URL used in Twilio CTA templates."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse((full_url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    expected = urlparse((cdn_base or "").strip() or "https://invalid/")
+    if parsed.netloc.lower() != (expected.netloc or "").lower():
+        return None
+    suffix = (parsed.path or "").lstrip("/")
+    if parsed.query:
+        suffix = f"{suffix}?{parsed.query}" if suffix else parsed.query
+    return suffix or None
 
 
 def extract_tatva_attachment_urls(attachments: list[Any] | None) -> list[str]:
@@ -138,6 +154,7 @@ def format_tatva_enquiry_summary_whatsapp(
     attachments: list[Any] | None = None,
 ) -> str:
     """Format Tatva API enquiry.summary object for WhatsApp confirmation."""
+    _ = attachments  # files are sent as separate CTA button messages after the summary
     lines: list[str] = []
     for key, label in _TATVA_ENQUIRY_SUMMARY_LABELS:
         value = summary.get(key)
@@ -147,10 +164,6 @@ def format_tatva_enquiry_summary_whatsapp(
         if not text:
             continue
         lines.append(f"*{label}*\n{text}")
-
-    attachment_section = format_attachments_section_whatsapp(attachments)
-    if attachment_section:
-        lines.append(attachment_section)
 
     return "\n\n".join(lines)
 

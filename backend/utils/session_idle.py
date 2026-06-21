@@ -140,6 +140,19 @@ def build_idle_fresh_start_reply(stale_session: Session, user_message: str) -> s
     return notice + hybrid_flow.first_client_message()
 
 
+async def clear_cached_session(session_id: str, *, reason: str) -> None:
+    """Remove session from Redis and in-memory store after enquiry completion."""
+    from backend.storage.redis_store import delete_session
+    from backend.utils.logger import log_event
+
+    await delete_session(session_id)
+    await log_event(
+        "SESSION_CLEARED",
+        session_id=session_id,
+        data={"reason": reason},
+    )
+
+
 async def start_fresh_session(
     session_id: str,
     phone_number: str,
@@ -148,10 +161,10 @@ async def start_fresh_session(
     reason: str,
 ) -> Session:
     """Delete stored state and persist a new empty session."""
-    from backend.storage.redis_store import delete_session, save_session
+    from backend.storage.redis_store import save_session
     from backend.utils.logger import log_event
 
-    await delete_session(session_id)
+    await clear_cached_session(session_id, reason=reason)
     await log_event(
         "SESSION_RESET",
         session_id=session_id,

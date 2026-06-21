@@ -29,11 +29,13 @@ from backend.integrations.tatva_users import (
 from backend.integrations.returning_user_flow import (
     complete_existing_user_edit_email,
     complete_existing_user_edit_name,
-    continue_existing_user_from_city,
     existing_user_welcome_text,
+    apply_returning_location_choice,
+    parse_returning_location_choice,
     parse_yes_no_choice,
-    returning_edit_decision_step,
-    start_existing_user_edit_name,
+    position_session_for_project_decision,
+    prepare_returning_user_for_project_decision,
+    returning_saved_location_step,
 )
 from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
 from backend.integrations.tatva_enquiry_submit import submit_service_questionnaire
@@ -80,6 +82,18 @@ def _should_send_eva_intro_for_greeting(session: Session, user_message: str) -> 
     if not is_greeting_message(user_message):
         return False
     if session.summary_generated or session.flow_state.get("project_declined"):
+        return False
+    if session.flow_state.get("returning_edit_flow_complete"):
+        return False
+    if session.flow_state.get("existing_user_flow_started"):
+        return False
+    if session.flow_state.get("awaiting_returning_location_decision"):
+        return False
+    if session.flow_state.get("awaiting_returning_edit_decision"):
+        return False
+    if session.flow_state.get("awaiting_returning_profile_field"):
+        return False
+    if session.flow_state.get("awaiting_returning_profile_value"):
         return False
     return True
 
@@ -164,23 +178,37 @@ class ConversationController:
         button_payload: str | None = None,
         list_id: str | None = None,
     ) -> AgentResponse | None:
-        if session.flow_state.get("awaiting_returning_edit_decision"):
-            wants_edit = parse_yes_no_choice(
+        if session.flow_state.get("awaiting_returning_location_decision"):
+            choice = parse_returning_location_choice(
                 user_message,
                 list_id=list_id or "",
                 button_payload=button_payload or "",
                 button_text=button_text or "",
+                session=session,
             )
-            if wants_edit is None:
-                msg = "Please choose *Yes* or *No*."
-                session.flow_state["pending_outbound_mcq"] = returning_edit_decision_step()
+            if choice is None:
+                msg = "Please choose one of your saved locations, or *Other address*."
                 session.add_message(MessageRole.ASSISTANT, msg)
+                session.flow_state["pending_outbound_mcq"] = returning_saved_location_step(session)
                 return AgentResponse(text=msg, session=session)
+            session.flow_state.pop("awaiting_returning_location_decision", None)
+            apply_returning_location_choice(session, choice)
+            from backend.integrations.tatva_users import hydrate_returning_user_profile
+
+            await hydrate_returning_user_profile(session, force=True)
+            step = position_session_for_project_decision(session)
+            if step:
+                session.flow_state["pending_outbound_mcq"] = step
+                prompt = str(step.get("twilio_list_prompt") or step.get("prompt") or "").strip()
+                session.add_message(MessageRole.ASSISTANT, prompt)
+                return AgentResponse(text="", session=session)
+            msg = prepare_returning_user_for_project_decision(session)
+            session.add_message(MessageRole.ASSISTANT, msg)
+            return AgentResponse(text=msg, session=session)
+
+        if session.flow_state.get("awaiting_returning_edit_decision"):
             session.flow_state.pop("awaiting_returning_edit_decision", None)
-            if wants_edit:
-                msg = start_existing_user_edit_name(session)
-            else:
-                msg = continue_existing_user_from_city(session)
+            msg = prepare_returning_user_for_project_decision(session)
             session.add_message(MessageRole.ASSISTANT, msg)
             return AgentResponse(text=msg, session=session)
 
@@ -202,12 +230,15 @@ class ConversationController:
 
         return None
 
-    def _start_existing_user_welcome(self, session: Session) -> AgentResponse:
+    async def _start_existing_user_welcome(self, session: Session) -> AgentResponse:
+        from backend.integrations.tatva_user_addresses import load_user_addresses_for_session
+
+        await load_user_addresses_for_session(session, force=True)
         session.flow_state["existing_user_flow_started"] = True
-        session.flow_state["awaiting_returning_edit_decision"] = True
+        session.flow_state["awaiting_returning_location_decision"] = True
         welcome = existing_user_welcome_text(session)
         session.add_message(MessageRole.ASSISTANT, welcome)
-        session.flow_state["pending_outbound_mcq"] = returning_edit_decision_step()
+        session.flow_state["pending_outbound_mcq"] = returning_saved_location_step(session)
         return AgentResponse(text=welcome, session=session)
 
     async def process_message(
@@ -230,22 +261,29 @@ class ConversationController:
                         })
 
         if session.summary_generated or session.conversation_stage == ConversationStage.SUMMARY_GENERATED:
-            lower = user_message.lower().strip()
-            if lower.startswith(("thank", "thx", "ty ", "ty")) or lower in ("ty", "thanks", "thank you", "thankyou"):
-                thanks = (
-                    "You're welcome! 😊\n\n"
-                    "Your enquiry is already with our team — we'll contact you during your preferred time.\n\n"
-                    "Thank you for choosing TatvaOps."
-                )
-            else:
-                thanks = (
-                    "Your enquiry has already been submitted. "
-                    "Our team will contact you during your preferred time.\n\n"
-                    "Thank you for choosing TatvaOps."
-                )
-            session.add_message(MessageRole.USER, user_message)
-            session.add_message(MessageRole.ASSISTANT, thanks)
-            return AgentResponse(text=thanks, session=session)
+            in_returning_reentry = bool(
+                session.flow_state.get("awaiting_returning_location_decision")
+                or session.flow_state.get("awaiting_returning_edit_decision")
+                or session.flow_state.get("awaiting_returning_profile_field")
+                or session.flow_state.get("awaiting_returning_profile_value")
+            )
+            if not in_returning_reentry:
+                lower = user_message.lower().strip()
+                if lower.startswith(("thank", "thx", "ty ", "ty")) or lower in ("ty", "thanks", "thank you", "thankyou"):
+                    thanks = (
+                        "You're welcome! 😊\n\n"
+                        "Your enquiry is already with our team — we'll contact you during your preferred time.\n\n"
+                        "Thank you for choosing TatvaOps."
+                    )
+                else:
+                    thanks = (
+                        "Your enquiry has already been submitted. "
+                        "Our team will contact you during your preferred time.\n\n"
+                        "Thank you for choosing TatvaOps."
+                    )
+                session.add_message(MessageRole.USER, user_message)
+                session.add_message(MessageRole.ASSISTANT, thanks)
+                return AgentResponse(text=thanks, session=session)
 
         if session.flow_state.get("project_declined"):
             session.add_message(MessageRole.USER, user_message)
@@ -272,7 +310,7 @@ class ConversationController:
                 session.add_message(MessageRole.ASSISTANT, vendor_msg)
                 return AgentResponse(text=vendor_msg, session=session)
             if session.flow_state.get("tatva_phone_is_user"):
-                return self._start_existing_user_welcome(session)
+                return await self._start_existing_user_welcome(session)
             intro = hybrid_flow.first_client_message()
             session.add_message(MessageRole.ASSISTANT, intro)
             session.flow_state["last_stage_shown"] = "client_details"
@@ -374,8 +412,9 @@ class ConversationController:
             if (
                 session.flow_state.get("tatva_phone_is_user")
                 and not session.flow_state.get("existing_user_flow_started")
+                and not session.flow_state.get("returning_edit_flow_complete")
             ):
-                return self._start_existing_user_welcome(session)
+                return await self._start_existing_user_welcome(session)
             if _should_send_eva_intro_for_greeting(session, user_message):
                 intro = hybrid_flow.first_client_message()
                 session.add_message(MessageRole.ASSISTANT, intro)

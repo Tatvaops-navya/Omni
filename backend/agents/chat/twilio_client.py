@@ -5,6 +5,7 @@ Interactive tap options require Twilio Content templates; falls back to formatte
 """
 from __future__ import annotations
 from typing import Any, Optional
+import asyncio
 import json
 import re
 
@@ -12,6 +13,9 @@ from backend.config import get_settings
 
 settings = get_settings()
 _twilio_client = None
+_outbound_locks: dict[str, asyncio.Lock] = {}
+_last_outbound_at: dict[str, float] = {}
+OUTBOUND_MIN_GAP_SEC = 1.5
 
 # Twilio WhatsApp body limit is 1600 chars (error 21617)
 WHATSAPP_MAX_CHARS = 1500
@@ -19,6 +23,7 @@ WHATSAPP_MAX_CHARS = 1500
 RETURNING_MCQ_FIELDS = frozenset({
     "__returning_edit_info__",
     "__returning_profile_field__",
+    "__returning_location__",
 })
 
 SINGLE_OPTION_MCQ_FIELDS = frozenset({
@@ -89,6 +94,97 @@ async def send_whatsapp_message(to: str, body: str) -> bool:
     return ok
 
 
+_CTA_CONTENT_SID_BY_KIND: dict[str, str] = {}
+
+
+def _cta_content_sid_for_kind(kind: str) -> str:
+    global _CTA_CONTENT_SID_BY_KIND
+    if not _CTA_CONTENT_SID_BY_KIND:
+        _CTA_CONTENT_SID_BY_KIND = {
+            "image": str(getattr(settings, "twilio_cta_view_image_content_sid", "") or "").strip(),
+            "pdf": str(getattr(settings, "twilio_cta_view_pdf_content_sid", "") or "").strip(),
+            "video": str(getattr(settings, "twilio_cta_view_video_content_sid", "") or "").strip(),
+            "document": str(getattr(settings, "twilio_cta_view_file_content_sid", "") or "").strip(),
+            "file": str(getattr(settings, "twilio_cta_view_file_content_sid", "") or "").strip(),
+        }
+    return _CTA_CONTENT_SID_BY_KIND.get(kind, "") or _CTA_CONTENT_SID_BY_KIND.get("file", "")
+
+
+async def send_whatsapp_content_cta(
+    to: str,
+    content_sid: str,
+    *,
+    content_variables: dict[str, str],
+) -> bool:
+    """Send a Twilio Content call-to-action message (tappable URL button, no raw URL text)."""
+    sid = (content_sid or "").strip()
+    if not sid:
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+
+        def _create():
+            return client.messages.create(
+                from_=settings.twilio_whatsapp_from,
+                to=to,
+                content_sid=sid,
+                content_variables=json.dumps(content_variables),
+            )
+
+        await loop.run_in_executor(None, _create)
+        return True
+    except Exception as exc:
+        print(f"[Twilio] CTA send error: {exc}")
+        return False
+
+
+async def send_whatsapp_attachment_cta_links(to: str, attachments: list | None) -> None:
+    """
+    Send one CTA button message per attachment so users can open files without seeing raw URLs.
+    Requires TWILIO_CTA_VIEW_* content templates — see scripts/create_attachment_cta_content.py
+    """
+    if not attachments:
+        return
+    try:
+        from backend.integrations.tatva_enquiry_submit import (
+            list_tatva_attachment_links,
+            url_suffix_for_cta,
+        )
+    except ImportError:
+        return
+
+    cdn_base = str(getattr(settings, "tatva_attachment_cdn_base_url", "") or "").strip()
+    if not cdn_base:
+        print("[Twilio] Attachment CTA skipped: TATVA_ATTACHMENT_CDN_BASE_URL not set")
+        return
+
+    import asyncio
+
+    for link in list_tatva_attachment_links(attachments):
+        kind = link.get("kind") or "file"
+        content_sid = _cta_content_sid_for_kind(kind)
+        if not content_sid:
+            print(f"[Twilio] Attachment CTA skipped: no content SID for kind={kind!r}")
+            continue
+        suffix = url_suffix_for_cta(link["url"], cdn_base=cdn_base)
+        if not suffix:
+            print(f"[Twilio] Attachment CTA skipped: URL host mismatch for {link['url'][:80]!r}")
+            continue
+        label = link["label"].removeprefix("↗ ").strip()
+        sent = await send_whatsapp_content_cta(
+            to,
+            content_sid,
+            content_variables={"1": label, "2": suffix},
+        )
+        if sent:
+            await asyncio.sleep(0.35)
+
+
 async def send_context_then_mcq_list(
     to: str,
     context_body: str,
@@ -98,20 +194,19 @@ async def send_context_then_mcq_list(
     Send a long text block first, then a separate WhatsApp list-picker.
     Avoids appending numbered fallbacks to a multi-paragraph summary.
     """
+    await _pace_outbound(to)
     enriched = enrich_whatsapp_mcq_step(step) if step else None
     if (
         enriched
         and enriched.get("type") == "mcq"
         and mcq_uses_interactive_delivery(enriched)
     ):
-        import asyncio
-
         list_prompt = str(
             enriched.get("twilio_list_prompt") or enriched.get("prompt") or "Choose option"
         ).strip()
         if (context_body or "").strip():
             await send_whatsapp_message(to, context_body.strip())
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(OUTBOUND_MIN_GAP_SEC)
         return await send_whatsapp_flow(to, list_prompt, step=enriched)
     if enriched and enriched.get("type") == "mcq":
         prompt_only = str(enriched.get("prompt") or "Please choose one option.").strip()
@@ -130,6 +225,7 @@ async def send_whatsapp_flow(to: str, body: str, step: Optional[dict[str, Any]] 
     TWILIO_WHATSAPP_QUICK_REPLY=true and Content SID is configured.
     Otherwise sends formatted text (user replies with number or option name).
     """
+    await _pace_outbound(to)
     if (
         step
         and step.get("type") == "mcq"
@@ -386,8 +482,12 @@ def _compact_list_title(full: str) -> str:
 
     if "(" in full and ")" in full:
         inner = full[full.index("(") + 1 : full.index(")")].strip()
-        if inner and len(inner) <= WHATSAPP_LIST_TITLE_MAX:
+        # Use parenthetical text only when it is a real descriptor, not a short acronym (e.g. "JD").
+        if inner and len(inner) <= WHATSAPP_LIST_TITLE_MAX and (len(inner) >= 8 or " " in inner):
             return inner
+        prefix = full[: full.index("(")].strip()
+        if prefix and len(prefix) <= WHATSAPP_LIST_TITLE_MAX:
+            return prefix
 
     for sep in (" – ", " - ", " / "):
         if sep in full:
@@ -483,6 +583,7 @@ async def _send_interactive_options(
         or str(step.get("field", "")).startswith("service_q")
         or str(step.get("field", "")).startswith("order_")
         or str(step.get("field", "")).startswith("file_order_")
+        or str(step.get("field", "")) == "willing_to_create_project"
         or str(step.get("field", "")) in RETURNING_MCQ_FIELDS
         or str(step.get("field", "")) in SINGLE_OPTION_MCQ_FIELDS
     )
@@ -507,7 +608,8 @@ async def _send_interactive_options(
             )
 
         try:
-            await loop.run_in_executor(None, _create_with_variables)
+            msg = await loop.run_in_executor(None, _create_with_variables)
+            print(f"[Twilio] Interactive API Response | SID: {msg.sid} | Status: {msg.status}")
         except Exception as inner:
             err = str(inner)
             if require_variables:
@@ -515,7 +617,8 @@ async def _send_interactive_options(
                 return False
             if "Content Variables parameter is invalid" not in err:
                 raise
-            await loop.run_in_executor(None, _create_without_variables)
+            msg = await loop.run_in_executor(None, _create_without_variables)
+            print(f"[Twilio] Interactive API Response | SID: {msg.sid} | Status: {msg.status}")
         return True
     except Exception as e:
         print(f"[Twilio] Interactive send error: {e}")

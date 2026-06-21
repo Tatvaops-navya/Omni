@@ -9,7 +9,9 @@ from backend.integrations.tatva_enquiry_submit import (
     extract_tatva_attachment_urls,
     format_attachments_section_whatsapp,
     format_tatva_enquiry_summary_whatsapp,
+    list_tatva_attachment_links,
     submit_service_questionnaire,
+    url_suffix_for_cta,
 )
 from backend.integrations.tatva_service_questions import (
     build_steps_from_api_questions,
@@ -87,15 +89,50 @@ def test_format_tatva_enquiry_summary_whatsapp():
     assert "sdffdsds" in text
     assert "*Estimated Scope*" in text
     assert "₹25 Lakhs" in text
-    assert "*Attachments*" in text
-    assert "↗ View image\nhttps://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" in text
-    assert "↗ View PDF\nhttps://d187u6mpwmtl08.cloudfront.net/enquiries/plan.pdf" in text
-    assert text.index("*Estimated Scope*") < text.index("*Attachments*")
-    assert text.index("↗ View image") < text.index("↗ View PDF")
-    assert text.index("file.png") < text.index("plan.pdf")
+    assert "*Attachments*" not in text
+    assert "View image" not in text
+    assert "View PDF" not in text
 
     text_without_files = format_tatva_enquiry_summary_whatsapp(summary)
     assert "*Attachments*" not in text_without_files
+
+
+def test_list_tatva_attachment_links_preserves_urls_for_delivery():
+    attachments = [
+        {"key": "a.jpg", "url": "https://example.com/a.jpg"},
+        {"key": "c.pdf", "url": "https://example.com/c.pdf"},
+    ]
+    links = list_tatva_attachment_links(attachments)
+    assert links == [
+        {"label": "↗ View image", "url": "https://example.com/a.jpg", "kind": "image"},
+        {"label": "↗ View PDF", "url": "https://example.com/c.pdf", "kind": "pdf"},
+    ]
+    assert extract_tatva_attachment_urls(attachments) == [
+        "https://example.com/a.jpg",
+        "https://example.com/c.pdf",
+    ]
+
+
+def test_list_tatva_attachment_links_no_sequence_numbers_for_same_kind():
+    attachments = [
+        {"key": "a.jpg", "url": "https://example.com/a.jpg"},
+        {"key": "b.jpg", "url": "https://example.com/b.jpg"},
+        {"key": "c.jpg", "url": "https://example.com/c.jpg"},
+    ]
+    links = list_tatva_attachment_links(attachments)
+    assert all(link["label"] == "↗ View image" for link in links)
+    assert [link["url"] for link in links] == [
+        "https://example.com/a.jpg",
+        "https://example.com/b.jpg",
+        "https://example.com/c.jpg",
+    ]
+
+
+def test_url_suffix_for_cta_matches_cdn_host():
+    base = "https://d187u6mpwmtl08.cloudfront.net/"
+    url = "https://d187u6mpwmtl08.cloudfront.net/enquiries/user/file.png"
+    assert url_suffix_for_cta(url, cdn_base=base) == "enquiries/user/file.png"
+    assert url_suffix_for_cta("https://other.example.com/x.png", cdn_base=base) is None
 
 
 def test_format_attachments_section_whatsapp_labels_and_urls():
@@ -107,11 +144,12 @@ def test_format_attachments_section_whatsapp_labels_and_urls():
     ]
     section = format_attachments_section_whatsapp(attachments)
     assert section.startswith("*Attachments*")
-    assert "↗ View image\nhttps://example.com/a.jpg" in section
-    assert "↗ View video\nhttps://example.com/b.mp4" in section
-    assert "↗ View PDF\nhttps://example.com/c.pdf" in section
-    assert "↗ View file\nhttps://example.com/d.bin" in section
-    assert section.index("a.jpg") < section.index("b.mp4") < section.index("c.pdf")
+    assert "↗ View image" in section
+    assert "↗ View video" in section
+    assert "↗ View PDF" in section
+    assert "↗ View file" in section
+    assert "https://example.com/" not in section
+    assert section.index("View image") < section.index("View video") < section.index("View PDF")
     assert extract_tatva_attachment_urls(attachments) == [
         "https://example.com/a.jpg",
         "https://example.com/b.mp4",
@@ -158,8 +196,8 @@ def test_client_confirmation_uses_tatva_api_summary():
     assert "Your enquiry has been successfully received" in text
     assert "*Project Overview*" in text
     assert "sdffdsds" in text
-    assert "*Attachments*" in text
-    assert "↗ View image\nhttps://d187u6mpwmtl08.cloudfront.net/enquiries/file.png" in text
+    assert "*Attachments*" not in text
+    assert "View image" not in text
     assert "Location:" not in text
     assert "Assigned Specialist:" not in text
 

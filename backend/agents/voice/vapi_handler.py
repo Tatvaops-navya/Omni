@@ -20,6 +20,7 @@ from backend.utils.session_idle import (
     is_greeting_message,
     had_conversation_progress,
     build_idle_fresh_start_reply,
+    clear_cached_session,
     start_fresh_session,
 )
 
@@ -182,8 +183,9 @@ async def vapi_chat_completions(request: Request):
         combined_text = f"{combined_text}\n\n{agent_response.follow_up_text}"
     voice_text = optimize_for_voice(combined_text)
 
-    # Persist
-    await save_session(agent_response.session)
+    # Persist in-progress sessions; completed enquiries are cleared after summary save.
+    if not agent_response.summary_generated:
+        await save_session(agent_response.session)
     await supabase_store.upsert_session_log(agent_response.session)
 
     if agent_response.session.flow_state.get("project_declined"):
@@ -197,6 +199,7 @@ async def vapi_chat_completions(request: Request):
             await supabase_store.save_summary(summary_obj, phone_number=phone)
         except Exception:
             pass
+        await clear_cached_session(session_id, reason="enquiry_submitted")
 
     return _build_response(voice_text, is_streaming)
 

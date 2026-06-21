@@ -194,10 +194,13 @@ def _service_questionnaire_steps(category: ServiceCategory) -> list[dict]:
 
 def get_service_questionnaire_steps(session) -> list[dict]:
     """Return cached Tatva API steps when present, else static JSON fallback."""
-    from backend.integrations.tatva_service_questions import get_cached_steps
+    from backend.integrations.tatva_service_questions import (
+        get_cached_steps,
+        questionnaire_cache_matches_session,
+    )
 
     cached = get_cached_steps(session)
-    if cached:
+    if cached and questionnaire_cache_matches_session(session):
         return cached
     if session.service_category:
         return _service_questionnaire_steps(session.service_category)

@@ -308,12 +308,29 @@ def _enquiry_fields_to_clear(session: Session) -> set[str]:
     return set(_ENQUIRY_RESET_FIELDS) | set(dynamic) | set(service_fields)
 
 
+def clear_service_questionnaire_answers(session: Session) -> None:
+    """Remove answers for a prior service questionnaire before switching services."""
+    fs = session.flow_state or {}
+    reset_fields = set(fs.get("service_questionnaire_required_fields") or [])
+    reset_fields.update(
+        f for f in session.extracted_fields
+        if f.startswith("service_q") or f.startswith("order_") or f.startswith("file_order_")
+    )
+    session.completed_fields = [f for f in session.completed_fields if f not in reset_fields]
+    for field in reset_fields:
+        session.extracted_fields.pop(field, None)
+
+
 def clear_prior_enquiry_qualification(session: Session) -> None:
     """Remove a previous enquiry's service/qualification data for a fresh returning-user project."""
+    from backend.integrations.tatva_service_questions import clear_questionnaire_cache
+
     reset_fields = _enquiry_fields_to_clear(session)
     session.completed_fields = [f for f in session.completed_fields if f not in reset_fields]
     for field in reset_fields:
         session.extracted_fields.pop(field, None)
+    clear_service_questionnaire_answers(session)
+    clear_questionnaire_cache(session)
     session.service_category = None
     session.active_consultant = None
     session.attachments = []
@@ -322,6 +339,10 @@ def clear_prior_enquiry_qualification(session: Session) -> None:
 
 
 def on_service_selected(session: Session, category: ServiceCategory) -> None:
+    from backend.integrations.tatva_service_questions import clear_questionnaire_cache
+
+    clear_service_questionnaire_answers(session)
+    clear_questionnaire_cache(session)
     session.service_category = category
     session.active_consultant = None
     from backend.schemas.service import CONSULTANT_IDS
