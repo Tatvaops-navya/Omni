@@ -187,7 +187,7 @@ class ConversationController:
                 session=session,
             )
             if choice is None:
-                msg = "Please choose one of your saved locations, or *Add new location*."
+                msg = "Please choose one of your saved locations, or *Other address*."
                 session.add_message(MessageRole.ASSISTANT, msg)
                 session.flow_state["pending_outbound_mcq"] = returning_saved_location_step(session)
                 return AgentResponse(text=msg, session=session)

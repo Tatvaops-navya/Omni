@@ -87,7 +87,7 @@ def test_returning_saved_location_step_uses_address_options():
     assert "Here are your saved locations" in step["prompt"]
     assert "123 MG Road" in step["prompt"]
     labels = [o["label"] for o in step["options"]]
-    assert labels == ["Address 1", "Address 2", "Add new location"]
+    assert labels == ["Address 1", "Address 2", "Other address"]
     values = [o["value"] for o in step["options"]]
     assert values[-1] == "add_new_location"
     assert "69d393184d8aa84fc60b95b1" in values
