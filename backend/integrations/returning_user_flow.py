@@ -11,7 +11,6 @@ from backend.intelligence import edit_flow
 from backend.integrations.tatva_users import update_tatva_user_profile_for_session
 from backend.integrations.tatva_user_addresses import (
     apply_tatva_address_to_session,
-    formatted_address_text,
     get_cached_user_addresses,
     is_tatva_address_id,
     saved_addresses_display,
@@ -86,6 +85,35 @@ def saved_location_display(session: Session) -> str:
     return "\n".join(lines)
 
 
+def address_short_list_label(index: int) -> str:
+    """Short WhatsApp list row label — full address is sent in the preceding text message."""
+    return f"Address {index}"
+
+
+def _resolve_address_index_choice(selected: str, session: Session) -> Optional[str]:
+    """Map 'Address N', 'address n', or plain 'N' to a Tatva address _id."""
+    needle = (selected or "").strip()
+    if not needle:
+        return None
+    addresses = get_cached_user_addresses(session)
+    if not addresses:
+        return None
+
+    lowered = needle.lower()
+    index: Optional[int] = None
+    if lowered.startswith("address"):
+        suffix = lowered.removeprefix("address").strip()
+        if suffix.isdigit():
+            index = int(suffix)
+    elif needle.isdigit():
+        index = int(needle)
+
+    if index is None or index < 1 or index > len(addresses):
+        return None
+    addr_id = str(addresses[index - 1].get("_id") or "").strip()
+    return addr_id or None
+
+
 def returning_saved_location_context(session: Session) -> str:
     display = saved_location_display(session)
     addresses = get_cached_user_addresses(session)
@@ -102,9 +130,9 @@ def returning_saved_location_step(session: Session) -> dict[str, Any]:
     addresses = get_cached_user_addresses(session)
     if addresses:
         options: list[dict[str, str]] = []
-        for addr in addresses[:5]:
+        for i, addr in enumerate(addresses[:5], start=1):
             options.append({
-                "label": formatted_address_text(addr),
+                "label": address_short_list_label(i),
                 "value": str(addr.get("_id") or ""),
             })
         options.append({"label": "Add new location", "value": "add_new_location"})
@@ -145,6 +173,10 @@ def parse_returning_location_choice(
         selected_l = selected.lower()
         if session and is_tatva_address_id(selected, session):
             return selected
+        if session:
+            by_index = _resolve_address_index_choice(selected, session)
+            if by_index:
+                return by_index
         if selected_l in {"confirm_saved", "yes", "y", "correct", "this is correct"}:
             return "confirm_saved"
         if selected_l in {"add_new_location", "add new location", "new location", "new", "add"}:

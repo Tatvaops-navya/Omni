@@ -435,11 +435,22 @@ async def _send_returning_location_prompt(session: Session, phone_number: str) -
     await load_user_addresses_for_session(session, force=True)
     session.flow_state["awaiting_returning_location_decision"] = True
     _set_returning_user_phase(session, "location_decision")
-    await _send_returning_interactive_mcq_once(
-        session,
-        phone_number,
-        returning_saved_location_step(session),
-    )
+    step = returning_saved_location_step(session)
+    outbound = enrich_whatsapp_mcq_step(dict(step))
+    context_body = str(step.get("prompt") or returning_saved_location_context(session)).strip()
+    field = str(outbound.get("field") or RETURNING_LOCATION_FIELD)
+    list_prompt = str(
+        outbound.get("twilio_list_prompt") or "Choose your saved location"
+    ).strip()
+    session.flow_state[RETURNING_MCQ_SENT_FIELD] = field
+    session.add_message(MessageRole.ASSISTANT, f"{context_body}\n\n{list_prompt}".strip())
+    await save_session(session)
+    await supabase_store.upsert_session_log(session)
+    if mcq_uses_interactive_delivery(outbound):
+        await send_context_then_mcq_list(phone_number, context_body, outbound)
+        return
+    menu = hybrid_flow.format_mcq_message(outbound)
+    await send_whatsapp_message(to=phone_number, body=f"{context_body}\n\n{menu}".strip())
 
 
 async def _send_returning_user_reentry_prompt(session: Session, phone_number: str) -> None:
@@ -1112,9 +1123,19 @@ async def _handle_whatsapp_message_impl(
             session_out.flow_state.get("returning_edit_flow_complete")
             or session_out.flow_state.get("existing_user_flow_started")
         ):
-            pending_mcq = None
+            # Re-show location list after an invalid reply (full addresses + short labels).
+            if not (
+                pending_field == RETURNING_LOCATION_FIELD
+                and session_out.flow_state.get("awaiting_returning_location_decision")
+            ):
+                pending_mcq = None
     if pending_mcq:
-        await send_context_then_mcq_list(phone_number, reply, pending_mcq)
+        context_body = (reply or "").strip()
+        if str(pending_mcq.get("field") or "") == RETURNING_LOCATION_FIELD:
+            address_context = str(pending_mcq.get("prompt") or "").strip()
+            if address_context:
+                context_body = f"{context_body}\n\n{address_context}".strip()
+        await send_context_then_mcq_list(phone_number, context_body, pending_mcq)
         return
 
     if edit_flow.is_active(session_out):
