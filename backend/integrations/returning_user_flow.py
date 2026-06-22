@@ -249,7 +249,7 @@ def complete_known_client_details_for_returning_user(
     if phone:
         se.mark_field_validated(session, "phone_number", phone)
 
-    name = preserved.get("client_name", "")
+    name = preserved.get("client_name", "") or str(session.extracted_fields.get("client_name") or "").strip()
     if name:
         se.mark_field_validated(session, "client_name", name)
 
