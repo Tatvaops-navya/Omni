@@ -476,6 +476,9 @@ async def _try_registered_user_greeting_restart(
     if stored:
         session = stored
 
+    if session and session.flow_state.get("returning_edit_flow_complete"):
+        return False
+
     norm_msg = _normalize_inbound_text(user_message)
     dedup_key = str(message_sid or "").strip() or f"{phone_number}:{norm_msg}"
     if session and _recent_returning_greeting_duplicate(
@@ -919,18 +922,7 @@ async def _handle_whatsapp_message_impl(
     if user_message and await _try_registered_user_greeting_restart(
         session, session_id, phone_number, user_message, message_sid=message_sid
     ):
-        print(f"[WhatsApp] New enquiry restart for {phone_number} msg={user_message!r}")
-        await _hydrate_returning_profile_from_tatva(session)
-        if _is_registered_returning_user(session):
-            await _send_returning_user_reentry_prompt(session, phone_number)
-            await save_session(session)
-            await supabase_store.upsert_session_log(session)
-            return
-        await start_fresh_session(session_id, phone_number, reason="new_enquiry_after_submit")
-        session = await get_session(session_id)
-        if session:
-            session.flow_state["awaiting_say_hi"] = True
-            await save_session(session)
+        return
 
     # Say Hi gate — new WhatsApp users must tap the template (sends "hi") before chat starts.
     if session and session.flow_state.get("awaiting_say_hi"):
