@@ -252,6 +252,12 @@ def display_label(field: str, value: Any, *, service_category: str = "") -> str:
     if not raw:
         return "—"
 
+    if field == "client_name":
+        from backend.integrations.returning_user_flow import is_placeholder_client_name
+
+        if is_placeholder_client_name(raw):
+            return "—"
+
     if field in _VERBATIM_FIELDS:
         return raw
 

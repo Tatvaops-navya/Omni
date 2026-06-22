@@ -29,13 +29,17 @@ from backend.integrations.tatva_users import (
 from backend.integrations.returning_user_flow import (
     complete_existing_user_edit_email,
     complete_existing_user_edit_name,
+    display_client_name,
     existing_user_welcome_text,
+    is_returning_registered_user,
     apply_returning_location_choice,
     parse_returning_location_choice,
     parse_yes_no_choice,
     position_session_for_project_decision,
     prepare_returning_user_for_project_decision,
+    has_returning_saved_addresses,
     returning_saved_location_step,
+    saved_location_display,
 )
 from backend.integrations.tatva_service_questions import ensure_questionnaire_loaded
 from backend.integrations.tatva_enquiry_submit import submit_service_questionnaire
@@ -235,11 +239,29 @@ class ConversationController:
 
         await load_user_addresses_for_session(session, force=True)
         session.flow_state["existing_user_flow_started"] = True
-        session.flow_state["awaiting_returning_location_decision"] = True
         welcome = existing_user_welcome_text(session)
-        session.add_message(MessageRole.ASSISTANT, welcome)
-        session.flow_state["pending_outbound_mcq"] = returning_saved_location_step(session)
-        return AgentResponse(text=welcome, session=session)
+
+        if has_returning_saved_addresses(session):
+            session.add_message(MessageRole.ASSISTANT, welcome)
+            session.flow_state["awaiting_returning_location_decision"] = True
+            session.flow_state["pending_outbound_mcq"] = returning_saved_location_step(session)
+            return AgentResponse(text=welcome, session=session)
+
+        notice = saved_location_display(session).strip()
+        text = f"{welcome}\n\n{notice}".strip() if notice else welcome
+        session.add_message(MessageRole.ASSISTANT, text)
+
+        from backend.integrations.tatva_users import hydrate_returning_user_profile
+
+        await hydrate_returning_user_profile(session, force=True)
+        step = position_session_for_project_decision(session)
+        if step:
+            session.flow_state["pending_outbound_mcq"] = step
+            return AgentResponse(text=text, session=session)
+
+        msg = prepare_returning_user_for_project_decision(session)
+        session.add_message(MessageRole.ASSISTANT, msg)
+        return AgentResponse(text=f"{text}\n\n{msg}".strip(), session=session)
 
     async def process_message(
         self,
@@ -251,6 +273,11 @@ class ConversationController:
         list_id: str | None = None,
     ) -> AgentResponse:
         se.reconcile_session(session)
+        if is_returning_registered_user(session):
+            from backend.integrations.tatva_users import hydrate_returning_user_profile
+
+            if not display_client_name(session):
+                await hydrate_returning_user_profile(session, force=True)
         await log_event("USER_MESSAGE", session_id=session.session_id,
                         data={
                             "message": user_message,
@@ -474,7 +501,7 @@ class ConversationController:
             await ensure_questionnaire_loaded(session)
             se.reconcile_session(session)
 
-            client_name = (session.extracted_fields.get("client_name") or "").strip()
+            client_name = display_client_name(session)
             greet = f"Perfect, {client_name} ✨" if client_name else "Perfect ✨"
             first_name = consultant_name.split()[0] if consultant_name else "our consultant"
             handoff = (

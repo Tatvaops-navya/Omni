@@ -10,6 +10,7 @@ from backend.integrations.returning_user_flow import (
     parse_returning_location_choice,
     apply_returning_location_choice,
     RETURNING_LOCATION_FIELD,
+    saved_location_display,
 )
 from backend.schemas.session import Session
 
@@ -188,6 +189,48 @@ async def test_send_returning_location_prompt_uses_context_then_list(monkeypatch
     assert session.flow_state.get("awaiting_returning_location_decision") is True
 
 
+@pytest.mark.asyncio
+async def test_send_returning_location_prompt_skips_to_project_when_no_addresses(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(session_id="t", phone_number="whatsapp:+91999", channel="whatsapp")
+    session.extracted_fields["tatva_user_id"] = "user123"
+    session.flow_state["tatva_addresses_api_empty"] = True
+    sent_messages: list[str] = []
+    willing_calls: list[str] = []
+
+    async def fake_load(_session, *, force=False):
+        return []
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_upsert_session_log(_session):
+        return None
+
+    async def fake_send_whatsapp_message(*, to, body):
+        sent_messages.append(body)
+        return True
+
+    async def fake_send_willing(_session, phone):
+        willing_calls.append(phone)
+
+    monkeypatch.setattr(
+        "backend.integrations.tatva_user_addresses.load_user_addresses_for_session",
+        fake_load,
+    )
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
+    monkeypatch.setattr(wh, "send_whatsapp_message", fake_send_whatsapp_message)
+    monkeypatch.setattr(wh, "_send_willing_to_create_project_prompt", fake_send_willing)
+
+    await wh._send_returning_location_prompt(session, "whatsapp:+91999")
+
+    assert sent_messages == ["No response from API."]
+    assert willing_calls == ["whatsapp:+91999"]
+    assert session.flow_state.get("awaiting_returning_location_decision") is not True
+
+
 def test_returning_saved_location_step_profile_empty_api_message():
     from backend.integrations.returning_user_flow import returning_saved_location_step
     from backend.integrations.tatva_user_addresses import NO_RESPONSE_FROM_API
@@ -198,8 +241,8 @@ def test_returning_saved_location_step_profile_empty_api_message():
     })
     session.flow_state["tatva_addresses_api_empty"] = True
     step = returning_saved_location_step(session)
-    assert NO_RESPONSE_FROM_API in step["prompt"]
-    assert step["options"] == [{"label": "Other address", "value": "add_new_location"}]
+    assert step is None
+    assert NO_RESPONSE_FROM_API in saved_location_display(session)
 
 
 @pytest.mark.asyncio
