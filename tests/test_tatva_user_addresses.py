@@ -165,7 +165,7 @@ def test_returning_saved_location_step_profile_fallback_uses_short_list_prompt()
     step = returning_saved_location_step(session)
     assert "Hyderabad" in step["prompt"]
     assert step["twilio_list_prompt"] == "Is this your location?"
-    assert step["twilio_list_prompt"] not in step["prompt"] or step["prompt"] != step["twilio_list_prompt"]
+    assert "Is this your location?" not in step["prompt"]
 
 
 @pytest.mark.asyncio
@@ -197,6 +197,15 @@ async def test_send_context_then_mcq_list_skips_duplicate_context(monkeypatch):
     await tc.send_context_then_mcq_list("+1", context, step)
 
     assert sent == [context, "Is this your location?"]
+
+
+@pytest.mark.asyncio
+async def test_claim_inbound_message_deduplicates():
+    from backend.storage.redis_store import claim_inbound_message
+
+    sid = "SM_test_duplicate_123"
+    assert await claim_inbound_message(sid) is True
+    assert await claim_inbound_message(sid) is False
 
 
 @pytest.mark.asyncio
