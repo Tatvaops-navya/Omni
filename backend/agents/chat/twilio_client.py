@@ -26,6 +26,11 @@ RETURNING_MCQ_FIELDS = frozenset({
     "__returning_location__",
 })
 
+SINGLE_OPTION_MCQ_FIELDS = frozenset({
+    "__final_review__",
+    "__say_hi__",
+})
+
 
 def chunk_whatsapp_body(body: str, max_len: int = WHATSAPP_MAX_CHARS) -> list[str]:
     """Split long text into WhatsApp-safe chunks."""
@@ -67,16 +72,37 @@ def _get_client():
 
 
 async def _pace_outbound(to: str) -> None:
-    """Space outbound WhatsApp messages so list pickers are not dropped."""
-    import time
-
+    """Space outbound messages to the same recipient (Twilio/WhatsApp ordering)."""
     lock = _outbound_locks.setdefault(to, asyncio.Lock())
     async with lock:
+        import time
         now = time.monotonic()
-        wait = OUTBOUND_MIN_GAP_SEC - (now - _last_outbound_at.get(to, 0.0))
+        last = _last_outbound_at.get(to, 0.0)
+        wait = OUTBOUND_MIN_GAP_SEC - (now - last)
         if wait > 0:
             await asyncio.sleep(wait)
         _last_outbound_at[to] = time.monotonic()
+
+
+async def send_say_hi_prompt(to: str, *, remind: bool = False) -> bool:
+    """Send initial Say Hi as a WhatsApp quick-reply button (image-1 style)."""
+    from backend.intelligence import hybrid_flow
+
+    body = hybrid_flow.say_hi_welcome_text(remind=remind)
+    sid = str(getattr(settings, "twilio_say_hi_quick_reply_content_sid", "") or "").strip()
+    if sid:
+        sent = await send_whatsapp_content_cta(
+            to,
+            sid,
+            content_variables={"1": body},
+        )
+        if sent:
+            return True
+        print("[Twilio] Say Hi quick-reply failed — falling back to plain text.")
+
+    step = hybrid_flow.say_hi_prompt_step()
+    fallback = _format_mcq_plain_fallback(body, step)
+    return await _send_plain(to, fallback)
 
 
 async def send_whatsapp_message(to: str, body: str) -> bool:
@@ -240,7 +266,7 @@ async def send_whatsapp_flow(to: str, body: str, step: Optional[dict[str, Any]] 
         opt_cap = int(step.get("twilio_option_count") or step.get("twilio_list_slots") or 0)
         if opt_cap:
             quick_opts = quick_opts[:opt_cap]
-        min_opts = 1 if str(step.get("field", "")) == "__final_review__" else 2
+        min_opts = 1 if str(step.get("field", "")) in SINGLE_OPTION_MCQ_FIELDS else 2
         if min_opts <= len(quick_opts) <= 10:
             sent = await _send_interactive_options(to, body, quick_opts, step=step)
             if sent:
@@ -250,8 +276,8 @@ async def send_whatsapp_flow(to: str, body: str, step: Optional[dict[str, Any]] 
                 "Check TWILIO_WHATSAPP_QUICK_REPLY, Content SIDs, and Render logs."
             )
             body = _format_mcq_plain_fallback(body, step)
-        elif step.get("options"):
-            body = _format_mcq_plain_fallback(body, step)
+    elif step and step.get("type") == "mcq":
+        body = _format_mcq_plain_fallback(body, step)
     return await _send_plain(to, body)
 
 
@@ -336,7 +362,10 @@ def _should_send_interactive(step: dict[str, Any]) -> bool:
         return bool(_resolve_content_sid(step))
     if field == "service_category":
         return bool(getattr(settings, "twilio_service_selection_content_sid", ""))
-    if field in ("willing_to_create_project", *RETURNING_MCQ_FIELDS) or field.startswith("__edit_") or field == "__final_review__":
+    if (
+        field in ("willing_to_create_project", *RETURNING_MCQ_FIELDS, *SINGLE_OPTION_MCQ_FIELDS)
+        or field.startswith("__edit_")
+    ):
         return bool(_variable_mcq_list_sid(len([o for o in (step.get("options") or []) if not _is_other_option(o)])))
     return False
 
@@ -354,7 +383,7 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
     options = step.get("options") or []
     quick_opts = [o for o in options if not _is_other_option(o)]
     field = str(step.get("field", ""))
-    if len(quick_opts) < 2 and field != "__final_review__":
+    if len(quick_opts) < 2 and field not in SINGLE_OPTION_MCQ_FIELDS:
         return step
 
     from backend.schemas.service import WHATSAPP_SERVICE_LIST_ROWS
@@ -388,6 +417,7 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
             or field == "preferred_contact_time"
             or field == "willing_to_create_project"
             or field in RETURNING_MCQ_FIELDS
+            or field in SINGLE_OPTION_MCQ_FIELDS
         ):
             out["require_content_variables"] = True
         if _template_supports_row_descriptions(out):
@@ -395,7 +425,7 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
         return out
 
     variable_sid = _variable_mcq_list_sid(len(quick_opts))
-    min_opts = 1 if field == "__final_review__" else 2
+    min_opts = 1 if field in SINGLE_OPTION_MCQ_FIELDS else 2
     if variable_sid and min_opts <= len(quick_opts) <= 5:
         out["twilio_content_sid"] = variable_sid
         out["require_content_variables"] = True
@@ -589,6 +619,7 @@ async def _send_interactive_options(
         or str(step.get("field", "")).startswith("file_order_")
         or str(step.get("field", "")) == "willing_to_create_project"
         or str(step.get("field", "")) in RETURNING_MCQ_FIELDS
+        or str(step.get("field", "")) in SINGLE_OPTION_MCQ_FIELDS
     )
     try:
         import asyncio

@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     twilio_mcq_list_5_content_sid: str = ""
     # Variable-based list picker for service menu (no AVA welcome). See scripts/create_service_list_content.py
     twilio_service_selection_content_sid: str = ""
+    # Initial Say Hi quick-reply button — scripts/create_say_hi_quick_reply_content.py
+    twilio_say_hi_quick_reply_content_sid: str = ""
     # Attachment open buttons — see scripts/create_attachment_cta_content.py
     tatva_attachment_cdn_base_url: str = "https://d187u6mpwmtl08.cloudfront.net/"
     twilio_cta_view_image_content_sid: str = ""
