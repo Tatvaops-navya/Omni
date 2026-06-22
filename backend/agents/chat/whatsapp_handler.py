@@ -100,6 +100,27 @@ def _recent_returning_greeting_duplicate(
     return elapsed < RETURNING_GREETING_DEDUP_SEC
 
 
+def _has_passed_say_hi_gate(session: Session) -> bool:
+    """True once the user has tapped Say Hi (or typed hi/hii) and chat has started."""
+    if session.flow_state.get("awaiting_say_hi"):
+        return False
+    if session.flow_state.get("tatva_phone_checked"):
+        return True
+    if session.flow_state.get("existing_user_flow_started"):
+        return True
+    if session.flow_state.get("returning_greeting_sent_at"):
+        return True
+    return had_conversation_progress(session)
+
+
+def _clear_returning_location_state(session: Session) -> None:
+    session.flow_state.pop("awaiting_returning_location_decision", None)
+    if session.flow_state.get(RETURNING_MCQ_SENT_FIELD) == RETURNING_LOCATION_FIELD:
+        session.flow_state.pop(RETURNING_MCQ_SENT_FIELD, None)
+    if _returning_user_phase(session) == "location_decision":
+        _set_returning_user_phase(session, "")
+
+
 def _is_interactive_inbound(
     *,
     list_id: str = "",
@@ -149,6 +170,11 @@ async def _handle_returning_location_decision(
     if not _is_waiting_for_returning_location(session):
         return False
 
+    if not _has_passed_say_hi_gate(session):
+        _clear_returning_location_state(session)
+        await save_session(session)
+        return False
+
     choice = parse_returning_location_choice(
         user_message,
         list_id=list_id,
@@ -159,13 +185,22 @@ async def _handle_returning_location_decision(
     if choice is None:
         if not (user_message or list_id or button_payload or button_text):
             return True
-        hint = (
-            "Please tap *Choose option* above and pick one of your saved locations, "
-            "or *Other address*."
-            if get_cached_user_addresses(session)
-            else "Please tap *Choose option* above and pick *Other address*."
-        )
-        await send_whatsapp_message(to=phone_number, body=hint)
+        if is_greeting_message(user_message):
+            return False
+        if _is_interactive_inbound(
+            list_id=list_id,
+            button_payload=button_payload,
+            button_text=button_text,
+        ):
+            hint = (
+                "Please tap *Choose option* above and pick one of your saved locations, "
+                "or *Other address*."
+                if get_cached_user_addresses(session)
+                else "Please tap *Choose option* above and pick *Other address*."
+            )
+            await send_whatsapp_message(to=phone_number, body=hint)
+            return True
+        await _send_returning_location_prompt(session, phone_number)
         return True
 
     session.flow_state.pop("awaiting_returning_location_decision", None)
@@ -991,15 +1026,8 @@ async def _handle_whatsapp_message_impl(
     if session and (user_message or num_media > 0):
         _touch_session_activity(session)
 
-    if session and await _handle_returning_location_decision(
-        session,
-        phone_number,
-        user_message,
-        list_id=list_id,
-        button_payload=button_payload,
-        button_text=button_text,
-    ):
-        return
+    if session and not _has_passed_say_hi_gate(session):
+        _clear_returning_location_state(session)
 
     # In-progress chat idle > N minutes — reset; registered users get the welcome-back flow.
     if session and (user_message or num_media > 0) and is_session_idle_expired(session):
@@ -1028,7 +1056,9 @@ async def _handle_whatsapp_message_impl(
         return
 
     # Say Hi gate — new WhatsApp users must tap the template (sends "hi") before chat starts.
-    if session and session.flow_state.get("awaiting_say_hi"):
+    if session and (
+        session.flow_state.get("awaiting_say_hi") or not _has_passed_say_hi_gate(session)
+    ):
         if hybrid_flow.accepts_say_hi_start(
             list_id=list_id,
             button_payload=button_payload,
@@ -1042,8 +1072,18 @@ async def _handle_whatsapp_message_impl(
             return
         if user_message or num_media > 0:
             print(f"[WhatsApp] Awaiting Say Hi tap for {phone_number} msg={user_message!r}")
-            await _send_say_hi_gate(session, phone_number, remind=bool(user_message))
-            return
+        await _send_say_hi_gate(session, phone_number, remind=bool(user_message))
+        return
+
+    if session and await _handle_returning_location_decision(
+        session,
+        phone_number,
+        user_message,
+        list_id=list_id,
+        button_payload=button_payload,
+        button_text=button_text,
+    ):
+        return
 
     # Greeting mid-flow (Hi bro, Namaste, etc.) — restart for new users only; registered users handled above.
     if (
