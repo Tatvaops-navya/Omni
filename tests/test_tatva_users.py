@@ -419,7 +419,7 @@ async def test_first_message_existing_user_gets_welcome(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_hydrate_returning_user_profile_falls_back_to_supabase(monkeypatch):
+async def test_hydrate_returning_user_profile_uses_tatva_check_phone_only(monkeypatch):
     from backend.integrations.tatva_users import hydrate_returning_user_profile
 
     async def fake_check(phone_number, *, session_id="unknown"):
@@ -431,25 +431,26 @@ async def test_hydrate_returning_user_profile_falls_back_to_supabase(monkeypatch
                 "user": {
                     "_id": "6a3516e9122d62e1c4bc1fb5",
                     "phoneNumber": "8639097638",
+                    "fullName": "Navya shree",
+                    "city": "hyderabad",
+                    "propertyLocation": "Hyderabad , Miyapur",
                 },
             },
         }
 
-    async def fake_supabase_profile(phone_number):
-        assert "8639097638" in phone_number or phone_number.endswith("7638")
-        return {
-            "client_name": "Navya shree",
-            "city": "hyderabad",
-            "property_location": "Hyderabad , Miyapur",
-        }
+    async def fake_load_addresses(session, *, force=False):
+        session.flow_state["tatva_user_addresses"] = []
+        session.flow_state["tatva_addresses_fetched"] = True
+        session.flow_state["tatva_addresses_api_empty"] = True
+        return []
 
     monkeypatch.setattr(
         "backend.integrations.tatva_users.check_phone_user",
         fake_check,
     )
     monkeypatch.setattr(
-        "backend.storage.supabase_store.get_latest_enquiry_profile_by_phone",
-        fake_supabase_profile,
+        "backend.integrations.tatva_user_addresses.load_user_addresses_for_session",
+        fake_load_addresses,
     )
 
     session = Session(
@@ -458,11 +459,10 @@ async def test_hydrate_returning_user_profile_falls_back_to_supabase(monkeypatch
         channel="whatsapp",
     )
     await hydrate_returning_user_profile(session, force=True)
-
     assert session.extracted_fields["tatva_user_id"] == "6a3516e9122d62e1c4bc1fb5"
-    assert session.extracted_fields["client_name"] == "Navya shree"
-    assert session.extracted_fields["city"] == "hyderabad"
-    assert session.extracted_fields["property_location"] == "Hyderabad , Miyapur"
+    assert session.extracted_fields.get("client_name") == "Navya shree"
+    assert session.extracted_fields.get("city") == "hyderabad"
+    assert session.extracted_fields.get("property_location") == "Hyderabad , Miyapur"
 
 
 @pytest.mark.asyncio

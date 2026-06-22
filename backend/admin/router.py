@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from backend.admin.auth import require_admin, require_admin_sse, generate_session_token
 from backend.config import get_settings
 from backend.storage.redis_store import get_session, delete_session, list_all_sessions
-from backend.storage import supabase_store
 from backend.utils.logger import get_recent_logs
 from backend.schemas.session import ConversationStage
 
@@ -179,12 +178,6 @@ async def get_session_detail(session_id: str, auth=Depends(require_admin)):
 
 @router.get("/enquiries")
 async def get_enquiries(auth=Depends(require_admin)):
-    # Try Supabase first
-    from_db = await supabase_store.get_all_enquiries()
-    if from_db:
-        return {"enquiries": from_db}
-
-    # Fallback: build from in-memory sessions
     sessions = await list_all_sessions()
     return {
         "enquiries": [
@@ -205,10 +198,6 @@ async def get_enquiries(auth=Depends(require_admin)):
 
 @router.get("/summaries")
 async def get_summaries(auth=Depends(require_admin)):
-    from_db = await supabase_store.get_all_summaries()
-    if from_db:
-        return {"summaries": from_db}
-
     sessions = await list_all_sessions()
     return {
         "summaries": [
@@ -267,16 +256,11 @@ async def get_health(auth=Depends(require_admin)):
     except Exception as e:
         checks["redis"] = {"status": "error", "error": str(e)[:80]}
 
-    # Supabase
-    try:
-        if supabase_store.is_configured():
-            client = supabase_store._get_client()
-            client.table("project_summaries").select("id").limit(1).execute()
-            checks["supabase"] = {"status": "ok"}
-        else:
-            checks["supabase"] = {"status": "not_configured"}
-    except Exception as e:
-        checks["supabase"] = {"status": "error", "error": str(e)[:80]}
+    # Tatva PM API
+    checks["tatva_api"] = {
+        "status": "configured" if settings.tatva_users_api_base_url else "not_configured",
+        "base_url": settings.tatva_users_api_base_url or "",
+    }
 
     # Twilio
     checks["twilio"] = {
@@ -344,9 +328,6 @@ async def list_attachments(
     session_id: Optional[str] = Query(None),
     auth=Depends(require_admin),
 ):
-    from_db = await supabase_store.get_all_attachments(session_id)
-    if from_db:
-        return {"attachments": from_db}
     sessions = await list_all_sessions()
     items = []
     for s in sessions:

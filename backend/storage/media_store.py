@@ -1,5 +1,5 @@
 """
-WhatsApp media download and Supabase Storage upload.
+WhatsApp media download — attachments kept on session metadata (Twilio URL reference).
 """
 from __future__ import annotations
 import uuid
@@ -10,7 +10,6 @@ import httpx
 
 from backend.config import get_settings
 from backend.schemas.session import Session, AttachmentMeta
-from backend.storage import supabase_store
 
 settings = get_settings()
 
@@ -34,7 +33,7 @@ async def save_attachment(
     content_type: str = "",
     file_name: Optional[str] = None,
 ) -> Optional[AttachmentMeta]:
-    """Download from Twilio, upload to Supabase storage, record metadata."""
+    """Download from Twilio and record metadata on the session."""
     if not media_url:
         return None
     try:
@@ -47,11 +46,7 @@ async def save_attachment(
         elif "pdf" in content_type:
             ext = "pdf"
         fname = file_name or f"{uuid.uuid4().hex[:12]}.{ext}"
-        path = f"{session.session_id}/{fname}"
-
-        public_url = await _upload_to_supabase(path, data, content_type)
-        if not public_url:
-            public_url = f"twilio:{media_url}"
+        public_url = f"twilio:{media_url}"
 
         meta = AttachmentMeta(
             file_name=fname,
@@ -60,30 +55,7 @@ async def save_attachment(
             uploaded_at=datetime.utcnow(),
         )
         session.attachments.append(meta)
-        await supabase_store.save_attachment_record(
-            session_id=session.session_id,
-            file_name=fname,
-            file_url=public_url,
-            mime_type=content_type,
-        )
         return meta
     except Exception as e:
         print(f"[MediaStore] save_attachment error: {e}")
-        return None
-
-
-async def _upload_to_supabase(path: str, data: bytes, content_type: str) -> Optional[str]:
-    if not supabase_store.is_configured():
-        return None
-    try:
-        client = supabase_store._get_client()
-        bucket = "enquiry-files"
-        client.storage.from_(bucket).upload(
-            path,
-            data,
-            file_options={"content-type": content_type, "upsert": "true"},
-        )
-        return client.storage.from_(bucket).get_public_url(path)
-    except Exception as e:
-        print(f"[MediaStore] supabase upload error: {e}")
         return None
