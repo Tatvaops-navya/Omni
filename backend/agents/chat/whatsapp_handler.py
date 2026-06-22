@@ -35,7 +35,7 @@ from backend.integrations.returning_user_flow import (
     WILLING_TO_CREATE_PROJECT_FALLBACK,
 )
 from backend.integrations.tatva_user_addresses import get_cached_user_addresses
-from backend.storage.redis_store import get_session, save_session
+from backend.storage.redis_store import get_session, save_session, claim_inbound_message
 from backend.storage import supabase_store
 from backend.storage.media_store import save_attachment
 from backend.agents.chat.twilio_client import (
@@ -353,6 +353,7 @@ def _reset_stale_flow_for_returning_greeting(session: Session) -> None:
         "returning_profile_edit_field",
         "returning_user_reentry",
         "existing_user_flow_started",
+        "returning_reentry_in_progress",
         "project_declined",
     ):
         session.flow_state.pop(key, None)
@@ -457,14 +458,23 @@ async def _send_returning_location_prompt(session: Session, phone_number: str) -
 
 
 async def _send_returning_user_reentry_prompt(session: Session, phone_number: str) -> None:
+    if session.flow_state.get("returning_reentry_in_progress"):
+        print(f"[WhatsApp] Returning reentry already in progress for {phone_number}")
+        return
+    session.flow_state["returning_reentry_in_progress"] = True
     session.flow_state["existing_user_flow_started"] = True
-    greeting = _returning_user_greeting_text(session)
-    session.add_message(MessageRole.ASSISTANT, greeting)
     await save_session(session)
-    await supabase_store.upsert_session_log(session)
-    await send_whatsapp_message(to=phone_number, body=greeting)
-    await asyncio.sleep(1.5)
-    await _send_returning_location_prompt(session, phone_number)
+    try:
+        greeting = _returning_user_greeting_text(session)
+        session.add_message(MessageRole.ASSISTANT, greeting)
+        await save_session(session)
+        await supabase_store.upsert_session_log(session)
+        await send_whatsapp_message(to=phone_number, body=greeting)
+        await asyncio.sleep(1.5)
+        await _send_returning_location_prompt(session, phone_number)
+    finally:
+        session.flow_state.pop("returning_reentry_in_progress", None)
+        await save_session(session)
 
 
 async def _send_willing_to_create_project_prompt(session: Session, phone_number: str) -> None:
@@ -668,6 +678,7 @@ async def whatsapp_webhook(request: Request):
 
     From = form_params.get("From", "")
     Body = form_params.get("Body", "")
+    MessageSid = form_params.get("MessageSid", "")
     ButtonText = form_params.get("ButtonText")
     ButtonPayload = form_params.get("ButtonPayload")
     ListId = form_params.get("ListId")
@@ -722,6 +733,7 @@ async def whatsapp_webhook(request: Request):
         ButtonText or "",
         ButtonPayload or "",
         resolved_list_id,
+        MessageSid or "",
     )
 
     return Response(
@@ -739,9 +751,13 @@ async def handle_whatsapp_message_bg(
     button_text: str = "",
     button_payload: str = "",
     list_id: str = "",
+    message_sid: str = "",
 ):
     async with _session_lock(session_id):
         try:
+            if not await claim_inbound_message(message_sid):
+                print(f"[WhatsApp] Duplicate MessageSid skipped: {message_sid!r}")
+                return
             await _handle_whatsapp_message_impl(
                 session_id, phone_number, user_message, num_media, media_items or [],
                 button_text, button_payload, list_id,

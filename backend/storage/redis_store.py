@@ -109,6 +109,16 @@ class RedisStore:
         except Exception:
             pass
 
+    async def claim_idempotency_key(self, key: str, *, ttl_sec: int = 600) -> bool:
+        """Return True when this key was newly claimed (SET NX). False if already seen."""
+        if not self.is_configured():
+            return True
+        try:
+            result = await self._post(["SET", key, "1", "NX", "EX", str(ttl_sec)])
+            return result.get("result") == "OK"
+        except Exception:
+            return True
+
     async def get_logs(self, n: int = 100) -> list[dict]:
         """Get recent log entries from Redis."""
         if not self.is_configured():
@@ -214,3 +224,31 @@ async def list_all_sessions() -> list[Session]:
                 seen[sid] = session
 
     return sorted(seen.values(), key=lambda x: x.last_active, reverse=True)
+
+
+_idempotency_memory: dict[str, float] = {}
+
+
+async def claim_inbound_message(message_sid: str, *, ttl_sec: int = 600) -> bool:
+    """
+    Deduplicate Twilio webhook retries / multi-instance double delivery.
+    Returns True when this inbound MessageSid should be processed.
+    """
+    sid = str(message_sid or "").strip()
+    if not sid:
+        return True
+
+    redis = get_redis_store()
+    if redis.is_configured():
+        return await redis.claim_idempotency_key(f"wa:msg:{sid}", ttl_sec=ttl_sec)
+
+    import time
+
+    now = time.time()
+    expired = [k for k, exp in _idempotency_memory.items() if exp <= now]
+    for k in expired:
+        _idempotency_memory.pop(k, None)
+    if sid in _idempotency_memory:
+        return False
+    _idempotency_memory[sid] = now + ttl_sec
+    return True

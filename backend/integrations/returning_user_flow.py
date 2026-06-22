@@ -118,11 +118,8 @@ def returning_saved_location_context(session: Session) -> str:
     display = saved_location_display(session)
     addresses = get_cached_user_addresses(session)
     if addresses:
-        return (
-            f"Here are your saved locations:\n\n{display}\n\n"
-            "Please choose your location below, or add a new one."
-        )
-    return f"Here is your saved location:\n\n{display}\n\nIs this your location?"
+        return f"Here are your saved locations:\n\n{display}"
+    return f"Here is your saved location:\n\n{display}"
 
 
 def returning_saved_location_step(session: Session) -> dict[str, Any]:
