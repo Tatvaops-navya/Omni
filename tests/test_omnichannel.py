@@ -1261,6 +1261,74 @@ async def test_stale_location_state_falls_back_to_say_hi_gate(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_location_selection_with_stale_awaiting_say_hi_advances(monkeypatch):
+    """Address list tap must not re-show Say Hi when awaiting_say_hi is stale."""
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    session.extracted_fields.update({
+        "client_name": "Madhu shree",
+        "tatva_user_id": "abc",
+    })
+    session.flow_state.update({
+        "awaiting_say_hi": True,
+        "awaiting_returning_location_decision": True,
+        "existing_user_flow_started": True,
+        "returning_greeting_sent_at": "2026-06-22T10:00:00Z",
+        "tatva_phone_checked": True,
+    })
+    session.flow_state["tatva_user_addresses"] = [
+        {"_id": "addr1", "formattedAddress": "HSR Layout, Bengaluru"},
+    ]
+
+    project_calls: list[str] = []
+    say_hi_calls: list[bool] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_upsert_session_log(_session):
+        return None
+
+    async def fake_send_willing(_session, phone):
+        project_calls.append(phone)
+
+    async def fake_send_say_hi_gate(_session, _phone, *, remind=False):
+        say_hi_calls.append(remind)
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
+    monkeypatch.setattr(wh, "_send_willing_to_create_project_prompt", fake_send_willing)
+    monkeypatch.setattr(wh, "_send_say_hi_gate", fake_send_say_hi_gate)
+    monkeypatch.setattr(wh, "claim_inbound_message", lambda *a, **k: True)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_test",
+        "whatsapp:+91999",
+        "Address 1",
+        0,
+        [],
+        "Address 1",
+        "",
+        "addr1",
+    )
+
+    assert project_calls == ["whatsapp:+91999"]
+    assert say_hi_calls == []
+    assert session.flow_state.get("awaiting_say_hi") is None
+
+
+@pytest.mark.asyncio
 async def test_new_whatsapp_user_typed_hello_gets_say_hi_prompt(monkeypatch):
     from backend.agents.chat import whatsapp_handler as wh
 

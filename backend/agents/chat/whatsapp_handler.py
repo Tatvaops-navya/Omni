@@ -102,15 +102,20 @@ def _recent_returning_greeting_duplicate(
 
 def _has_passed_say_hi_gate(session: Session) -> bool:
     """True once the user has tapped Say Hi (or typed hi/hii) and chat has started."""
-    if session.flow_state.get("awaiting_say_hi"):
-        return False
-    if session.flow_state.get("tatva_phone_checked"):
-        return True
     if session.flow_state.get("existing_user_flow_started"):
         return True
     if session.flow_state.get("returning_greeting_sent_at"):
         return True
+    if session.flow_state.get("tatva_phone_checked"):
+        return True
+    if session.flow_state.get("awaiting_say_hi"):
+        return False
     return had_conversation_progress(session)
+
+
+def _mark_say_hi_gate_complete(session: Session) -> None:
+    """Returning-user and post-tap flows are past the initial Say Hi template."""
+    session.flow_state.pop("awaiting_say_hi", None)
 
 
 def _clear_returning_location_state(session: Session) -> None:
@@ -170,11 +175,6 @@ async def _handle_returning_location_decision(
     if not _is_waiting_for_returning_location(session):
         return False
 
-    if not _has_passed_say_hi_gate(session):
-        _clear_returning_location_state(session)
-        await save_session(session)
-        return False
-
     choice = parse_returning_location_choice(
         user_message,
         list_id=list_id,
@@ -206,6 +206,7 @@ async def _handle_returning_location_decision(
     session.flow_state.pop("awaiting_returning_location_decision", None)
     session.flow_state.pop(RETURNING_MCQ_SENT_FIELD, None)
     _set_returning_user_phase(session, "")
+    _mark_say_hi_gate_complete(session)
     session.add_message(MessageRole.USER, user_message or choice)
     apply_returning_location_choice(session, choice)
     await save_session(session)
@@ -280,7 +281,7 @@ async def _send_say_hi_gate(session: Session, phone_number: str, *, remind: bool
 
 async def _start_chat_after_say_hi(session: Session, phone_number: str) -> None:
     """Begin EVA flow after the user taps Say Hi."""
-    session.flow_state.pop("awaiting_say_hi", None)
+    _mark_say_hi_gate_complete(session)
     se.start_client_stage(session)
     vendor_msg = await check_tatva_phone_for_session(session)
     if vendor_msg:
@@ -637,6 +638,7 @@ async def _try_registered_user_greeting_restart(
 
     print(f"[WhatsApp] Returning-user greeting restart for {phone_number} msg={user_message!r}")
     _reset_stale_flow_for_returning_greeting(session)
+    _mark_say_hi_gate_complete(session)
     session.flow_state["returning_greeting_sent_at"] = datetime.utcnow().isoformat() + "Z"
     session.flow_state["last_returning_greeting_msg"] = norm_msg
     session.flow_state["last_returning_greeting_dedup_key"] = dedup_key
@@ -654,6 +656,7 @@ async def _send_returning_location_prompt(session: Session, phone_number: str) -
     from backend.integrations.tatva_user_addresses import load_user_addresses_for_session
 
     await load_user_addresses_for_session(session, force=True)
+    _mark_say_hi_gate_complete(session)
     session.flow_state["awaiting_returning_location_decision"] = True
     _set_returning_user_phase(session, "location_decision")
     step = returning_saved_location_step(session)
@@ -684,6 +687,7 @@ async def _send_returning_user_reentry_prompt(session: Session, phone_number: st
         return
     session.flow_state["returning_reentry_in_progress"] = True
     session.flow_state["existing_user_flow_started"] = True
+    _mark_say_hi_gate_complete(session)
     await save_session(session)
     try:
         greeting = _returning_user_greeting_text(session)
@@ -1054,6 +1058,23 @@ async def _handle_whatsapp_message_impl(
         list_id=list_id, button_payload=button_payload, button_text=button_text,
     ):
         return
+
+    if session and _inbound_looks_like_returning_location_reply(
+        session,
+        user_message,
+        list_id=list_id,
+        button_payload=button_payload,
+        button_text=button_text,
+    ):
+        if await _handle_returning_location_decision(
+            session,
+            phone_number,
+            user_message,
+            list_id=list_id,
+            button_payload=button_payload,
+            button_text=button_text,
+        ):
+            return
 
     # Say Hi gate — new WhatsApp users must tap the template (sends "hi") before chat starts.
     if session and (
