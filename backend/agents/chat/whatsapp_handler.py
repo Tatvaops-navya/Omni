@@ -71,6 +71,33 @@ RETURNING_LOCATION_FIELD = "__returning_location__"
 RETURNING_PROFILE_FIELD = "__returning_profile_field__"
 RETURNING_USER_PHASE = "returning_user_phase"
 RETURNING_MCQ_SENT_FIELD = "returning_mcq_sent_field"
+RETURNING_GREETING_DEDUP_SEC = 12
+
+
+def _normalize_inbound_text(message: str) -> str:
+    return (message or "").strip().upper().replace(" ", "")
+
+
+def _recent_returning_greeting_duplicate(
+    session: Session,
+    *,
+    norm_msg: str,
+    dedup_key: str,
+) -> bool:
+    """Suppress a second full welcome+location burst for the same inbound greeting."""
+    if dedup_key and session.flow_state.get("last_returning_greeting_dedup_key") == dedup_key:
+        return True
+    if session.flow_state.get("last_returning_greeting_msg") != norm_msg:
+        return False
+    sent_at = str(session.flow_state.get("returning_greeting_sent_at") or "").strip()
+    if not sent_at:
+        return False
+    try:
+        stamp = sent_at.replace("Z", "")
+        elapsed = (datetime.utcnow() - datetime.fromisoformat(stamp)).total_seconds()
+    except Exception:
+        return False
+    return elapsed < RETURNING_GREETING_DEDUP_SEC
 
 
 def _returning_user_phase(session: Session) -> str:
@@ -396,6 +423,9 @@ def _reset_stale_flow_for_returning_greeting(session: Session) -> None:
         "returning_user_reentry",
         "existing_user_flow_started",
         "returning_reentry_in_progress",
+        "returning_greeting_sent_at",
+        "last_returning_greeting_msg",
+        "last_returning_greeting_dedup_key",
         "project_declined",
     ):
         session.flow_state.pop(key, None)
@@ -432,6 +462,8 @@ async def _try_registered_user_greeting_restart(
     session_id: str,
     phone_number: str,
     user_message: str,
+    *,
+    message_sid: str = "",
 ) -> bool:
     """
     Registered Tatva user said hi/hello — greet by name and offer edit Yes/No.
@@ -439,6 +471,20 @@ async def _try_registered_user_greeting_restart(
     """
     if not is_greeting_message(user_message):
         return False
+
+    stored = await get_session(session_id)
+    if stored:
+        session = stored
+
+    norm_msg = _normalize_inbound_text(user_message)
+    dedup_key = str(message_sid or "").strip() or f"{phone_number}:{norm_msg}"
+    if session and _recent_returning_greeting_duplicate(
+        session,
+        norm_msg=norm_msg,
+        dedup_key=dedup_key,
+    ):
+        print(f"[WhatsApp] Skip duplicate returning greeting for {phone_number}")
+        return True
 
     if session is None:
         session = Session(
@@ -462,7 +508,11 @@ async def _try_registered_user_greeting_restart(
 
     print(f"[WhatsApp] Returning-user greeting restart for {phone_number} msg={user_message!r}")
     _reset_stale_flow_for_returning_greeting(session)
+    session.flow_state["returning_greeting_sent_at"] = datetime.utcnow().isoformat() + "Z"
+    session.flow_state["last_returning_greeting_msg"] = norm_msg
+    session.flow_state["last_returning_greeting_dedup_key"] = dedup_key
     session.add_message(MessageRole.USER, user_message)
+    await save_session(session)
     await _send_returning_user_reentry_prompt(session, phone_number)
     return True
 
@@ -798,12 +848,19 @@ async def handle_whatsapp_message_bg(
 ):
     async with _session_lock(session_id):
         try:
-            if not await claim_inbound_message(message_sid):
-                print(f"[WhatsApp] Duplicate MessageSid skipped: {message_sid!r}")
+            if not await claim_inbound_message(
+                message_sid,
+                phone_number=phone_number,
+                user_message=user_message,
+            ):
+                print(
+                    f"[WhatsApp] Duplicate inbound skipped: sid={message_sid!r} "
+                    f"from={phone_number!r} body={user_message!r}"
+                )
                 return
             await _handle_whatsapp_message_impl(
                 session_id, phone_number, user_message, num_media, media_items or [],
-                button_text, button_payload, list_id,
+                button_text, button_payload, list_id, message_sid,
             )
         except Exception as e:
             import traceback
@@ -832,6 +889,7 @@ async def _handle_whatsapp_message_impl(
     button_text: str = "",
     button_payload: str = "",
     list_id: str = "",
+    message_sid: str = "",
 ):
     media_items = media_items or []
     session = await get_session(session_id)
@@ -846,7 +904,7 @@ async def _handle_whatsapp_message_impl(
         await start_fresh_session(session_id, phone_number, reason="idle_timeout")
         session = await get_session(session_id)
         if user_message and await _try_registered_user_greeting_restart(
-            session, session_id, phone_number, user_message
+            session, session_id, phone_number, user_message, message_sid=message_sid
         ):
             return
         reply = build_idle_fresh_start_reply(stale_session, user_message)
@@ -859,7 +917,7 @@ async def _handle_whatsapp_message_impl(
 
     # Registered user said hi/hello — always welcome back by name (even from stale final review).
     if user_message and await _try_registered_user_greeting_restart(
-        session, session_id, phone_number, user_message
+        session, session_id, phone_number, user_message, message_sid=message_sid
     ):
         print(f"[WhatsApp] New enquiry restart for {phone_number} msg={user_message!r}")
         await _hydrate_returning_profile_from_tatva(session)

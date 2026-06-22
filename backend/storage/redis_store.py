@@ -229,26 +229,62 @@ async def list_all_sessions() -> list[Session]:
 _idempotency_memory: dict[str, float] = {}
 
 
-async def claim_inbound_message(message_sid: str, *, ttl_sec: int = 600) -> bool:
-    """
-    Deduplicate Twilio webhook retries / multi-instance double delivery.
-    Returns True when this inbound MessageSid should be processed.
-    """
-    sid = str(message_sid or "").strip()
-    if not sid:
-        return True
-
-    redis = get_redis_store()
-    if redis.is_configured():
-        return await redis.claim_idempotency_key(f"wa:msg:{sid}", ttl_sec=ttl_sec)
-
+async def _claim_idempotency_key_local(key: str, *, ttl_sec: int) -> bool:
     import time
 
     now = time.time()
     expired = [k for k, exp in _idempotency_memory.items() if exp <= now]
     for k in expired:
         _idempotency_memory.pop(k, None)
-    if sid in _idempotency_memory:
+    if key in _idempotency_memory:
         return False
-    _idempotency_memory[sid] = now + ttl_sec
+    _idempotency_memory[key] = now + ttl_sec
+    return True
+
+
+async def claim_idempotency_key(key: str, *, ttl_sec: int = 600) -> bool:
+    """Return True when this dedupe key is new."""
+    needle = str(key or "").strip()
+    if not needle:
+        return True
+
+    redis = get_redis_store()
+    if redis.is_configured():
+        return await redis.claim_idempotency_key(f"wa:dedup:{needle}", ttl_sec=ttl_sec)
+    return await _claim_idempotency_key_local(needle, ttl_sec=ttl_sec)
+
+
+async def claim_inbound_message(
+    message_sid: str = "",
+    *,
+    phone_number: str = "",
+    user_message: str = "",
+    ttl_sec: int = 600,
+) -> bool:
+    """
+    Deduplicate Twilio webhook retries / multi-instance double delivery.
+    Uses MessageSid when present, plus a short phone+body bucket for retries
+    that arrive with a different Sid.
+    """
+    import hashlib
+    import time
+
+    keys: list[str] = []
+    sid = str(message_sid or "").strip()
+    if sid:
+        keys.append(f"sid:{sid}")
+
+    norm = (user_message or "").strip().lower().replace(" ", "")
+    phone = str(phone_number or "").strip()
+    if phone and norm:
+        bucket = int(time.time()) // 15
+        digest = hashlib.sha256(f"{phone}|{norm}|{bucket}".encode()).hexdigest()[:24]
+        keys.append(f"body:{digest}")
+
+    if not keys:
+        return True
+
+    for key in keys:
+        if not await claim_idempotency_key(key, ttl_sec=ttl_sec):
+            return False
     return True

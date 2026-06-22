@@ -200,12 +200,49 @@ async def test_send_context_then_mcq_list_skips_duplicate_context(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_claim_inbound_message_deduplicates():
-    from backend.storage.redis_store import claim_inbound_message
+async def test_claim_inbound_message_deduplicates_sid():
+    from backend.storage.redis_store import claim_inbound_message, get_redis_store
 
-    sid = "SM_test_duplicate_123"
-    assert await claim_inbound_message(sid) is True
-    assert await claim_inbound_message(sid) is False
+    class _NoRedis:
+        def is_configured(self):
+            return False
+
+    store = get_redis_store()
+    original = store.is_configured
+    store.is_configured = lambda: False
+    try:
+        sid = "SM_test_duplicate_123"
+        assert await claim_inbound_message(sid, phone_number="+1", user_message="hii") is True
+        assert await claim_inbound_message(sid, phone_number="+1", user_message="hii") is False
+    finally:
+        store.is_configured = original
+
+
+@pytest.mark.asyncio
+async def test_claim_inbound_message_deduplicates_body_bucket(monkeypatch):
+    from backend.storage.redis_store import claim_inbound_message, get_redis_store, _idempotency_memory
+
+    _idempotency_memory.clear()
+    store = get_redis_store()
+    store.is_configured = lambda: False
+    monkeypatch.setattr("time.time", lambda: 1000.0)
+
+    assert await claim_inbound_message("SM_one", phone_number="whatsapp:+1", user_message="hii") is True
+    assert await claim_inbound_message("SM_two", phone_number="whatsapp:+1", user_message="hii") is False
+
+
+def test_recent_returning_greeting_duplicate_blocks_rapid_resend():
+    from backend.agents.chat.whatsapp_handler import _recent_returning_greeting_duplicate
+    from datetime import datetime
+
+    session = Session(session_id="t", phone_number="+1", channel="whatsapp")
+    session.flow_state["returning_greeting_sent_at"] = datetime.utcnow().isoformat() + "Z"
+    session.flow_state["last_returning_greeting_msg"] = "HII"
+    assert _recent_returning_greeting_duplicate(
+        session,
+        norm_msg="HII",
+        dedup_key="SM1",
+    ) is True
 
 
 @pytest.mark.asyncio
