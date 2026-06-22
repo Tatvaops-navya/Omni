@@ -167,7 +167,9 @@ def _end_after_project_declined(session: Session) -> str:
 def _is_other_option(opt: dict) -> bool:
     val = str(opt.get("value", "")).lower()
     label = str(opt.get("label", "")).lower()
-    return val == OTHER_VALUE or label == "other" or label.startswith("other ")
+    if val in {"add_new_location", "add new location"}:
+        return False
+    return val == OTHER_VALUE or label == "other"
 
 
 def is_text_only_step(step: dict) -> bool:

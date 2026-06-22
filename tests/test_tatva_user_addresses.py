@@ -93,6 +93,27 @@ def test_returning_saved_location_step_uses_address_options():
     assert "69d393184d8aa84fc60b95b1" in values
 
 
+def test_returning_location_enrich_keeps_other_address_in_list(monkeypatch):
+    from backend.agents.chat.twilio_client import enrich_whatsapp_mcq_step, _is_other_option
+
+    assert _is_other_option({"label": "Other address", "value": "add_new_location"}) is False
+
+    session = Session(session_id="t", phone_number="+1", channel="whatsapp")
+    session.flow_state["tatva_user_addresses"] = SAMPLE_ADDRESSES[:1]
+    step = returning_saved_location_step(session)
+    monkeypatch.setattr(
+        "backend.agents.chat.twilio_client.settings.twilio_whatsapp_quick_reply",
+        True,
+    )
+    monkeypatch.setattr(
+        "backend.agents.chat.twilio_client.settings.twilio_mcq_list_2_content_sid",
+        "HXtest2row",
+    )
+    enriched = enrich_whatsapp_mcq_step(step)
+    assert enriched.get("twilio_content_sid") == "HXtest2row"
+    assert [o["label"] for o in enriched["options"]] == ["Address 1", "Other address"]
+
+
 def test_parse_address_short_label_selection():
     session = Session(session_id="t", phone_number="+1", channel="whatsapp")
     session.flow_state["tatva_user_addresses"] = SAMPLE_ADDRESSES
