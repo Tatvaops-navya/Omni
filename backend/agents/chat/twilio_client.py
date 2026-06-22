@@ -229,16 +229,20 @@ async def send_context_then_mcq_list(
         list_prompt = str(
             enriched.get("twilio_list_prompt") or enriched.get("prompt") or "Choose option"
         ).strip()
-        if (context_body or "").strip():
-            await send_whatsapp_message(to, context_body.strip())
+        context = (context_body or "").strip()
+        if context and context != list_prompt:
+            await send_whatsapp_message(to, context)
             await asyncio.sleep(OUTBOUND_MIN_GAP_SEC)
         return await send_whatsapp_flow(to, list_prompt, step=enriched)
     if enriched and enriched.get("type") == "mcq":
-        prompt_only = str(enriched.get("prompt") or "Please choose one option.").strip()
+        list_prompt = str(
+            enriched.get("twilio_list_prompt") or enriched.get("prompt") or "Please choose one option."
+        ).strip()
         ok = True
-        if (context_body or "").strip():
-            ok = await send_whatsapp_message(to, context_body.strip())
-        fallback = _format_mcq_plain_fallback(prompt_only, enriched)
+        context = (context_body or "").strip()
+        if context and context != list_prompt:
+            ok = await send_whatsapp_message(to, context)
+        fallback = _format_mcq_plain_fallback(list_prompt, enriched)
         sent = await _send_plain(to, fallback)
         return ok and sent
     return await send_whatsapp_flow(to, context_body, step=enriched)

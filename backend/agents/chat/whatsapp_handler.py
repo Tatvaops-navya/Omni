@@ -492,8 +492,12 @@ async def _send_returning_location_prompt(session: Session, phone_number: str) -
     if mcq_uses_interactive_delivery(outbound):
         await send_context_then_mcq_list(phone_number, context_body, outbound)
         return
-    menu = hybrid_flow.format_mcq_message(outbound)
-    await send_whatsapp_message(to=phone_number, body=f"{context_body}\n\n{menu}".strip())
+    menu = _format_mcq_plain_fallback(list_prompt, outbound)
+    if context_body.strip() != list_prompt.strip():
+        body = f"{context_body}\n\n{menu}".strip()
+    else:
+        body = menu
+    await send_whatsapp_message(to=phone_number, body=body)
 
 
 async def _send_returning_user_reentry_prompt(session: Session, phone_number: str) -> None:

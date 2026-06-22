@@ -156,6 +156,49 @@ async def test_send_returning_location_prompt_uses_context_then_list(monkeypatch
     assert session.flow_state.get("awaiting_returning_location_decision") is True
 
 
+def test_returning_saved_location_step_profile_fallback_uses_short_list_prompt():
+    session = Session(session_id="t", phone_number="+1", channel="whatsapp")
+    session.extracted_fields.update({
+        "city": "Hyderabad",
+        "property_location": "Hyderabad, Miyapur",
+    })
+    step = returning_saved_location_step(session)
+    assert "Hyderabad" in step["prompt"]
+    assert step["twilio_list_prompt"] == "Is this your location?"
+    assert step["twilio_list_prompt"] not in step["prompt"] or step["prompt"] != step["twilio_list_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_send_context_then_mcq_list_skips_duplicate_context(monkeypatch):
+    from backend.agents.chat import twilio_client as tc
+
+    sent: list[str] = []
+
+    async def fake_send_whatsapp_message(to, body):
+        sent.append(body)
+        return True
+
+    async def fake_send_whatsapp_flow(to, body, step=None):
+        sent.append(body)
+        return True
+
+    monkeypatch.setattr(tc, "send_whatsapp_message", fake_send_whatsapp_message)
+    monkeypatch.setattr(tc, "send_whatsapp_flow", fake_send_whatsapp_flow)
+    monkeypatch.setattr(tc, "enrich_whatsapp_mcq_step", lambda s: s)
+    monkeypatch.setattr(tc, "mcq_uses_interactive_delivery", lambda _s: True)
+
+    context = "Here is your saved location:\n\nCity: Hyderabad"
+    step = {
+        "type": "mcq",
+        "prompt": context,
+        "twilio_list_prompt": "Is this your location?",
+        "options": [{"label": "Yes", "value": "yes"}],
+    }
+    await tc.send_context_then_mcq_list("+1", context, step)
+
+    assert sent == [context, "Is this your location?"]
+
+
 @pytest.mark.asyncio
 async def test_fetch_user_addresses_live():
     from backend.integrations.tatva_user_addresses import fetch_user_addresses
