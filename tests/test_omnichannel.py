@@ -702,6 +702,40 @@ async def test_returning_user_yes_then_service_selection_not_stale():
     assert session.service_category == ServiceCategory.ELECTRICAL
 
 
+@pytest.mark.asyncio
+async def test_returning_user_yes_without_name_skips_name_question():
+    """Registered users without a Tatva name must not be asked for their name after project Yes."""
+    from backend.integrations.returning_user_flow import prepare_returning_user_for_project_decision
+    from backend.intelligence.conversation_controller import ConversationController
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    session.extracted_fields.update({
+        "city": "Bengaluru",
+        "property_location": "HSR Layout",
+        "preferred_contact_time": "morning",
+        "tatva_user_id": "abc123",
+    })
+    session.flow_state["existing_user_flow_started"] = True
+    prepare_returning_user_for_project_decision(session)
+    session.flow_state["returning_mcq_sent_field"] = "willing_to_create_project"
+
+    assert se.field_is_complete(session, "client_name")
+    assert "Registered User" == session.extracted_fields.get("client_name")
+
+    controller = ConversationController()
+    yes_resp = await controller.process_message(session, "yes", channel="whatsapp", list_id="yes")
+    reply = (yes_resp.text or "").lower()
+    assert "full name" not in reply
+    assert "few quick details" not in reply
+    assert se.needs_service_selection(session)
+
+
 def test_touch_activity_prevents_false_idle_reset():
     session = Session(
         session_id="wa_test",

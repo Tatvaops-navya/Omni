@@ -169,6 +169,16 @@ def _complete_field(session: Session, field: str, value: Any) -> Optional[str]:
     if field == "willing_to_create_project" and _is_project_declined(value):
         return _end_after_project_declined(session)
 
+    if field == "willing_to_create_project" and not _is_project_declined(value):
+        from backend.integrations.returning_user_flow import (
+            advance_returning_user_to_service_selection,
+            is_returning_registered_user,
+        )
+        if is_returning_registered_user(session):
+            advance_returning_user_to_service_selection(session)
+            session.flow_state.pop(OUTBOUND_MCQ_SENT_FIELD, None)
+            return _next_step_message(session)
+
     session.flow_state.pop("current_step_id", None)
     se.maybe_advance_current_stage(session)
 

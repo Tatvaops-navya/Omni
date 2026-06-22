@@ -21,6 +21,17 @@ from backend.schemas.session import ConversationStage, Session
 RETURNING_EDIT_DECISION_FIELD = "__returning_edit_info__"
 RETURNING_LOCATION_FIELD = "__returning_location__"
 RETURNING_MISSING_LOCATION_PLACEHOLDER = "Not specified"
+RETURNING_MISSING_NAME_PLACEHOLDER = "Registered User"
+
+
+def is_returning_registered_user(session: Session) -> bool:
+    """True when this chat is the Tatva returning-user path (not a fresh signup)."""
+    fs = session.flow_state or {}
+    return bool(
+        fs.get("returning_edit_flow_complete")
+        or fs.get("existing_user_flow_started")
+        or fs.get("tatva_user_registered")
+    )
 
 WILLING_TO_CREATE_PROJECT_FALLBACK = (
     "Would you like to proceed with creating your project? "
@@ -250,8 +261,9 @@ def complete_known_client_details_for_returning_user(
         se.mark_field_validated(session, "phone_number", phone)
 
     name = preserved.get("client_name", "") or str(session.extracted_fields.get("client_name") or "").strip()
-    if name:
-        se.mark_field_validated(session, "client_name", name)
+    if not name:
+        name = RETURNING_MISSING_NAME_PLACEHOLDER
+    se.mark_field_validated(session, "client_name", name)
 
     email = preserved.get("email", "")
     if email and se.is_valid_gmail_address(email):
@@ -275,6 +287,20 @@ def complete_known_client_details_for_returning_user(
     if not contact:
         contact = "morning"
     se.mark_field_validated(session, "preferred_contact_time", contact)
+
+
+def advance_returning_user_to_service_selection(session: Session) -> None:
+    """Skip client-detail prompts for registered users and open service selection."""
+    preserved = collect_returning_user_preserved_profile(session)
+    complete_known_client_details_for_returning_user(session, preserved)
+    se.mark_field_validated(session, "willing_to_create_project", "yes")
+    se.mark_stage_complete(session, "ava_intro")
+    se.mark_stage_complete(session, "client_details")
+    session.flow_state["current_stage"] = "service_selection"
+    session.flow_state.pop("current_step_id", None)
+    session.flow_state.pop("last_stage_shown", None)
+    se.set_current_question(session, None)
+    se.reconcile_session(session)
 
 
 def willing_to_create_project_step() -> dict[str, Any] | None:
