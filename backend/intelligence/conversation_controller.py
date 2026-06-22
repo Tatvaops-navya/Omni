@@ -310,6 +310,8 @@ class ConversationController:
                 session.add_message(MessageRole.ASSISTANT, vendor_msg)
                 return AgentResponse(text=vendor_msg, session=session)
             if session.flow_state.get("tatva_phone_is_user"):
+                if session.flow_state.get("returning_greeting_sent_at"):
+                    return AgentResponse(text="", session=session)
                 return await self._start_existing_user_welcome(session)
             intro = hybrid_flow.first_client_message()
             session.add_message(MessageRole.ASSISTANT, intro)
@@ -409,12 +411,13 @@ class ConversationController:
                 if vendor_msg:
                     session.add_message(MessageRole.ASSISTANT, vendor_msg)
                     return AgentResponse(text=vendor_msg, session=session)
-            if (
-                session.flow_state.get("tatva_phone_is_user")
-                and not session.flow_state.get("existing_user_flow_started")
-                and not session.flow_state.get("returning_edit_flow_complete")
-            ):
-                return await self._start_existing_user_welcome(session)
+        if (
+            session.flow_state.get("tatva_phone_is_user")
+            and not session.flow_state.get("existing_user_flow_started")
+            and not session.flow_state.get("returning_edit_flow_complete")
+            and not session.flow_state.get("returning_greeting_sent_at")
+        ):
+            return await self._start_existing_user_welcome(session)
             if _should_send_eva_intro_for_greeting(session, user_message):
                 intro = hybrid_flow.first_client_message()
                 session.add_message(MessageRole.ASSISTANT, intro)
