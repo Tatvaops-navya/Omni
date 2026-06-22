@@ -451,9 +451,12 @@ def enrich_whatsapp_mcq_step(step: Optional[dict[str, Any]]) -> Optional[dict[st
 
 
 def _is_other_option(opt: dict) -> bool:
+    """Qualification free-text 'Other' — not location-picker 'Other address'."""
     val = str(opt.get("value", "")).lower()
     label = str(opt.get("label", "")).lower()
-    return val == "__other__" or label == "other" or label.startswith("other ")
+    if val in {"add_new_location", "add new location"}:
+        return False
+    return val == "__other__" or label == "other"
 
 
 async def _send_plain(to: str, body: str) -> bool:
