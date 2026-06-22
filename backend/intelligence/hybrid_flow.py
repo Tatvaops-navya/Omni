@@ -85,8 +85,33 @@ def _finalize_step(step: Optional[dict]) -> Optional[dict]:
     return enrich_whatsapp_mcq_step(step)
 
 
+OUTBOUND_MCQ_SENT_FIELD = "returning_mcq_sent_field"
+
+
+def _pinned_outbound_step(session: Session) -> Optional[dict]:
+    """Keep the active WhatsApp list step current after reconcile_session clears step id."""
+    sent_field = str(session.flow_state.get(OUTBOUND_MCQ_SENT_FIELD) or "").strip()
+    if not sent_field:
+        return None
+    for stage in se.STAGE_ORDER:
+        if stage == "final_review":
+            break
+        for step in qb.get_steps_for_stage(session, stage):
+            if str(step.get("field") or "") != sent_field:
+                continue
+            if not _field_pending(session, step):
+                return None
+            session.flow_state["current_step_id"] = step["id"]
+            se.set_current_question(session, sent_field)
+            return _finalize_step(step)
+    return None
+
+
 def get_current_step(session: Session) -> Optional[dict]:
     se.reconcile_session(session)
+    pinned = _pinned_outbound_step(session)
+    if pinned:
+        return pinned
     stage = se.fs_current_stage(session)
     if stage == "final_review":
         se.set_current_question(session, None)
@@ -397,6 +422,9 @@ def check_stale_interactive_selection(
     if not matched:
         return None
     matched_field = str(matched.get("field") or "")
+    sent_field = str(session.flow_state.get(OUTBOUND_MCQ_SENT_FIELD) or "").strip()
+    if sent_field and matched_field == sent_field:
+        return None
     if matched_field == "service_category" and se.needs_service_selection(session):
         return None
     from backend.agents.chat.twilio_client import RETURNING_MCQ_FIELDS

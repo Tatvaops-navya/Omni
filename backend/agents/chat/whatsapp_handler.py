@@ -254,16 +254,13 @@ def _is_restart_command(message: str) -> bool:
 
 
 async def _handle_restart45(session_id: str, phone_number: str) -> str:
-    """Clear session and return immediate TwiML (outbound Say Hi sent in background)."""
+    """Clear session; outbound Say Hi template is sent separately (not duplicated in TwiML)."""
     await start_fresh_session(session_id, phone_number, reason="RESTART45")
     session = await get_session(session_id)
     if session:
         session.flow_state["awaiting_say_hi"] = True
         await save_session(session)
-    step = hybrid_flow.say_hi_prompt_step()
-    return "Session reset.\n\n" + _format_mcq_plain_fallback(
-        hybrid_flow.say_hi_welcome_text(), step
-    )
+    return "Session reset."
 
 
 async def _send_say_hi_gate(session: Session, phone_number: str, *, remind: bool = False) -> None:
@@ -292,13 +289,8 @@ async def _start_chat_after_say_hi(session: Session, phone_number: str) -> None:
         return
     if session.flow_state.get("tatva_phone_is_user"):
         session.flow_state["existing_user_flow_started"] = True
-        session.flow_state["awaiting_returning_edit_decision"] = True
-        body = existing_user_welcome_text(session)
-        session.add_message(MessageRole.ASSISTANT, body)
         await save_session(session)
-        await send_context_then_mcq_list(
-            phone_number, body, returning_edit_decision_step()
-        )
+        await _send_returning_user_reentry_prompt(session, phone_number)
         return
     body = hybrid_flow.first_client_message()
     session.add_message(MessageRole.ASSISTANT, body)

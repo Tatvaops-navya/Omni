@@ -678,6 +678,7 @@ async def test_returning_user_yes_then_service_selection_not_stale():
     ]
 
     prepare_returning_user_for_project_decision(session)
+    session.flow_state["returning_mcq_sent_field"] = "willing_to_create_project"
     controller = ConversationController()
 
     yes_resp = await controller.process_message(session, "yes", channel="whatsapp", list_id="yes")
@@ -2099,6 +2100,30 @@ def test_invalid_mcq_reasks_current_question():
     assert "Sorry" in reply
     assert "create a project" in reply.lower()
     assert not se.field_is_complete(session, "willing_to_create_project")
+
+
+def test_pinned_outbound_step_keeps_willing_to_create_active():
+    from backend.integrations.returning_user_flow import prepare_returning_user_for_project_decision
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+    )
+    session.extracted_fields.update({
+        "client_name": "Shree",
+        "city": "Hyderabad",
+        "property_location": "Madhapur",
+        "preferred_contact_time": "morning",
+        "tatva_user_id": "abc",
+    })
+    prepare_returning_user_for_project_decision(session)
+    session.flow_state["returning_mcq_sent_field"] = "willing_to_create_project"
+    se.reconcile_session(session)
+    step = hybrid_flow.get_current_step(session)
+    assert step is not None
+    assert step.get("field") == "willing_to_create_project"
 
 
 def test_stale_whatsapp_list_tap_on_answered_question_is_rejected():
