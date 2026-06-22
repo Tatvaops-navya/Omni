@@ -137,6 +137,40 @@ def returning_saved_location_step(session: Session) -> dict[str, Any]:
     }
 
 
+def _parse_single_location_choice(
+    selected: str,
+    *,
+    session: Session | None = None,
+) -> Optional[str]:
+    needle = (selected or "").strip()
+    if not needle:
+        return None
+    selected_l = needle.lower()
+    if session and is_tatva_address_id(needle, session):
+        return needle
+    if session:
+        by_index = _resolve_address_index_choice(needle, session)
+        if by_index:
+            return by_index
+    if selected_l in {"confirm_saved", "yes", "y", "correct", "this is correct"}:
+        return "confirm_saved"
+    if selected_l in {
+        "add_new_location",
+        "add new location",
+        "other address",
+        "other",
+        "new location",
+        "new",
+        "add",
+    }:
+        return "add_new_location"
+    if "correct" in selected_l or selected_l.startswith("yes"):
+        return "confirm_saved"
+    if "new" in selected_l and "location" in selected_l:
+        return "add_new_location"
+    return None
+
+
 def parse_returning_location_choice(
     user_message: str,
     *,
@@ -145,33 +179,26 @@ def parse_returning_location_choice(
     button_text: str = "",
     session: Session | None = None,
 ) -> Optional[str]:
+    candidates: list[str] = []
     for raw in (list_id, button_payload, button_text, user_message):
         selected = (raw or "").strip()
         if not selected:
             continue
-        selected_l = selected.lower()
-        if session and is_tatva_address_id(selected, session):
-            return selected
-        if session:
-            by_index = _resolve_address_index_choice(selected, session)
-            if by_index:
-                return by_index
-        if selected_l in {"confirm_saved", "yes", "y", "correct", "this is correct"}:
-            return "confirm_saved"
-        if selected_l in {
-            "add_new_location",
-            "add new location",
-            "other address",
-            "other",
-            "new location",
-            "new",
-            "add",
-        }:
-            return "add_new_location"
-        if "correct" in selected_l or selected_l.startswith("yes"):
-            return "confirm_saved"
-        if "new" in selected_l and "location" in selected_l:
-            return "add_new_location"
+        candidates.append(selected)
+        for line in selected.replace("\r", "\n").split("\n"):
+            line = line.strip()
+            if line:
+                candidates.append(line)
+
+    seen: set[str] = set()
+    for selected in candidates:
+        key = selected.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        choice = _parse_single_location_choice(selected, session=session)
+        if choice:
+            return choice
     return None
 
 

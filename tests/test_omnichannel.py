@@ -341,6 +341,75 @@ async def test_location_choice_advances_to_project_creation(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_quoted_location_list_reply_advances_without_greeting_restart(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    session.extracted_fields.update({
+        "client_name": "Madhu shree",
+        "city": "Hyderabad",
+        "property_location": "Miyapur",
+        "tatva_user_id": "abc",
+    })
+    session.flow_state["awaiting_returning_location_decision"] = True
+    session.flow_state["tatva_user_addresses"] = [
+        {"_id": "addr1", "formattedAddress": "HSR Layout, Bengaluru"},
+    ]
+
+    project_calls: list[str] = []
+    reentry_calls: list[str] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_upsert_session_log(_session):
+        return None
+
+    async def fake_send_willing(_session, phone):
+        project_calls.append(phone)
+
+    async def fake_reentry(_session, phone):
+        reentry_calls.append(phone)
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
+    monkeypatch.setattr(wh, "_send_willing_to_create_project_prompt", fake_send_willing)
+    monkeypatch.setattr(wh, "_send_returning_user_reentry_prompt", fake_reentry)
+    monkeypatch.setattr(wh, "claim_inbound_message", lambda *a, **k: True)
+
+    quoted = (
+        "Hi there 👋 Great to see you again!\n"
+        "Choose your saved location\n"
+        "Address 1"
+    )
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_test",
+        "whatsapp:+91999",
+        quoted,
+        0,
+        [],
+        "Address 1",
+        "",
+        "addr1",
+    )
+
+    assert project_calls == ["whatsapp:+91999"]
+    assert reentry_calls == []
+    assert session.flow_state.get("awaiting_returning_location_decision") is None
+
+
+@pytest.mark.asyncio
 async def test_willing_to_create_project_uses_interactive_template(monkeypatch):
     from backend.agents.chat import whatsapp_handler as wh
 

@@ -55,10 +55,25 @@ def build_inbound_user_message(
     is_interactive = bool(resolved_id or list_id or button_payload or button_text)
 
     if is_interactive:
-        for candidate in (list_title, button_text, body):
+        for candidate in (list_title, button_text):
             cleaned = sanitize_whatsapp_inbound_text(candidate)
             if cleaned:
                 return cleaned
+        cleaned_body = sanitize_whatsapp_inbound_text(body)
+        if cleaned_body:
+            # Quoted list replies often embed the full prior bot message (e.g. EVA welcome).
+            lines = [ln.strip() for ln in cleaned_body.replace("\r", "\n").split("\n") if ln.strip()]
+            if len(lines) > 1:
+                for line in reversed(lines):
+                    lower = line.lower()
+                    if lower.startswith("address") or lower in {
+                        "other address",
+                        "add new location",
+                        "other",
+                    }:
+                        return line
+                return lines[-1]
+            return cleaned_body
         return ""
 
     return sanitize_whatsapp_inbound_text(body or button_text or list_title or "")

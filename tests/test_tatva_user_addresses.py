@@ -121,6 +121,17 @@ def test_parse_address_short_label_selection():
     assert parse_returning_location_choice("2", session=session) == "69ca149a76447fb2e241a65d"
 
 
+def test_parse_location_from_quoted_multiline_reply():
+    session = Session(session_id="t", phone_number="+1", channel="whatsapp")
+    session.flow_state["tatva_user_addresses"] = SAMPLE_ADDRESSES
+    quoted = (
+        "Hi there 👋 Great to see you again!\n"
+        "Choose your saved location\n"
+        "Address 1"
+    )
+    assert parse_returning_location_choice(quoted, session=session) == "69d393184d8aa84fc60b95b1"
+
+
 def test_parse_and_apply_address_selection():
     session = Session(session_id="t", phone_number="+1", channel="whatsapp")
     session.flow_state["tatva_user_addresses"] = SAMPLE_ADDRESSES
