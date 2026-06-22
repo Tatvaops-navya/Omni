@@ -358,6 +358,8 @@ async def test_quoted_location_list_reply_advances_without_greeting_restart(monk
         "tatva_user_id": "abc",
     })
     session.flow_state["awaiting_returning_location_decision"] = True
+    session.flow_state["tatva_phone_checked"] = True
+    session.flow_state["existing_user_flow_started"] = True
     session.flow_state["tatva_user_addresses"] = [
         {"_id": "addr1", "formattedAddress": "HSR Layout, Bengaluru"},
     ]
@@ -1209,6 +1211,53 @@ def test_is_say_hi_tap_only_for_template():
     assert not hybrid_flow.is_typed_hi_message("hello")
     assert hybrid_flow.accepts_say_hi_start(user_message="hiii")
     assert not hybrid_flow.accepts_say_hi_start(user_message="bonjour")
+
+
+@pytest.mark.asyncio
+async def test_stale_location_state_falls_back_to_say_hi_gate(monkeypatch):
+    """Random text must not show location hint when Say Hi was never completed."""
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_whatsapp:+919999999999",
+        phone_number="whatsapp:+919999999999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+    )
+    session.flow_state["awaiting_returning_location_decision"] = True
+    session.flow_state[wh.RETURNING_MCQ_SENT_FIELD] = wh.RETURNING_LOCATION_FIELD
+
+    say_hi_calls: list[bool] = []
+    location_hints: list[str] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_send_say_hi_gate(_session, _phone, *, remind=False):
+        say_hi_calls.append(remind)
+
+    async def fake_send_whatsapp_message(*, to, body):
+        location_hints.append(body)
+        return True
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh, "_send_say_hi_gate", fake_send_say_hi_gate)
+    monkeypatch.setattr(wh, "send_whatsapp_message", fake_send_whatsapp_message)
+    monkeypatch.setattr(wh, "claim_inbound_message", lambda *a, **k: True)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_whatsapp:+919999999999",
+        "whatsapp:+919999999999",
+        "asdfghjk",
+    )
+
+    assert say_hi_calls == [True]
+    assert location_hints == []
+    assert session.flow_state.get("awaiting_returning_location_decision") is None
 
 
 @pytest.mark.asyncio
