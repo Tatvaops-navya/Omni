@@ -16,8 +16,6 @@ twilio>=9.0.0
 httpx>=0.28.0
 
 # Supabase (use a widely-compatible version)
-supabase>=2.9.0
-
 # Async utilities
 anyio>=4.0.0
 

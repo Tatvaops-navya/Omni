@@ -10,6 +10,7 @@ from backend.intelligence import stage_engine as se
 from backend.intelligence import edit_flow
 from backend.integrations.tatva_users import update_tatva_user_profile_for_session
 from backend.integrations.tatva_user_addresses import (
+    NO_RESPONSE_FROM_API,
     apply_tatva_address_to_session,
     get_cached_user_addresses,
     is_tatva_address_id,
@@ -60,29 +61,11 @@ def returning_edit_decision_step() -> dict[str, Any]:
 
 
 def saved_location_display(session: Session) -> str:
-    """Format saved locations from Tatva address API or profile fallback."""
+    """Format saved locations from Tatva address API only."""
     api_display = saved_addresses_display(session)
     if api_display:
         return api_display
-
-    preserved = collect_returning_user_preserved_profile(session)
-    city = preserved.get("city", "").strip()
-    prop = preserved.get("property_location", "").strip()
-    if city == RETURNING_MISSING_LOCATION_PLACEHOLDER:
-        city = ""
-    if prop == RETURNING_MISSING_LOCATION_PLACEHOLDER:
-        prop = ""
-    if not city and prop:
-        city = prop.split(",")[0].strip()
-
-    lines: list[str] = []
-    if city:
-        lines.append(f"📍 City: {city}")
-    if prop:
-        lines.append(f"📍 Property location: {prop}")
-    if not lines:
-        return "We don't have a saved location on file yet."
-    return "\n".join(lines)
+    return NO_RESPONSE_FROM_API
 
 
 def address_short_list_label(index: int) -> str:
@@ -119,7 +102,7 @@ def returning_saved_location_context(session: Session) -> str:
     addresses = get_cached_user_addresses(session)
     if addresses:
         return f"Here are your saved locations:\n\n{display}"
-    return f"Here is your saved location:\n\n{display}"
+    return display
 
 
 def returning_saved_location_step(session: Session) -> dict[str, Any]:
@@ -147,9 +130,8 @@ def returning_saved_location_step(session: Session) -> dict[str, Any]:
         "type": "mcq",
         "field": RETURNING_LOCATION_FIELD,
         "prompt": context,
-        "twilio_list_prompt": "Is this your location?",
+        "twilio_list_prompt": "Choose an option",
         "options": [
-            {"label": "Yes, this is correct", "value": "confirm_saved"},
             {"label": "Other address", "value": "add_new_location"},
         ],
     }

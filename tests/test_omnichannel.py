@@ -152,27 +152,24 @@ def test_parse_yes_no_choice_accepts_text_and_list_taps():
     assert _parse_yes_no_choice("maybe later") is None
 
 
-def test_returning_saved_location_step_shows_profile_data():
+def test_returning_saved_location_step_shows_no_api_response_when_empty():
     from backend.integrations.returning_user_flow import (
         returning_saved_location_step,
         RETURNING_LOCATION_FIELD,
     )
+    from backend.integrations.tatva_user_addresses import NO_RESPONSE_FROM_API
 
     session = Session(
         session_id="wa_test",
         phone_number="whatsapp:+91999",
         channel="whatsapp",
     )
-    session.extracted_fields.update({
-        "city": "Hyderabad",
-        "property_location": "Miyapur",
-    })
+    session.extracted_fields["tatva_user_id"] = "user123"
+    session.flow_state["tatva_addresses_api_empty"] = True
     step = returning_saved_location_step(session)
     assert step["field"] == RETURNING_LOCATION_FIELD
-    assert "Hyderabad" in step["prompt"]
-    assert "Miyapur" in step["prompt"]
-    values = [o["value"] for o in step["options"]]
-    assert values == ["confirm_saved", "add_new_location"]
+    assert NO_RESPONSE_FROM_API in step["prompt"]
+    assert [o["value"] for o in step["options"]] == ["add_new_location"]
 
 
 def test_returning_saved_location_step_shows_tatva_api_addresses():
@@ -1599,7 +1596,7 @@ def test_project_declined_reconcile_does_not_advance_to_service_selection():
 
 
 @pytest.mark.asyncio
-async def test_persist_terminal_enquiry_saves_declined_lead(monkeypatch):
+async def test_persist_terminal_enquiry_is_noop_without_supabase():
     from backend.storage import supabase_store
 
     session = Session(
@@ -1619,19 +1616,8 @@ async def test_persist_terminal_enquiry_saves_declined_lead(monkeypatch):
         se.mark_field_validated(session, field, value)
     hybrid_flow.process_hybrid_turn(session, "no")
 
-    saved = []
-
-    async def mock_save(s):
-        saved.append(s)
-        return True
-
-    monkeypatch.setattr(supabase_store, "save_enquiry", mock_save)
-    monkeypatch.setattr(supabase_store, "is_configured", lambda: True)
-
-    assert await supabase_store.persist_terminal_enquiry(session) is True
-    assert len(saved) == 1
-    assert saved[0].extracted_fields.get("willing_to_create_project") == "no"
-    assert saved[0].extracted_fields.get("client_name") == "Navya"
+    assert await supabase_store.persist_terminal_enquiry(session) is False
+    assert supabase_store.is_configured() is False
 
 
 def test_project_declined_yes_continues_flow():

@@ -15,6 +15,7 @@ from backend.schemas.session import Session
 from backend.utils.logger import log_event
 
 USER_ADDRESSES_PATH = "/users/api/address/user"
+NO_RESPONSE_FROM_API = "No response from API."
 
 
 def _build_formatted_address(addr: dict[str, Any]) -> str:
@@ -121,16 +122,24 @@ async def load_user_addresses_for_session(session: Session, *, force: bool = Fal
     user_id = str(session.extracted_fields.get("tatva_user_id") or "").strip()
     if not user_id:
         session.flow_state.pop("tatva_user_addresses", None)
+        session.flow_state.pop("tatva_addresses_fetched", None)
+        session.flow_state["tatva_addresses_api_empty"] = True
         return []
 
-    if not force and session.flow_state.get("tatva_user_addresses") is not None:
+    if not force and session.flow_state.get("tatva_addresses_fetched"):
         cached = session.flow_state.get("tatva_user_addresses")
         return list(cached) if isinstance(cached, list) else []
 
     raw = await fetch_user_addresses(user_id, session_id=session.session_id)
     normalized = normalize_user_addresses(raw)
     session.flow_state["tatva_user_addresses"] = normalized
+    session.flow_state["tatva_addresses_fetched"] = True
+    session.flow_state["tatva_addresses_api_empty"] = len(normalized) == 0
     return normalized
+
+
+def tatva_addresses_api_empty(session: Session) -> bool:
+    return bool(session.flow_state.get("tatva_addresses_api_empty"))
 
 
 def get_cached_user_addresses(session: Session) -> list[dict[str, Any]]:

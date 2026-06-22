@@ -156,16 +156,18 @@ async def test_send_returning_location_prompt_uses_context_then_list(monkeypatch
     assert session.flow_state.get("awaiting_returning_location_decision") is True
 
 
-def test_returning_saved_location_step_profile_fallback_uses_short_list_prompt():
+def test_returning_saved_location_step_profile_empty_api_message():
+    from backend.integrations.returning_user_flow import returning_saved_location_step
+    from backend.integrations.tatva_user_addresses import NO_RESPONSE_FROM_API
+
     session = Session(session_id="t", phone_number="+1", channel="whatsapp")
     session.extracted_fields.update({
-        "city": "Hyderabad",
-        "property_location": "Hyderabad, Miyapur",
+        "tatva_user_id": "user123",
     })
+    session.flow_state["tatva_addresses_api_empty"] = True
     step = returning_saved_location_step(session)
-    assert "Hyderabad" in step["prompt"]
-    assert step["twilio_list_prompt"] == "Is this your location?"
-    assert "Is this your location?" not in step["prompt"]
+    assert NO_RESPONSE_FROM_API in step["prompt"]
+    assert step["options"] == [{"label": "Other address", "value": "add_new_location"}]
 
 
 @pytest.mark.asyncio

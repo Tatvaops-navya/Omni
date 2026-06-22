@@ -145,10 +145,7 @@ def _hydrate_profile_from_user(session: Session, user: dict[str, Any]) -> None:
 
 
 async def hydrate_returning_user_profile(session: Session, *, force: bool = False) -> None:
-    """
-    Load returning-user name and location from Tatva check-phone, then fill gaps
-    from the most recent saved enquiry (Supabase). Tatva often returns only user id.
-    """
+    """Load returning-user profile and addresses from Tatva PM API only."""
     if (
         not force
         and session.extracted_fields.get("client_name")
@@ -170,17 +167,6 @@ async def hydrate_returning_user_profile(session: Session, *, force: bool = Fals
             session.flow_state["tatva_user_registered"] = True
             user = data.get("user") or {}
             _hydrate_profile_from_user(session, user)
-
-    from backend.storage import supabase_store
-
-    saved = await supabase_store.get_latest_enquiry_profile_by_phone(phone)
-    _apply_profile_fields(
-        session,
-        name=str(saved.get("client_name") or ""),
-        email=str(saved.get("email") or ""),
-        city=str(saved.get("city") or ""),
-        property_location=str(saved.get("property_location") or ""),
-    )
 
     if session.extracted_fields.get("tatva_user_id"):
         from backend.integrations.tatva_user_addresses import load_user_addresses_for_session
