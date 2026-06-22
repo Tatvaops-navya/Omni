@@ -21,7 +21,40 @@ from backend.schemas.session import ConversationStage, Session
 RETURNING_EDIT_DECISION_FIELD = "__returning_edit_info__"
 RETURNING_LOCATION_FIELD = "__returning_location__"
 RETURNING_MISSING_LOCATION_PLACEHOLDER = "Not specified"
-RETURNING_MISSING_NAME_PLACEHOLDER = "Registered User"
+RETURNING_MISSING_NAME_PLACEHOLDER = "__returning_user__"
+_LEGACY_NAME_PLACEHOLDERS = frozenset({
+    RETURNING_MISSING_NAME_PLACEHOLDER,
+    "Registered User",
+})
+
+
+def is_placeholder_client_name(name: Any) -> bool:
+    return str(name or "").strip() in _LEGACY_NAME_PLACEHOLDERS
+
+
+def resolve_returning_client_name(
+    session: Session,
+    preserved: dict[str, str] | None = None,
+) -> str:
+    """Real Tatva/client name only — never the internal stage-completion placeholder."""
+    for raw in (
+        (preserved or {}).get("client_name", ""),
+        str(session.extracted_fields.get("client_name") or "").strip(),
+    ):
+        candidate = str(raw or "").strip()
+        if candidate and not is_placeholder_client_name(candidate):
+            return candidate
+    return ""
+
+
+def display_client_name(session: Session) -> str:
+    return resolve_returning_client_name(session)
+
+
+def clear_placeholder_client_name(session: Session) -> None:
+    if is_placeholder_client_name(session.extracted_fields.get("client_name")):
+        session.extracted_fields.pop("client_name", None)
+        session.completed_fields = [f for f in session.completed_fields if f != "client_name"]
 
 
 def is_returning_registered_user(session: Session) -> bool:
@@ -108,6 +141,10 @@ def _resolve_address_index_choice(selected: str, session: Session) -> Optional[s
     return addr_id or None
 
 
+def has_returning_saved_addresses(session: Session) -> bool:
+    return bool(get_cached_user_addresses(session))
+
+
 def returning_saved_location_context(session: Session) -> str:
     display = saved_location_display(session)
     addresses = get_cached_user_addresses(session)
@@ -116,35 +153,25 @@ def returning_saved_location_context(session: Session) -> str:
     return display
 
 
-def returning_saved_location_step(session: Session) -> dict[str, Any]:
+def returning_saved_location_step(session: Session) -> dict[str, Any] | None:
     context = returning_saved_location_context(session)
     addresses = get_cached_user_addresses(session)
-    if addresses:
-        options: list[dict[str, str]] = []
-        for i, addr in enumerate(addresses[:5], start=1):
-            options.append({
-                "label": address_short_list_label(i),
-                "value": str(addr.get("_id") or ""),
-            })
-        options.append({"label": "Other address", "value": "add_new_location"})
-        return {
-            "id": "returning_location_confirm",
-            "type": "mcq",
-            "field": RETURNING_LOCATION_FIELD,
-            "prompt": context,
-            "twilio_list_prompt": "Choose your saved location",
-            "options": options,
-        }
-
+    if not addresses:
+        return None
+    options: list[dict[str, str]] = []
+    for i, addr in enumerate(addresses[:5], start=1):
+        options.append({
+            "label": address_short_list_label(i),
+            "value": str(addr.get("_id") or ""),
+        })
+    options.append({"label": "Other address", "value": "add_new_location"})
     return {
         "id": "returning_location_confirm",
         "type": "mcq",
         "field": RETURNING_LOCATION_FIELD,
         "prompt": context,
-        "twilio_list_prompt": "Choose an option",
-        "options": [
-            {"label": "Other address", "value": "add_new_location"},
-        ],
+        "twilio_list_prompt": "Choose your saved location",
+        "options": options,
     }
 
 
@@ -224,7 +251,7 @@ def apply_returning_location_choice(session: Session, choice: str) -> None:
 
 
 def existing_user_welcome_text(session: Session) -> str:
-    full_name = str(session.extracted_fields.get("client_name") or "").strip()
+    full_name = display_client_name(session)
     greeting = f"Hi there {full_name} 👋" if full_name else "Hi there 👋"
     return (
         f"{greeting}\n\n"
@@ -242,7 +269,7 @@ def collect_returning_user_preserved_profile(session: Session) -> dict[str, str]
     return {
         "phone": phone,
         "tatva_user_id": str(session.extracted_fields.get("tatva_user_id") or "").strip(),
-        "client_name": str(session.extracted_fields.get("client_name") or "").strip(),
+        "client_name": resolve_returning_client_name(session),
         "email": str(session.extracted_fields.get("email") or "").strip(),
         "city": str(session.extracted_fields.get("city") or "").strip(),
         "property_location": str(session.extracted_fields.get("property_location") or "").strip(),
@@ -260,10 +287,12 @@ def complete_known_client_details_for_returning_user(
     if phone:
         se.mark_field_validated(session, "phone_number", phone)
 
-    name = preserved.get("client_name", "") or str(session.extracted_fields.get("client_name") or "").strip()
-    if not name:
-        name = RETURNING_MISSING_NAME_PLACEHOLDER
-    se.mark_field_validated(session, "client_name", name)
+    name = resolve_returning_client_name(session, preserved)
+    if name:
+        se.mark_field_validated(session, "client_name", name)
+    elif not se.field_is_complete(session, "client_name"):
+        # Internal sentinel so returning users are not re-asked for their name.
+        se.mark_field_validated(session, "client_name", RETURNING_MISSING_NAME_PLACEHOLDER)
 
     email = preserved.get("email", "")
     if email and se.is_valid_gmail_address(email):
@@ -291,6 +320,7 @@ def complete_known_client_details_for_returning_user(
 
 def advance_returning_user_to_service_selection(session: Session) -> None:
     """Skip client-detail prompts for registered users and open service selection."""
+    clear_placeholder_client_name(session)
     preserved = collect_returning_user_preserved_profile(session)
     complete_known_client_details_for_returning_user(session, preserved)
     se.mark_field_validated(session, "willing_to_create_project", "yes")

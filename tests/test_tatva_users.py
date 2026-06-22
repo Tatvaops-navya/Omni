@@ -466,6 +466,44 @@ async def test_hydrate_returning_user_profile_uses_tatva_check_phone_only(monkey
 
 
 @pytest.mark.asyncio
+async def test_hydrate_overwrites_placeholder_client_name(monkeypatch):
+    from backend.integrations.returning_user_flow import RETURNING_MISSING_NAME_PLACEHOLDER
+    from backend.integrations.tatva_users import hydrate_returning_user_profile
+    from backend.intelligence import stage_engine as se
+
+    async def fake_check(phone_number, *, session_id="unknown"):
+        return {
+            "success": True,
+            "data": {
+                "isUser": True,
+                "isVendor": False,
+                "user": {
+                    "_id": "abc",
+                    "fullName": "Navya shree",
+                },
+            },
+        }
+
+    async def fake_load_addresses(session, *, force=False):
+        return []
+
+    monkeypatch.setattr("backend.integrations.tatva_users.check_phone_user", fake_check)
+    monkeypatch.setattr(
+        "backend.integrations.tatva_user_addresses.load_user_addresses_for_session",
+        fake_load_addresses,
+    )
+
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+918639097638",
+        channel="whatsapp",
+    )
+    se.mark_field_validated(session, "client_name", RETURNING_MISSING_NAME_PLACEHOLDER)
+    await hydrate_returning_user_profile(session, force=True)
+    assert session.extracted_fields.get("client_name") == "Navya shree"
+
+
+@pytest.mark.asyncio
 async def test_yes_on_create_project_does_not_register(monkeypatch):
     called = {"count": 0}
 

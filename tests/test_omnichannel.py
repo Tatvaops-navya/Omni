@@ -155,7 +155,7 @@ def test_parse_yes_no_choice_accepts_text_and_list_taps():
 def test_returning_saved_location_step_shows_no_api_response_when_empty():
     from backend.integrations.returning_user_flow import (
         returning_saved_location_step,
-        RETURNING_LOCATION_FIELD,
+        saved_location_display,
     )
     from backend.integrations.tatva_user_addresses import NO_RESPONSE_FROM_API
 
@@ -167,9 +167,8 @@ def test_returning_saved_location_step_shows_no_api_response_when_empty():
     session.extracted_fields["tatva_user_id"] = "user123"
     session.flow_state["tatva_addresses_api_empty"] = True
     step = returning_saved_location_step(session)
-    assert step["field"] == RETURNING_LOCATION_FIELD
-    assert NO_RESPONSE_FROM_API in step["prompt"]
-    assert [o["value"] for o in step["options"]] == ["add_new_location"]
+    assert step is None
+    assert NO_RESPONSE_FROM_API in saved_location_display(session)
 
 
 def test_returning_saved_location_step_shows_tatva_api_addresses():
@@ -726,7 +725,8 @@ async def test_returning_user_yes_without_name_skips_name_question():
     session.flow_state["returning_mcq_sent_field"] = "willing_to_create_project"
 
     assert se.field_is_complete(session, "client_name")
-    assert "Registered User" == session.extracted_fields.get("client_name")
+    from backend.integrations.returning_user_flow import is_placeholder_client_name
+    assert is_placeholder_client_name(session.extracted_fields.get("client_name"))
 
     controller = ConversationController()
     yes_resp = await controller.process_message(session, "yes", channel="whatsapp", list_id="yes")

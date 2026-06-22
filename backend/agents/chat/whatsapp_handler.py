@@ -32,6 +32,8 @@ from backend.integrations.returning_user_flow import (
     returning_edit_decision_step,
     returning_saved_location_context,
     returning_saved_location_step,
+    has_returning_saved_addresses,
+    saved_location_display,
     WILLING_TO_CREATE_PROJECT_FALLBACK,
 )
 from backend.integrations.tatva_user_addresses import get_cached_user_addresses
@@ -649,9 +651,24 @@ async def _send_returning_location_prompt(session: Session, phone_number: str) -
 
     await load_user_addresses_for_session(session, force=True)
     _mark_say_hi_gate_complete(session)
+
+    if not has_returning_saved_addresses(session):
+        notice = saved_location_display(session).strip()
+        if notice:
+            session.add_message(MessageRole.ASSISTANT, notice)
+            await save_session(session)
+            await supabase_store.upsert_session_log(session)
+            await send_whatsapp_message(to=phone_number, body=notice)
+            await asyncio.sleep(1.5)
+        await _send_willing_to_create_project_prompt(session, phone_number)
+        return
+
     session.flow_state["awaiting_returning_location_decision"] = True
     _set_returning_user_phase(session, "location_decision")
     step = returning_saved_location_step(session)
+    if not step:
+        await _send_willing_to_create_project_prompt(session, phone_number)
+        return
     outbound = enrich_whatsapp_mcq_step(dict(step))
     context_body = str(step.get("prompt") or returning_saved_location_context(session)).strip()
     field = str(outbound.get("field") or RETURNING_LOCATION_FIELD)
@@ -682,6 +699,7 @@ async def _send_returning_user_reentry_prompt(session: Session, phone_number: st
     _mark_say_hi_gate_complete(session)
     await save_session(session)
     try:
+        await _hydrate_returning_profile_from_tatva(session, force=True)
         greeting = _returning_user_greeting_text(session)
         session.add_message(MessageRole.ASSISTANT, greeting)
         await save_session(session)

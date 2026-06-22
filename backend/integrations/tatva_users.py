@@ -68,16 +68,28 @@ def is_unregistered_phone_response(payload: dict[str, Any]) -> bool:
 def _name_from_user(user: dict[str, Any]) -> str:
     direct = (
         user.get("fullName")
+        or user.get("full_name")
         or user.get("name")
         or user.get("displayName")
+        or user.get("userName")
         or ""
     )
     if str(direct).strip():
         return str(direct).strip()
-    first = str(user.get("firstName") or "").strip()
-    last = str(user.get("lastName") or "").strip()
+    first = str(user.get("firstName") or user.get("first_name") or "").strip()
+    last = str(user.get("lastName") or user.get("last_name") or "").strip()
     if first or last:
         return " ".join(part for part in (first, last) if part)
+    profile = user.get("profile")
+    if isinstance(profile, dict):
+        nested = (
+            profile.get("fullName")
+            or profile.get("full_name")
+            or profile.get("name")
+            or ""
+        )
+        if str(nested).strip():
+            return str(nested).strip()
     return ""
 
 
@@ -112,7 +124,10 @@ def _apply_profile_fields(
     city: str = "",
     property_location: str = "",
 ) -> None:
-    if name and not session.extracted_fields.get("client_name"):
+    from backend.integrations.returning_user_flow import is_placeholder_client_name
+
+    existing_name = str(session.extracted_fields.get("client_name") or "").strip()
+    if name and (not existing_name or is_placeholder_client_name(existing_name)):
         se.mark_field_validated(session, "client_name", name)
     if email and not session.extracted_fields.get("email"):
         if se.is_valid_gmail_address(email):
@@ -146,9 +161,12 @@ def _hydrate_profile_from_user(session: Session, user: dict[str, Any]) -> None:
 
 async def hydrate_returning_user_profile(session: Session, *, force: bool = False) -> None:
     """Load returning-user profile and addresses from Tatva PM API only."""
+    from backend.integrations.returning_user_flow import resolve_returning_client_name
+
+    existing_name = resolve_returning_client_name(session)
     if (
         not force
-        and session.extracted_fields.get("client_name")
+        and existing_name
         and session.extracted_fields.get("tatva_user_id")
         and (
             session.extracted_fields.get("city")
@@ -167,6 +185,13 @@ async def hydrate_returning_user_profile(session: Session, *, force: bool = Fals
             session.flow_state["tatva_user_registered"] = True
             user = data.get("user") or {}
             _hydrate_profile_from_user(session, user)
+
+    if not resolve_returning_client_name(session) and session.flow_state.get("tatva_user_registered"):
+        lookup = await register_phone_user(phone, session_id=session.session_id)
+        if lookup:
+            lookup_user = (lookup.get("data") or {}).get("user") or {}
+            if lookup_user:
+                _hydrate_profile_from_user(session, lookup_user)
 
     if session.extracted_fields.get("tatva_user_id"):
         from backend.integrations.tatva_user_addresses import load_user_addresses_for_session
