@@ -6,6 +6,8 @@ from backend.agents.chat.twilio_client import (
     _twilio_list_row,
     enrich_whatsapp_mcq_step,
 )
+from backend.agents.chat.whatsapp_interactive import build_inbound_user_message
+from backend.utils.session_idle import is_greeting_message, is_pure_greeting_message
 
 
 def test_short_label_includes_description():
@@ -120,3 +122,27 @@ def test_format_mcq_options_display_shows_all_options():
     assert "3. Structural Repair / Retrofit" in text
     assert "4. Farmhouse / Villa Construction" in text
     assert "5. Commercial" in text
+
+
+def test_build_inbound_user_message_prefers_address_line_in_quoted_reply():
+    body = (
+        "Hi there 👋 Great to see you again!\n"
+        "Choose your saved location\n"
+        "Address 1"
+    )
+    assert build_inbound_user_message(
+        body=body,
+        list_id="69d393184d8aa84fc60b95b1",
+        interactive_data='{"list_reply":{"id":"69d393184d8aa84fc60b95b1"}}',
+    ) == "Address 1"
+
+
+def test_quoted_eva_welcome_is_not_treated_as_greeting():
+    quoted = (
+        "Hi there 👋 Great to see you again! I'm EVA, your TatvaOps assistant.\n"
+        "Choose your saved location\n"
+        "Address 1"
+    )
+    assert is_pure_greeting_message(quoted) is False
+    assert is_greeting_message(quoted) is False
+    assert is_pure_greeting_message("Hi there") is True

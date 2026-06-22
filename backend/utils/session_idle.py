@@ -73,8 +73,20 @@ def _greeting_stem(norm: str) -> bool:
 
 def is_greeting_message(message: str) -> bool:
     """Hi/Hello/Namaste-style openers — not names like Hitesh or Vidya."""
+    return is_pure_greeting_message(message)
+
+
+def is_pure_greeting_message(message: str) -> bool:
+    """
+    Short typed greetings only — not quoted WhatsApp replies that embed EVA welcome text.
+    """
     raw = (message or "").strip()
     if not raw:
+        return False
+    lines = [ln.strip() for ln in raw.replace("\r", "\n").split("\n") if ln.strip()]
+    if len(lines) > 2:
+        return False
+    if len(raw) > 80:
         return False
     norm = _normalize_msg(raw)
     if _greeting_stem(norm):

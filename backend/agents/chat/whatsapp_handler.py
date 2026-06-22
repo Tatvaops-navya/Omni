@@ -100,6 +100,85 @@ def _recent_returning_greeting_duplicate(
     return elapsed < RETURNING_GREETING_DEDUP_SEC
 
 
+def _is_interactive_inbound(
+    *,
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
+) -> bool:
+    return bool((list_id or "").strip() or (button_payload or "").strip() or (button_text or "").strip())
+
+
+def _is_waiting_for_returning_location(session: Session) -> bool:
+    if session.flow_state.get("awaiting_returning_location_decision"):
+        return True
+    if session.flow_state.get(RETURNING_MCQ_SENT_FIELD) == RETURNING_LOCATION_FIELD:
+        return True
+    return _returning_user_phase(session) == "location_decision"
+
+
+def _inbound_looks_like_returning_location_reply(
+    session: Session,
+    user_message: str,
+    *,
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
+) -> bool:
+    if not _is_waiting_for_returning_location(session):
+        return False
+    if _is_interactive_inbound(
+        list_id=list_id,
+        button_payload=button_payload,
+        button_text=button_text,
+    ):
+        return True
+    return parse_returning_location_choice(user_message, session=session) is not None
+
+
+async def _handle_returning_location_decision(
+    session: Session,
+    phone_number: str,
+    user_message: str,
+    *,
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
+) -> bool:
+    """Advance returning-user flow after a saved-location list tap. Returns True when handled."""
+    if not _is_waiting_for_returning_location(session):
+        return False
+
+    choice = parse_returning_location_choice(
+        user_message,
+        list_id=list_id,
+        button_payload=button_payload,
+        button_text=button_text,
+        session=session,
+    )
+    if choice is None:
+        if not (user_message or list_id or button_payload or button_text):
+            return True
+        hint = (
+            "Please tap *Choose option* above and pick one of your saved locations, "
+            "or *Other address*."
+            if get_cached_user_addresses(session)
+            else "Please tap *Choose option* above and pick *Other address*."
+        )
+        await send_whatsapp_message(to=phone_number, body=hint)
+        return True
+
+    session.flow_state.pop("awaiting_returning_location_decision", None)
+    session.flow_state.pop(RETURNING_MCQ_SENT_FIELD, None)
+    _set_returning_user_phase(session, "")
+    session.add_message(MessageRole.USER, user_message or choice)
+    apply_returning_location_choice(session, choice)
+    await save_session(session)
+    await supabase_store.upsert_session_log(session)
+    await _send_willing_to_create_project_prompt(session, phone_number)
+    return True
+
+
 def _returning_user_phase(session: Session) -> str:
     return str(session.flow_state.get(RETURNING_USER_PHASE) or "")
 
@@ -426,6 +505,7 @@ def _reset_stale_flow_for_returning_greeting(session: Session) -> None:
         "returning_greeting_sent_at",
         "last_returning_greeting_msg",
         "last_returning_greeting_dedup_key",
+        RETURNING_MCQ_SENT_FIELD,
         "project_declined",
     ):
         session.flow_state.pop(key, None)
@@ -464,11 +544,22 @@ async def _try_registered_user_greeting_restart(
     user_message: str,
     *,
     message_sid: str = "",
+    list_id: str = "",
+    button_payload: str = "",
+    button_text: str = "",
 ) -> bool:
     """
     Registered Tatva user said hi/hello — greet by name and offer edit Yes/No.
     Handles stale sessions stuck at final review or mid-flow.
     """
+    if session and _inbound_looks_like_returning_location_reply(
+        session,
+        user_message,
+        list_id=list_id,
+        button_payload=button_payload,
+        button_text=button_text,
+    ):
+        return False
     if not is_greeting_message(user_message):
         return False
 
@@ -900,6 +991,16 @@ async def _handle_whatsapp_message_impl(
     if session and (user_message or num_media > 0):
         _touch_session_activity(session)
 
+    if session and await _handle_returning_location_decision(
+        session,
+        phone_number,
+        user_message,
+        list_id=list_id,
+        button_payload=button_payload,
+        button_text=button_text,
+    ):
+        return
+
     # In-progress chat idle > N minutes — reset; registered users get the welcome-back flow.
     if session and (user_message or num_media > 0) and is_session_idle_expired(session):
         stale_session = session
@@ -907,7 +1008,8 @@ async def _handle_whatsapp_message_impl(
         await start_fresh_session(session_id, phone_number, reason="idle_timeout")
         session = await get_session(session_id)
         if user_message and await _try_registered_user_greeting_restart(
-            session, session_id, phone_number, user_message, message_sid=message_sid
+            session, session_id, phone_number, user_message, message_sid=message_sid,
+            list_id=list_id, button_payload=button_payload, button_text=button_text,
         ):
             return
         reply = build_idle_fresh_start_reply(stale_session, user_message)
@@ -920,7 +1022,8 @@ async def _handle_whatsapp_message_impl(
 
     # Registered user said hi/hello — always welcome back by name (even from stale final review).
     if user_message and await _try_registered_user_greeting_restart(
-        session, session_id, phone_number, user_message, message_sid=message_sid
+        session, session_id, phone_number, user_message, message_sid=message_sid,
+        list_id=list_id, button_payload=button_payload, button_text=button_text,
     ):
         return
 
@@ -1015,31 +1118,6 @@ async def _handle_whatsapp_message_impl(
             )
             await send_whatsapp_message(to=phone_number, body=ack)
             return
-
-    if session.flow_state.get("awaiting_returning_location_decision"):
-        choice = parse_returning_location_choice(
-            user_message,
-            list_id=list_id,
-            button_payload=button_payload,
-            button_text=button_text,
-            session=session,
-        )
-        if choice is None:
-            if not (user_message or list_id or button_payload or button_text):
-                return
-            hint = (
-                "Please tap *Choose option* above and pick one of your saved locations, "
-                "or *Other address*."
-                if get_cached_user_addresses(session)
-                else "Please tap *Choose option* above and pick *Other address*."
-            )
-            await send_whatsapp_message(to=phone_number, body=hint)
-            return
-        session.flow_state.pop("awaiting_returning_location_decision", None)
-        _set_returning_user_phase(session, "")
-        apply_returning_location_choice(session, choice)
-        await _send_willing_to_create_project_prompt(session, phone_number)
-        return
 
     if not user_message:
         return
