@@ -150,7 +150,7 @@ def returning_saved_location_step(session: Session) -> dict[str, Any]:
         "type": "mcq",
         "field": RETURNING_LOCATION_FIELD,
         "prompt": context,
-        "twilio_list_prompt": context,
+        "twilio_list_prompt": "Is this your location?",
         "options": [
             {"label": "Yes, this is correct", "value": "confirm_saved"},
             {"label": "Other address", "value": "add_new_location"},
