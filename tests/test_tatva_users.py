@@ -538,6 +538,47 @@ async def test_hydrate_overwrites_placeholder_client_name(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_hydrate_force_overwrites_stale_email(monkeypatch):
+    from backend.integrations.tatva_users import hydrate_returning_user_profile
+    from backend.intelligence import stage_engine as se
+
+    async def fake_check(phone_number, *, session_id="unknown"):
+        return {
+            "success": True,
+            "data": {
+                "isUser": True,
+                "isVendor": False,
+                "user": {
+                    "_id": "abc",
+                    "fullName": "Madhunala Navya shree",
+                    "email": "navya.updated@gmail.com",
+                },
+            },
+        }
+
+    async def fake_load_addresses(session, *, force=False):
+        return []
+
+    monkeypatch.setattr("backend.integrations.tatva_users.check_phone_user", fake_check)
+    monkeypatch.setattr(
+        "backend.integrations.tatva_user_addresses.load_user_addresses_for_session",
+        fake_load_addresses,
+    )
+
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+918639097638",
+        channel="whatsapp",
+    )
+    se.mark_field_validated(session, "client_name", "madhunala")
+    se.mark_field_validated(session, "email", "")
+
+    await hydrate_returning_user_profile(session, force=True)
+    assert session.extracted_fields.get("client_name") == "Madhunala Navya shree"
+    assert session.extracted_fields.get("email") == "navya.updated@gmail.com"
+
+
+@pytest.mark.asyncio
 async def test_yes_on_create_project_does_not_register(monkeypatch):
     called = {"count": 0}
 

@@ -24,8 +24,11 @@ from backend.integrations.tatva_users import (
     VENDOR_BLOCKED_MESSAGE,
 )
 from backend.integrations.returning_user_flow import (
+    advance_after_returning_location_choice,
+    ensure_returning_reenquiry_prepared,
     existing_user_welcome_text,
     parse_returning_location_choice,
+    position_session_at_next_client_detail,
     position_session_for_project_decision,
     apply_returning_location_choice,
     prepare_returning_user_for_project_decision,
@@ -33,7 +36,6 @@ from backend.integrations.returning_user_flow import (
     returning_saved_location_context,
     returning_saved_location_step,
     has_returning_saved_addresses,
-    saved_location_display,
     WILLING_TO_CREATE_PROJECT_FALLBACK,
 )
 from backend.integrations.tatva_user_addresses import get_cached_user_addresses
@@ -210,10 +212,15 @@ async def _handle_returning_location_decision(
     _set_returning_user_phase(session, "")
     _mark_say_hi_gate_complete(session)
     session.add_message(MessageRole.USER, user_message or choice)
-    apply_returning_location_choice(session, choice)
+    step = advance_after_returning_location_choice(session, choice)
     await save_session(session)
     await supabase_store.upsert_session_log(session)
-    await _send_willing_to_create_project_prompt(session, phone_number)
+    if step and step.get("field") == "willing_to_create_project":
+        await _send_willing_to_create_project_prompt(session, phone_number)
+    elif step:
+        await _send_client_detail_step_prompt(session, phone_number, step)
+    else:
+        await _send_willing_to_create_project_prompt(session, phone_number)
     return True
 
 
@@ -536,6 +543,7 @@ def _reset_stale_flow_for_returning_greeting(session: Session) -> None:
         "last_returning_greeting_msg",
         "last_returning_greeting_dedup_key",
         RETURNING_MCQ_SENT_FIELD,
+        "returning_reenquiry_prepared",
         "project_declined",
     ):
         session.flow_state.pop(key, None)
@@ -646,6 +654,34 @@ def _returning_user_greeting_text(session: Session) -> str:
     return existing_user_welcome_text(session)
 
 
+async def _send_client_detail_step_prompt(
+    session: Session,
+    phone_number: str,
+    step: dict,
+) -> None:
+    """Send the next client-details question (city, property, contact time, or project)."""
+    _touch_session_activity(session)
+    field = str(step.get("field") or "")
+    prompt = str(step.get("prompt") or "").strip()
+    if field == "willing_to_create_project":
+        await _send_willing_to_create_project_prompt(session, phone_number)
+        return
+
+    outbound = enrich_whatsapp_mcq_step(dict(step)) if step.get("type") == "mcq" else step
+    if step.get("type") == "mcq" and mcq_uses_interactive_delivery(outbound):
+        session.flow_state[RETURNING_MCQ_SENT_FIELD] = field
+        session.add_message(MessageRole.ASSISTANT, prompt)
+        await save_session(session)
+        await supabase_store.upsert_session_log(session)
+        await _send_returning_interactive_mcq_once(session, phone_number, outbound)
+        return
+
+    session.add_message(MessageRole.ASSISTANT, prompt)
+    await save_session(session)
+    await supabase_store.upsert_session_log(session)
+    await send_whatsapp_message(to=phone_number, body=prompt)
+
+
 async def _send_returning_location_prompt(session: Session, phone_number: str) -> None:
     from backend.integrations.tatva_user_addresses import load_user_addresses_for_session
 
@@ -653,14 +689,10 @@ async def _send_returning_location_prompt(session: Session, phone_number: str) -
     _mark_say_hi_gate_complete(session)
 
     if not has_returning_saved_addresses(session):
-        notice = saved_location_display(session).strip()
-        if notice:
-            session.add_message(MessageRole.ASSISTANT, notice)
-            await save_session(session)
-            await supabase_store.upsert_session_log(session)
-            await send_whatsapp_message(to=phone_number, body=notice)
-            await asyncio.sleep(1.5)
-        await _send_willing_to_create_project_prompt(session, phone_number)
+        ensure_returning_reenquiry_prepared(session)
+        step = position_session_at_next_client_detail(session)
+        if step:
+            await _send_client_detail_step_prompt(session, phone_number, step)
         return
 
     session.flow_state["awaiting_returning_location_decision"] = True

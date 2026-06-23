@@ -123,26 +123,31 @@ def _apply_profile_fields(
     email: str = "",
     city: str = "",
     property_location: str = "",
+    force: bool = False,
 ) -> None:
     from backend.integrations.returning_user_flow import is_placeholder_client_name
 
     existing_name = str(session.extracted_fields.get("client_name") or "").strip()
-    if name and (not existing_name or is_placeholder_client_name(existing_name)):
+    if name and (force or not existing_name or is_placeholder_client_name(existing_name)):
         se.mark_field_validated(session, "client_name", name)
-    if email and not session.extracted_fields.get("email"):
+
+    existing_email = str(session.extracted_fields.get("email") or "").strip()
+    email_missing = not existing_email or existing_email.lower() in {"skipped", "skip"}
+    if email and (force or email_missing):
         if se.is_valid_email_address(email):
             se.mark_field_validated(session, "email", email)
         else:
             session.extracted_fields["email"] = email
             if "email" not in session.completed_fields:
                 session.completed_fields.append("email")
-    if city and not session.extracted_fields.get("city"):
+
+    if city and (force or not session.extracted_fields.get("city")):
         se.mark_field_validated(session, "city", city)
-    if property_location and not session.extracted_fields.get("property_location"):
+    if property_location and (force or not session.extracted_fields.get("property_location")):
         se.mark_field_validated(session, "property_location", property_location)
 
 
-def _hydrate_profile_from_user(session: Session, user: dict[str, Any]) -> None:
+def _hydrate_profile_from_user(session: Session, user: dict[str, Any], *, force: bool = False) -> None:
     user_id = user.get("_id")
     if user_id and not session.extracted_fields.get("tatva_user_id"):
         session.extracted_fields["tatva_user_id"] = str(user_id)
@@ -156,6 +161,7 @@ def _hydrate_profile_from_user(session: Session, user: dict[str, Any]) -> None:
         email=str(user.get("email") or "").strip(),
         city=city,
         property_location=prop,
+        force=force,
     )
 
 
@@ -184,14 +190,14 @@ async def hydrate_returning_user_profile(session: Session, *, force: bool = Fals
             session.flow_state["tatva_phone_is_user"] = True
             session.flow_state["tatva_user_registered"] = True
             user = data.get("user") or {}
-            _hydrate_profile_from_user(session, user)
+            _hydrate_profile_from_user(session, user, force=force)
 
     if not resolve_returning_client_name(session) and session.flow_state.get("tatva_user_registered"):
         lookup = await register_phone_user(phone, session_id=session.session_id)
         if lookup:
             lookup_user = (lookup.get("data") or {}).get("user") or {}
             if lookup_user:
-                _hydrate_profile_from_user(session, lookup_user)
+                _hydrate_profile_from_user(session, lookup_user, force=force)
 
     if session.extracted_fields.get("tatva_user_id"):
         from backend.integrations.tatva_user_addresses import load_user_addresses_for_session

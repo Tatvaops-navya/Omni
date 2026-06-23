@@ -3,6 +3,7 @@ import pytest
 
 from backend.integrations.tatva_user_addresses import (
     normalize_user_addresses,
+    profile_fields_from_address,
     saved_addresses_display,
 )
 from backend.integrations.returning_user_flow import (
@@ -33,6 +34,17 @@ SAMPLE_ADDRESSES = [
         "subTypeLabel": "Work",
     },
 ]
+
+
+def test_profile_fields_from_address_maps_location_and_property():
+    fields = profile_fields_from_address({
+        "formattedAddress": "Baner, Pune, Maharashtra 411045",
+        "locality": "Baner",
+        "district": "Pune",
+        "state": "Maharashtra",
+    })
+    assert fields["city"] == "Pune, Maharashtra"
+    assert fields["property_location"] == "Baner, Pune"
 
 
 def test_normalize_keeps_all_formatted_addresses():
@@ -143,8 +155,8 @@ def test_parse_and_apply_address_selection():
     )
     assert choice == "69ca149a76447fb2e241a65d"
     apply_returning_location_choice(session, choice)
-    assert "HSR Layout" in session.extracted_fields["property_location"]
     assert session.extracted_fields["city"] == "Bengaluru Urban"
+    assert session.extracted_fields["property_location"] == "Bengaluru, Bengaluru Urban"
 
 
 @pytest.mark.asyncio
@@ -190,14 +202,21 @@ async def test_send_returning_location_prompt_uses_context_then_list(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_send_returning_location_prompt_skips_to_project_when_no_addresses(monkeypatch):
+async def test_returning_location_prompt_without_addresses_asks_city(monkeypatch):
     from backend.agents.chat import whatsapp_handler as wh
 
-    session = Session(session_id="t", phone_number="whatsapp:+91999", channel="whatsapp")
-    session.extracted_fields["tatva_user_id"] = "user123"
-    session.flow_state["tatva_addresses_api_empty"] = True
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+    )
+    session.extracted_fields.update({
+        "client_name": "Navya",
+        "tatva_user_id": "user123",
+    })
+
     sent_messages: list[str] = []
-    willing_calls: list[str] = []
+    detail_calls: list[dict] = []
 
     async def fake_load(_session, *, force=False):
         return []
@@ -212,8 +231,8 @@ async def test_send_returning_location_prompt_skips_to_project_when_no_addresses
         sent_messages.append(body)
         return True
 
-    async def fake_send_willing(_session, phone):
-        willing_calls.append(phone)
+    async def fake_send_detail(_session, phone, step):
+        detail_calls.append(step)
 
     monkeypatch.setattr(
         "backend.integrations.tatva_user_addresses.load_user_addresses_for_session",
@@ -222,12 +241,13 @@ async def test_send_returning_location_prompt_skips_to_project_when_no_addresses
     monkeypatch.setattr(wh, "save_session", fake_save_session)
     monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
     monkeypatch.setattr(wh, "send_whatsapp_message", fake_send_whatsapp_message)
-    monkeypatch.setattr(wh, "_send_willing_to_create_project_prompt", fake_send_willing)
+    monkeypatch.setattr(wh, "_send_client_detail_step_prompt", fake_send_detail)
 
     await wh._send_returning_location_prompt(session, "whatsapp:+91999")
 
-    assert sent_messages == ["No response from API."]
-    assert willing_calls == ["whatsapp:+91999"]
+    assert sent_messages == []
+    assert detail_calls
+    assert detail_calls[0].get("field") == "city"
     assert session.flow_state.get("awaiting_returning_location_decision") is not True
 
 
