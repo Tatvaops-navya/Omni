@@ -1212,7 +1212,7 @@ async def _handle_whatsapp_message_impl(
             if chosen == "client_name":
                 prompt = "Please type your name."
             elif chosen == "email":
-                prompt = "Please type your Gmail address (or reply skip)."
+                prompt = "Please type your email address (or reply skip)."
             else:
                 prompt = "Where is your property located? (City, Locality)"
             await save_session(session)
@@ -1232,10 +1232,10 @@ async def _handle_whatsapp_message_impl(
         if field == "email":
             if text.lower() in {"skip", "none"}:
                 se.mark_field_validated(session, "email", "")
-            elif not se.is_valid_gmail_address(text):
+            elif not se.is_valid_email_address(text):
                 await send_whatsapp_message(
                     to=phone_number,
-                    body="Please enter a valid Gmail address, or reply skip.",
+                    body="Please enter a valid email address, or reply skip.",
                 )
                 return
             else:

@@ -295,7 +295,7 @@ def complete_known_client_details_for_returning_user(
         se.mark_field_validated(session, "client_name", RETURNING_MISSING_NAME_PLACEHOLDER)
 
     email = preserved.get("email", "")
-    if email and se.is_valid_gmail_address(email):
+    if email and se.is_valid_email_address(email):
         se.mark_field_validated(session, "email", email)
     else:
         se.mark_field_validated(session, "email", "")
@@ -408,7 +408,7 @@ async def complete_existing_user_edit_email(session: Session, text: str) -> tupl
     if raw.lower() in {"skip", "none", "later"}:
         session.mark_field_complete("email", "")
     elif raw:
-        if "@" not in raw or "." not in raw.split("@")[-1]:
+        if not se.is_valid_email_address(raw):
             return None, "Please enter a valid email address, or reply *skip*."
         session.mark_field_complete("email", raw)
     else:

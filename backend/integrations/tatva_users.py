@@ -130,7 +130,7 @@ def _apply_profile_fields(
     if name and (not existing_name or is_placeholder_client_name(existing_name)):
         se.mark_field_validated(session, "client_name", name)
     if email and not session.extracted_fields.get("email"):
-        if se.is_valid_gmail_address(email):
+        if se.is_valid_email_address(email):
             se.mark_field_validated(session, "email", email)
         else:
             session.extracted_fields["email"] = email
@@ -494,7 +494,7 @@ async def register_new_tatva_user_for_session(session: Session) -> Optional[str]
     session.flow_state["tatva_register_attempted"] = True
 
     email_raw = str(session.extracted_fields.get("email") or "").strip()
-    email = email_raw if se.is_valid_gmail_address(email_raw) else None
+    email = email_raw if se.is_valid_email_address(email_raw) else None
 
     phone = _session_phone(session)
     payload = await register_phone_user(
