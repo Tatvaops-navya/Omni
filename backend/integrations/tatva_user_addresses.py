@@ -67,18 +67,25 @@ def address_list_label(addr: dict[str, Any]) -> str:
 
 
 def profile_fields_from_address(addr: dict[str, Any]) -> dict[str, str]:
-    prop = formatted_address_text(addr)
-    district = str(addr.get("district") or "").strip()
+    """Map a Tatva saved address to city + full property location for enquiry summary."""
+    full_address = formatted_address_text(addr)
     locality = str(addr.get("locality") or "").strip()
+    district = str(addr.get("district") or "").strip()
     state = str(addr.get("state") or "").strip()
 
-    city_parts = [part for part in (district, state) if part]
-    city = ", ".join(city_parts) if city_parts else (locality or prop.split(",")[0].strip())
+    city_parts = [part for part in (locality, state) if part]
+    if city_parts:
+        city = ", ".join(city_parts)
+    elif district and state:
+        city = f"{district}, {state}"
+    elif district:
+        city = district
+    elif locality:
+        city = locality
+    else:
+        city = full_address.split(",")[0].strip() if full_address else ""
 
-    property_parts = [part for part in (locality, district) if part]
-    property_location = ", ".join(property_parts) if property_parts else prop
-
-    return {"city": city, "property_location": property_location}
+    return {"city": city, "property_location": full_address}
 
 
 async def fetch_user_addresses(
