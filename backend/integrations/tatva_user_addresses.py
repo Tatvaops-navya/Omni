@@ -67,9 +67,18 @@ def address_list_label(addr: dict[str, Any]) -> str:
 
 
 def profile_fields_from_address(addr: dict[str, Any]) -> dict[str, str]:
-    city = str(addr.get("district") or addr.get("locality") or "").strip()
     prop = formatted_address_text(addr)
-    return {"city": city or prop.split(",")[0].strip(), "property_location": prop}
+    district = str(addr.get("district") or "").strip()
+    locality = str(addr.get("locality") or "").strip()
+    state = str(addr.get("state") or "").strip()
+
+    city_parts = [part for part in (district, state) if part]
+    city = ", ".join(city_parts) if city_parts else (locality or prop.split(",")[0].strip())
+
+    property_parts = [part for part in (locality, district) if part]
+    property_location = ", ".join(property_parts) if property_parts else prop
+
+    return {"city": city, "property_location": property_location}
 
 
 async def fetch_user_addresses(

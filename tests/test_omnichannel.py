@@ -206,6 +206,7 @@ def test_returning_user_steps_and_greeting():
     session.extracted_fields["email"] = "pramod.d@tatvaops.com"
     text = _returning_user_greeting_text(session)
     assert "Hi there John Doe" in text
+    assert "pramod.d@tatvaops.com" in text
     assert "EVA" in text
     assert _first_name("Rahul Sharma") == "Rahul"
 
@@ -286,6 +287,66 @@ async def test_returning_user_reentry_sends_location_then_project(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_location_choice_add_new_location_starts_city_collection(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.SUMMARY_GENERATED,
+        summary_generated=True,
+    )
+    session.extracted_fields.update({
+        "client_name": "Madhu shree",
+        "tatva_user_id": "abc",
+    })
+    session.flow_state["awaiting_returning_location_decision"] = True
+    session.flow_state["existing_user_flow_started"] = True
+
+    detail_calls: list[dict] = []
+    project_calls: list[str] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_upsert_session_log(_session):
+        return None
+
+    async def fake_send_detail(_session, phone, step):
+        detail_calls.append(step)
+
+    async def fake_send_willing(_session, phone):
+        project_calls.append(phone)
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
+    monkeypatch.setattr(wh, "_send_client_detail_step_prompt", fake_send_detail)
+    monkeypatch.setattr(wh, "_send_willing_to_create_project_prompt", fake_send_willing)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_test",
+        "whatsapp:+91999",
+        "",
+        0,
+        [],
+        "Add new location",
+        "",
+        "add_new_location",
+    )
+
+    assert project_calls == []
+    assert detail_calls
+    assert detail_calls[0].get("field") == "city"
+    assert session.flow_state.get("awaiting_returning_location_decision") is None
+    assert session.flow_state.get("returning_wants_new_location") is True
+
+
+@pytest.mark.asyncio
 async def test_location_choice_advances_to_project_creation(monkeypatch):
     from backend.agents.chat import whatsapp_handler as wh
 
@@ -298,11 +359,21 @@ async def test_location_choice_advances_to_project_creation(monkeypatch):
     )
     session.extracted_fields.update({
         "client_name": "Madhu shree",
-        "city": "Hyderabad",
-        "property_location": "Miyapur",
+        "preferred_contact_time": "morning",
         "tatva_user_id": "abc",
     })
+    se.mark_field_validated(session, "preferred_contact_time", "morning")
     session.flow_state["awaiting_returning_location_decision"] = True
+    session.flow_state["existing_user_flow_started"] = True
+    session.flow_state["tatva_user_addresses"] = [
+        {
+            "_id": "addr1",
+            "formattedAddress": "HSR Layout, Bengaluru, Karnataka",
+            "locality": "HSR Layout",
+            "district": "Bengaluru",
+            "state": "Karnataka",
+        },
+    ]
 
     project_calls: list[str] = []
 
@@ -329,14 +400,15 @@ async def test_location_choice_advances_to_project_creation(monkeypatch):
         "",
         0,
         [],
-        "Add new location",
+        "Address 1",
         "",
-        "add_new_location",
+        "addr1",
     )
 
     assert project_calls == ["whatsapp:+91999"]
+    assert session.extracted_fields["city"] == "Bengaluru, Karnataka"
+    assert session.extracted_fields["property_location"] == "HSR Layout, Bengaluru"
     assert session.flow_state.get("awaiting_returning_location_decision") is None
-    assert session.flow_state.get("returning_wants_new_location") is True
 
 
 @pytest.mark.asyncio
@@ -352,10 +424,10 @@ async def test_quoted_location_list_reply_advances_without_greeting_restart(monk
     )
     session.extracted_fields.update({
         "client_name": "Madhu shree",
-        "city": "Hyderabad",
-        "property_location": "Miyapur",
+        "preferred_contact_time": "morning",
         "tatva_user_id": "abc",
     })
+    se.mark_field_validated(session, "preferred_contact_time", "morning")
     session.flow_state["awaiting_returning_location_decision"] = True
     session.flow_state["tatva_phone_checked"] = True
     session.flow_state["existing_user_flow_started"] = True

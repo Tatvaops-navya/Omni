@@ -51,6 +51,27 @@ def display_client_name(session: Session) -> str:
     return resolve_returning_client_name(session)
 
 
+def resolve_returning_client_email(
+    session: Session,
+    preserved: dict[str, str] | None = None,
+) -> str:
+    """Registered user's email when present and valid."""
+    for raw in (
+        (preserved or {}).get("email", ""),
+        str(session.extracted_fields.get("email") or "").strip(),
+    ):
+        candidate = str(raw or "").strip()
+        if not candidate or candidate.lower() in {"skipped", "skip"}:
+            continue
+        if se.is_valid_email_address(candidate):
+            return candidate
+    return ""
+
+
+def display_client_email(session: Session) -> str:
+    return resolve_returning_client_email(session)
+
+
 def clear_placeholder_client_name(session: Session) -> None:
     if is_placeholder_client_name(session.extracted_fields.get("client_name")):
         session.extracted_fields.pop("client_name", None)
@@ -252,7 +273,13 @@ def apply_returning_location_choice(session: Session, choice: str) -> None:
 
 def existing_user_welcome_text(session: Session) -> str:
     full_name = display_client_name(session)
-    greeting = f"Hi there {full_name} 👋" if full_name else "Hi there 👋"
+    email = display_client_email(session)
+    if full_name:
+        greeting = f"Hi there {full_name} 👋"
+    else:
+        greeting = "Hi there 👋"
+    if email:
+        greeting = f"{greeting}\n{email}"
     return (
         f"{greeting}\n\n"
         "Great to see you again! I'm EVA, your TatvaOps assistant.\n\n"
@@ -277,11 +304,29 @@ def collect_returning_user_preserved_profile(session: Session) -> dict[str, str]
     }
 
 
-def complete_known_client_details_for_returning_user(
+def location_fields_complete(session: Session) -> bool:
+    """True when city (location) and property_location are collected for this enquiry."""
+    for field in ("city", "property_location"):
+        value = str(session.extracted_fields.get(field) or "").strip()
+        if not value or value == RETURNING_MISSING_LOCATION_PLACEHOLDER:
+            return False
+        if not se.field_is_complete(session, field):
+            return False
+    return True
+
+
+def clear_returning_location_fields(session: Session) -> None:
+    for field in ("city", "property_location"):
+        session.extracted_fields.pop(field, None)
+        session.completed_fields = [f for f in session.completed_fields if f != field]
+    session.flow_state.pop("selected_tatva_address_id", None)
+
+
+def complete_returning_user_identity_fields(
     session: Session,
     preserved: dict[str, str],
 ) -> None:
-    """Mark profile fields complete so the next step is willing_to_create_project."""
+    """Mark identity/contact fields complete — location is collected separately each enquiry."""
     se.mark_field_validated(session, "ava_intro_shown", True)
     phone = preserved.get("phone", "")
     if phone:
@@ -291,7 +336,6 @@ def complete_known_client_details_for_returning_user(
     if name:
         se.mark_field_validated(session, "client_name", name)
     elif not se.field_is_complete(session, "client_name"):
-        # Internal sentinel so returning users are not re-asked for their name.
         se.mark_field_validated(session, "client_name", RETURNING_MISSING_NAME_PLACEHOLDER)
 
     email = preserved.get("email", "")
@@ -300,6 +344,96 @@ def complete_known_client_details_for_returning_user(
     else:
         se.mark_field_validated(session, "email", "")
 
+    contact = preserved.get("preferred_contact_time", "")
+    if contact:
+        se.mark_field_validated(session, "preferred_contact_time", contact)
+
+
+def ensure_returning_reenquiry_prepared(session: Session) -> None:
+    """Reset prior enquiry data and require fresh location before create-project."""
+    if session.flow_state.get("returning_reenquiry_prepared"):
+        return
+
+    preserved = collect_returning_user_preserved_profile(session)
+    se.clear_prior_enquiry_qualification(session)
+    edit_flow.clear_edit_mode(session)
+    session.conversation_stage = ConversationStage.DETAIL_COLLECTION
+    for key in (
+        "conversation_ended",
+        "final_review_shown",
+        "final_review_outbound_step",
+        "tatva_enquiry_submitted",
+        "tatva_enquiry_summary",
+        "tatva_enquiry_attachments",
+        "tatva_enquiry_id",
+        "project_declined",
+        "tatva_presales_submitted",
+        "presales_pending_flag",
+        "register_phone_pending",
+    ):
+        session.flow_state.pop(key, None)
+    hybrid_flow.init_flow(session)
+    clear_returning_location_fields(session)
+    complete_returning_user_identity_fields(session, preserved)
+    if preserved["tatva_user_id"]:
+        session.extracted_fields["tatva_user_id"] = preserved["tatva_user_id"]
+        if "tatva_user_id" not in session.completed_fields:
+            session.completed_fields.append("tatva_user_id")
+    session.flow_state["returning_edit_flow_complete"] = True
+    session.flow_state["returning_reenquiry_prepared"] = True
+    session.flow_state.pop("current_step_id", None)
+    se.reconcile_session(session)
+
+
+def next_client_detail_step_before_project(session: Session) -> dict[str, Any] | None:
+    """Return the next client_details step before willing_to_create_project."""
+    from backend.intelligence.qualification_builder import build_client_details_steps
+
+    identity_fields = frozenset({"client_name", "email"})
+    for step in build_client_details_steps():
+        field = str(step.get("field") or "")
+        if field == "willing_to_create_project":
+            if location_fields_complete(session) and se.field_is_complete(session, "preferred_contact_time"):
+                return dict(step)
+            return None
+        if field in identity_fields and is_returning_registered_user(session):
+            if se.field_is_complete(session, field):
+                continue
+        if field and not se.field_is_complete(session, field):
+            return dict(step)
+    return None
+
+
+def position_session_at_next_client_detail(session: Session) -> dict[str, Any] | None:
+    """Point the session at city, property location, contact time, or create-project."""
+    ensure_returning_reenquiry_prepared(session)
+    step = next_client_detail_step_before_project(session)
+    if not step:
+        return None
+    session.flow_state["current_step_id"] = step["id"]
+    session.flow_state["current_stage"] = "client_details"
+    if step.get("field"):
+        se.set_current_question(session, str(step["field"]))
+    return step
+
+
+def advance_after_returning_location_choice(session: Session, choice: str) -> dict[str, Any] | None:
+    """Apply a saved-location choice and return the next client-details step."""
+    ensure_returning_reenquiry_prepared(session)
+    if choice == "add_new_location":
+        clear_returning_location_fields(session)
+        session.flow_state["returning_wants_new_location"] = True
+    else:
+        apply_returning_location_choice(session, choice)
+    return position_session_at_next_client_detail(session)
+
+
+def complete_known_client_details_for_returning_user(
+    session: Session,
+    preserved: dict[str, str],
+) -> None:
+    """Mark all client_details complete when skipping straight to service selection."""
+    complete_returning_user_identity_fields(session, preserved)
     city = preserved.get("city", "")
     prop = preserved.get("property_location", "")
     if not city and prop:
@@ -307,11 +441,9 @@ def complete_known_client_details_for_returning_user(
     if not city:
         city = RETURNING_MISSING_LOCATION_PLACEHOLDER
     se.mark_field_validated(session, "city", city)
-
     if not prop:
         prop = RETURNING_MISSING_LOCATION_PLACEHOLDER
     se.mark_field_validated(session, "property_location", prop)
-
     contact = preserved.get("preferred_contact_time", "")
     if not contact:
         contact = "morning"
@@ -343,8 +475,12 @@ def willing_to_create_project_step() -> dict[str, Any] | None:
 
 
 def position_session_for_project_decision(session: Session) -> dict[str, Any] | None:
-    """Prepare returning user and return the project-creation MCQ step."""
-    prepare_returning_user_for_project_decision(session)
+    """Prepare returning user and return the project-creation MCQ when location is complete."""
+    ensure_returning_reenquiry_prepared(session)
+    if not location_fields_complete(session):
+        return None
+    if not se.field_is_complete(session, "preferred_contact_time"):
+        return None
     step = willing_to_create_project_step()
     if not step:
         return None
@@ -355,33 +491,13 @@ def position_session_for_project_decision(session: Session) -> dict[str, Any] | 
 
 
 def prepare_returning_user_for_project_decision(session: Session) -> str:
-    """Clear the prior enquiry and position a returning user at willing_to_create_project."""
-    preserved = collect_returning_user_preserved_profile(session)
-    se.clear_prior_enquiry_qualification(session)
-    edit_flow.clear_edit_mode(session)
-    session.conversation_stage = ConversationStage.DETAIL_COLLECTION
-    for key in (
-        "conversation_ended",
-        "final_review_shown",
-        "final_review_outbound_step",
-        "tatva_enquiry_submitted",
-        "tatva_enquiry_summary",
-        "tatva_enquiry_attachments",
-        "tatva_enquiry_id",
-    ):
-        session.flow_state.pop(key, None)
-    hybrid_flow.init_flow(session)
-    complete_known_client_details_for_returning_user(session, preserved)
-    if preserved["tatva_user_id"]:
-        session.extracted_fields["tatva_user_id"] = preserved["tatva_user_id"]
-        if "tatva_user_id" not in session.completed_fields:
-            session.completed_fields.append("tatva_user_id")
-    session.flow_state["returning_edit_flow_complete"] = True
-    session.flow_state.pop("current_step_id", None)
-    se.reconcile_session(session)
-    step = willing_to_create_project_step()
+    """Clear the prior enquiry and advance to location collection or create-project."""
+    step = position_session_for_project_decision(session)
     if step:
         return str(step.get("twilio_list_prompt") or step.get("prompt") or "").strip()
+    step = position_session_at_next_client_detail(session)
+    if step:
+        return str(step.get("prompt") or "").strip()
     return WILLING_TO_CREATE_PROJECT_FALLBACK
 
 
