@@ -169,6 +169,10 @@ class ConversationController:
             if vendor_msg:
                 session.add_message(MessageRole.ASSISTANT, vendor_msg)
                 return AgentResponse(text=vendor_msg, session=session)
+            if session.flow_state.get("project_declined"):
+                from backend.integrations.tatva_presales import submit_presales_on_project_decline
+
+                await submit_presales_on_project_decline(session)
             session.add_message(MessageRole.ASSISTANT, hybrid_reply)
             return AgentResponse(text=hybrid_reply, session=session)
         return None
