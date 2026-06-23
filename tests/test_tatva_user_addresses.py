@@ -43,8 +43,22 @@ def test_profile_fields_from_address_maps_location_and_property():
         "district": "Pune",
         "state": "Maharashtra",
     })
-    assert fields["city"] == "Pune, Maharashtra"
-    assert fields["property_location"] == "Baner, Pune"
+    assert fields["city"] == "Baner, Maharashtra"
+    assert fields["property_location"] == "Baner, Pune, Maharashtra 411045"
+
+
+def test_profile_fields_from_address_uses_full_formatted_address_for_hsr_layout():
+    fields = profile_fields_from_address({
+        "formattedAddress": (
+            "384, 9th Main Rd, 7th Sector, HSR Layout, Bengaluru, Karnataka 560102, India"
+        ),
+        "locality": "Bengaluru",
+        "district": "Bengaluru Urban",
+    })
+    assert fields["city"] == "Bengaluru"
+    assert fields["property_location"] == (
+        "384, 9th Main Rd, 7th Sector, HSR Layout, Bengaluru, Karnataka 560102, India"
+    )
 
 
 def test_normalize_keeps_all_formatted_addresses():
@@ -155,8 +169,10 @@ def test_parse_and_apply_address_selection():
     )
     assert choice == "69ca149a76447fb2e241a65d"
     apply_returning_location_choice(session, choice)
-    assert session.extracted_fields["city"] == "Bengaluru Urban"
-    assert session.extracted_fields["property_location"] == "Bengaluru, Bengaluru Urban"
+    assert session.extracted_fields["city"] == "Bengaluru"
+    assert session.extracted_fields["property_location"] == (
+        "383, 9th Main Rd, HSR Layout, Bengaluru, Karnataka 560102, India"
+    )
 
 
 @pytest.mark.asyncio
