@@ -47,7 +47,7 @@ def test_client_confirmation_excludes_internal_summary_fields():
     assert "Property location:" in text
     assert "https://tatvaops.com/" not in text
     assert "add your address" not in text.lower()
-    assert "https://withtatva.ai/" in address_cta
+    assert "https://withtatva.ai/my-projects" in address_cta
     assert "add your address" in address_cta.lower()
 
 
