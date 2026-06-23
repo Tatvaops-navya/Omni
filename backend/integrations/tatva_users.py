@@ -466,8 +466,8 @@ async def update_tatva_user_profile_for_session(session: Session) -> Optional[st
 
 async def register_new_tatva_user_for_session(session: Session) -> Optional[str]:
     """
-    Register a new Tatva user after client name and email (optional) are collected.
-    Returns VENDOR_BLOCKED_MESSAGE when isVendor is true.
+    Register a new Tatva user at the create-project Yes/No step once profile
+    fields are collected. Returns VENDOR_BLOCKED_MESSAGE when isVendor is true.
     """
     if session.flow_state.get("vendor_blocked"):
         return VENDOR_BLOCKED_MESSAGE
@@ -486,6 +486,15 @@ async def register_new_tatva_user_for_session(session: Session) -> Optional[str]
         return None
 
     if not se.field_is_complete(session, "email"):
+        return None
+
+    if not se.field_is_complete(session, "city"):
+        return None
+
+    if not se.field_is_complete(session, "property_location"):
+        return None
+
+    if not se.field_is_complete(session, "willing_to_create_project"):
         return None
 
     if session.flow_state.get("tatva_register_attempted"):
@@ -554,7 +563,7 @@ async def register_new_tatva_user_for_session(session: Session) -> Optional[str]
 async def register_tatva_user_for_session(session: Session) -> Optional[str]:
     """
     Ensure Tatva user exists for the session.
-    New users are registered after name + email; existing users are hydrated from check-phone.
+    New users are registered at the create-project step; existing users are hydrated from check-phone.
     """
     if session.flow_state.get("vendor_blocked"):
         return VENDOR_BLOCKED_MESSAGE

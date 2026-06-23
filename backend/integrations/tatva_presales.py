@@ -1,24 +1,33 @@
 """
-Submit presales lead when a user declines project creation.
+Submit presales lead after the create-project Yes/No step.
 POST /admin/api/admin/presales
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
 from backend.config import get_settings
 from backend.integrations.returning_user_flow import resolve_returning_client_name
 from backend.integrations.tatva_users import TATVA_HTTP_HEADERS, normalize_phone_for_tatva
-from backend.intelligence import stage_engine as se
 from backend.schemas.session import Session
 from backend.utils.logger import log_event
 
 PRESALES_PATH = "/admin/api/admin/presales"
+PRESALES_FLAG_HIGH = "high"
+PRESALES_FLAG_LOW = "low"
 
 
-def build_presales_payload(session: Session) -> dict[str, str]:
+def presales_flag_for_project_choice(value: Any) -> str:
+    """Map willing_to_create_project answer to Tatva presales flag."""
+    choice = str(value or "").strip().lower()
+    if choice in ("no", "n"):
+        return PRESALES_FLAG_LOW
+    return PRESALES_FLAG_HIGH
+
+
+def build_presales_payload(session: Session, *, flag: str) -> dict[str, str]:
     """Map session profile fields to Tatva presales API body."""
     phone = normalize_phone_for_tatva(
         str(session.extracted_fields.get("phone_number") or session.phone_number or "")
@@ -35,6 +44,7 @@ def build_presales_payload(session: Session) -> dict[str, str]:
         "phoneNumber": phone,
         "location": location,
         "propertyLocation": property_location,
+        "flag": flag,
     }
 
 
@@ -49,17 +59,15 @@ def _presales_headers() -> dict[str, str]:
     return headers
 
 
-async def submit_presales_on_project_decline(session: Session) -> bool:
+async def submit_presales_lead(session: Session, *, flag: str) -> bool:
     """
-    POST presales lead when willing_to_create_project is No.
+    POST presales lead after willing_to_create_project is answered.
     Idempotent per session — skips if already submitted.
     """
-    if not session.flow_state.get("project_declined"):
-        return False
     if session.flow_state.get("tatva_presales_submitted"):
         return True
 
-    body = build_presales_payload(session)
+    body = build_presales_payload(session, flag=flag)
     if not body.get("phoneNumber"):
         await log_event(
             "API_ERROR",
@@ -86,6 +94,7 @@ async def submit_presales_on_project_decline(session: Session) -> bool:
             "api": "tatva_presales",
             "url": url,
             "phone": body.get("phoneNumber"),
+            "flag": flag,
             "has_name": bool(body.get("name")),
             "has_email": bool(body.get("email")),
         },
@@ -135,14 +144,21 @@ async def submit_presales_on_project_decline(session: Session) -> bool:
         return False
 
     session.flow_state["tatva_presales_submitted"] = True
-    se.mark_field_validated(session, "willing_to_create_project", "no")
     await log_event(
         "TATVA_PRESALES_SUBMIT_OK",
         session_id=session.session_id,
         data={
             "api": "tatva_presales",
             "phone": body.get("phoneNumber"),
+            "flag": flag,
             "message": payload.get("message"),
         },
     )
     return True
+
+
+async def submit_presales_on_project_decline(session: Session) -> bool:
+    """Backward-compatible wrapper for decline-only callers."""
+    if not session.flow_state.get("project_declined"):
+        return False
+    return await submit_presales_lead(session, flag=PRESALES_FLAG_LOW)
