@@ -539,7 +539,7 @@ def process_edit_turn(
             elif not text or lower in _SKIP_WORDS:
                 prompt = _edit_value_prompt(session, field, qstep)
                 return prompt, None, True
-            elif field == "email" and not se.is_valid_gmail_address(text):
+            elif field == "email" and not se.is_valid_email_address(text):
                 return hybrid_flow.invalid_email_reply(), None, True
             else:
                 value = text

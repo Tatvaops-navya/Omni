@@ -83,20 +83,34 @@ def test_stage_advances_one_at_a_time():
     assert after == "client_details"
 
 
-def test_valid_gmail_address_accepted():
-    assert se.is_valid_gmail_address("vidya@gmail.com")
-    assert se.is_valid_gmail_address("Vidya.Moolehatty@gmail.com")
+def test_valid_email_address_accepted():
+    accepted = [
+        "vidya@gmail.com",
+        "Vidya.Moolehatty@gmail.com",
+        "subramanyam.p@withtatva.ai",
+        "name@yahoo.com",
+        "user@company.com",
+        "contact@my-company.org",
+        "first.last@mail.company-name.co.in",
+        "employee@sub.domain.example.com",
+        "user_name@my_company.com",
+        "person@outlook.com",
+        "person@hotmail.com",
+        "info@tatvaops.in",
+    ]
+    for email in accepted:
+        assert se.is_valid_email_address(email), email
     assert se.mark_field_validated(
         Session(session_id="t", phone_number="+1", conversation_stage=ConversationStage.ROUTING),
         "email",
-        "vidya@gmail.com",
+        "contact@my-company.org",
     )
 
 
 def test_invalid_email_rejected():
-    assert not se.is_valid_gmail_address("vidyajdnuhh")
-    assert not se.is_valid_gmail_address("name@yahoo.com")
-    assert not se.is_valid_gmail_address("@gmail.com")
+    assert not se.is_valid_email_address("vidyajdnuhh")
+    assert not se.is_valid_email_address("@gmail.com")
+    assert not se.is_valid_email_address("name@gmail")
     session = Session(session_id="t", phone_number="+1", conversation_stage=ConversationStage.ROUTING)
     assert not se.mark_field_validated(session, "email", "vidyajdnuhh")
 
@@ -126,8 +140,38 @@ def test_random_text_at_email_step_does_not_advance():
     reply, handled = hybrid_flow.process_hybrid_turn(session, "vidyajdnuhh")
     assert handled is True
     assert reply is not None
-    assert "valid Gmail address" in reply
+    assert "valid email address" in reply.lower()
     assert not se.field_is_complete(session, "email")
+
+
+def test_custom_domain_email_at_email_step_is_accepted():
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+919999999999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.ROUTING,
+    )
+    se.start_client_stage(session)
+    for field, value in (
+        ("client_name", "Subramanya"),
+        ("city", "Mysore"),
+        ("property_location", "Mysore, Kuvempunagar"),
+    ):
+        se.mark_field_validated(session, field, value)
+    se.reconcile_session(session)
+
+    for email in (
+        "subramanyam.p@withtatva.ai",
+        "contact@my-company.org",
+        "employee@sub.domain.example.com",
+    ):
+        session.completed_fields = [f for f in session.completed_fields if f != "email"]
+        session.extracted_fields.pop("email", None)
+        se.reconcile_session(session)
+        reply, handled = hybrid_flow.process_hybrid_turn(session, email)
+        assert handled is True, email
+        assert se.field_is_complete(session, "email"), email
+        assert session.extracted_fields.get("email") == email, email
 
 
 def test_gmail_at_email_step_is_accepted():

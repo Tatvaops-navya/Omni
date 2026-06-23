@@ -9,7 +9,11 @@ from typing import Any, Optional
 from backend.schemas.service import ServiceCategory
 from backend.schemas.session import Session, ConversationStage
 
-_GMAIL_ADDRESS_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@gmail\.com$", re.IGNORECASE)
+# Accepts common email formats across providers and custom domains (gmail, outlook, company.co.in, etc.).
+_EMAIL_ADDRESS_RE = re.compile(
+    r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$",
+    re.IGNORECASE,
+)
 
 STAGE_ORDER: list[str] = [
     "ava_intro",
@@ -60,12 +64,24 @@ def required_fields_for_stage(session: Session, stage: str) -> list[str]:
     return list(STAGE_REQUIRED_FIELDS.get(stage, []))
 
 
-def is_valid_gmail_address(value: Any) -> bool:
-    """True when value is a non-empty *@gmail.com address."""
+def is_valid_email_address(value: Any) -> bool:
+    """True when value looks like a standard email address on any domain."""
     s = str(value or "").strip()
-    if not s:
+    if not s or s.count("@") != 1:
         return False
-    return _GMAIL_ADDRESS_RE.fullmatch(s) is not None
+    if ".." in s or s.startswith("@") or s.endswith("@"):
+        return False
+    local, domain = s.rsplit("@", 1)
+    if not local or not domain or "." not in domain:
+        return False
+    if domain.startswith(".") or domain.endswith("."):
+        return False
+    return _EMAIL_ADDRESS_RE.fullmatch(s) is not None
+
+
+def is_valid_gmail_address(value: Any) -> bool:
+    """Backward-compatible alias — accepts any valid email address."""
+    return is_valid_email_address(value)
 
 
 def is_valid_field_value(value: Any, *, field: str = "") -> bool:
@@ -77,7 +93,7 @@ def is_valid_field_value(value: Any, *, field: str = "") -> bool:
         s = str(value).strip()
         if not s:
             return True
-        return is_valid_gmail_address(s)
+        return is_valid_email_address(s)
     if field == "attachments" or _is_file_upload_field(field):
         if str(value).lower() in ("skipped", "skip", "none"):
             return True

@@ -234,8 +234,9 @@ def format_multi_select_message(step: dict) -> str:
 
 def invalid_email_reply() -> str:
     return (
-        "That doesn't look like a valid Gmail address.\n\n"
-        "Please enter an email ending with *@gmail.com* (e.g. name@gmail.com), "
+        "That doesn't look like a valid email address.\n\n"
+        "Please enter a valid email address with a domain name "
+        "(e.g. name@gmail.com, name@outlook.com, or name@yourcompany.com), "
         "or reply *skip* to continue without email."
     )
 
@@ -592,7 +593,7 @@ def process_hybrid_turn(
             msg = _complete_field(session, field, "")
             return (msg or _prompt_continue(session), True)
         if text and text.lower() not in _SKIP_WORDS:
-            if field == "email" and not se.is_valid_gmail_address(text):
+            if field == "email" and not se.is_valid_email_address(text):
                 return (invalid_email_reply(), True)
             msg = _complete_field(session, field, text)
             if (
