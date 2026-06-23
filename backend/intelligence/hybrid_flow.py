@@ -166,6 +166,16 @@ def _complete_field(session: Session, field: str, value: Any) -> Optional[str]:
         q for q in required_q if q not in completed_q and not se.field_is_complete(session, q)
     ]
 
+    if field == "willing_to_create_project":
+        from backend.integrations.tatva_presales import presales_flag_for_project_choice
+
+        session.flow_state["presales_pending_flag"] = presales_flag_for_project_choice(value)
+        if (
+            session.flow_state.get("tatva_needs_registration")
+            and not session.extracted_fields.get("tatva_user_id")
+        ):
+            session.flow_state["register_phone_pending"] = True
+
     if field == "willing_to_create_project" and _is_project_declined(value):
         return _end_after_project_declined(session)
 

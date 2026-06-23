@@ -165,14 +165,16 @@ class ConversationController:
             button_text=button_text, button_payload=button_payload, list_id=list_id,
         )
         if handled and hybrid_reply:
-            vendor_msg = await register_new_tatva_user_for_session(session)
-            if vendor_msg:
-                session.add_message(MessageRole.ASSISTANT, vendor_msg)
-                return AgentResponse(text=vendor_msg, session=session)
-            if session.flow_state.get("project_declined"):
-                from backend.integrations.tatva_presales import submit_presales_on_project_decline
+            if session.flow_state.pop("register_phone_pending", False):
+                vendor_msg = await register_new_tatva_user_for_session(session)
+                if vendor_msg:
+                    session.add_message(MessageRole.ASSISTANT, vendor_msg)
+                    return AgentResponse(text=vendor_msg, session=session)
+            presales_flag = session.flow_state.pop("presales_pending_flag", None)
+            if presales_flag:
+                from backend.integrations.tatva_presales import submit_presales_lead
 
-                await submit_presales_on_project_decline(session)
+                await submit_presales_lead(session, flag=presales_flag)
             session.add_message(MessageRole.ASSISTANT, hybrid_reply)
             return AgentResponse(text=hybrid_reply, session=session)
         return None

@@ -176,7 +176,7 @@ async def test_check_tatva_phone_marks_unregistered(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_register_new_tatva_user_after_email(monkeypatch):
+async def test_register_new_tatva_user_after_project_decision(monkeypatch):
     captured = {}
 
     async def fake_register(phone_number, *, full_name=None, email=None, session_id="unknown"):
@@ -206,6 +206,10 @@ async def test_register_new_tatva_user_after_email(monkeypatch):
     session.flow_state["tatva_needs_registration"] = True
     se.mark_field_validated(session, "client_name", "Navya Sharma")
     se.mark_field_validated(session, "email", "navya@gmail.com")
+    se.mark_field_validated(session, "city", "Pune, Maharashtra")
+    se.mark_field_validated(session, "property_location", "Baner, Pune")
+    se.mark_field_validated(session, "preferred_contact_time", "morning")
+    se.mark_field_validated(session, "willing_to_create_project", "no")
 
     blocked = await register_new_tatva_user_for_session(session)
     assert blocked is None
@@ -213,6 +217,36 @@ async def test_register_new_tatva_user_after_email(monkeypatch):
     assert session.flow_state.get("tatva_user_registered") is True
     assert captured["full_name"] == "Navya Sharma"
     assert captured["email"] == "navya@gmail.com"
+
+
+@pytest.mark.asyncio
+async def test_register_new_tatva_user_skips_before_project_decision(monkeypatch):
+    called = {"count": 0}
+
+    async def fake_register(*args, **kwargs):
+        called["count"] += 1
+        return None
+
+    monkeypatch.setattr(
+        "backend.integrations.tatva_users.register_phone_user",
+        fake_register,
+    )
+
+    session = Session(
+        session_id="t",
+        phone_number="whatsapp:+919876543210",
+        channel="whatsapp",
+    )
+    session.flow_state["tatva_needs_registration"] = True
+    se.mark_field_validated(session, "client_name", "Navya Sharma")
+    se.mark_field_validated(session, "email", "navya@gmail.com")
+    se.mark_field_validated(session, "city", "Pune, Maharashtra")
+    se.mark_field_validated(session, "property_location", "Baner, Pune")
+
+    blocked = await register_new_tatva_user_for_session(session)
+    assert blocked is None
+    assert called["count"] == 0
+    assert "tatva_user_id" not in session.extracted_fields
 
 
 @pytest.mark.asyncio
