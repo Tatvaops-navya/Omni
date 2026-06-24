@@ -39,6 +39,96 @@ async function fetchAdmin(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
+export type PresalesItem = {
+  _id: string
+  name?: string
+  email?: string
+  flag?: string
+  phoneNumber?: string
+  location?: string
+  propertyLocation?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type PresalesResponse = {
+  success: boolean
+  message?: string
+  data: {
+    items: PresalesItem[]
+    total: number
+    page: number
+    limit: number
+    totalPages: number
+  }
+}
+
+export type TatvaUserItem = {
+  _id: string
+  phoneNumber?: string
+  email?: string
+  fullName?: string
+  userName?: string
+  status?: string
+  role?: string
+  flag?: string
+  isEmailVerified?: boolean
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type TatvaUsersResponse = {
+  success: boolean
+  message?: string
+  data: {
+    users: TatvaUserItem[]
+    total: number
+    page: number
+    limit: number
+    totalPages: number
+  }
+}
+
+export type VendorLeadItem = {
+  _id?: string
+  id?: string
+  name?: string
+  fullName?: string
+  contactName?: string
+  vendorName?: string
+  companyName?: string
+  businessName?: string
+  company?: string
+  phoneNumber?: string
+  phone?: string
+  mobile?: string
+  email?: string
+  location?: string
+  city?: string
+  address?: string
+  service?: string
+  serviceCategory?: string
+  serviceType?: string
+  category?: string
+  status?: string
+  leadStatus?: string
+  createdAt?: string
+  created_at?: string
+  [key: string]: unknown
+}
+
+export type VendorLeadsResponse = {
+  success: boolean
+  message?: string
+  data: {
+    items: VendorLeadItem[]
+    total: number
+    page: number
+    limit: number
+    totalPages: number
+  }
+}
+
 export const api = {
   login: async (password: string) => {
     const res = await fetch(`${BASE_URL}/admin/login`, {
@@ -58,6 +148,29 @@ export const api = {
   sessions: () => fetchAdmin('/admin/sessions'),
   session: (id: string) => fetchAdmin(`/admin/session/${id}`),
   enquiries: () => fetchAdmin('/admin/enquiries'),
+  presales: (params?: { page?: number; limit?: number; flag?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.page) qs.set('page', String(params.page))
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.flag) qs.set('flag', params.flag)
+    const query = qs.toString()
+    return fetchAdmin(`/admin/presales${query ? `?${query}` : ''}`) as Promise<PresalesResponse>
+  },
+  users: (params?: { page?: number; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.page) qs.set('page', String(params.page))
+    if (params?.limit) qs.set('limit', String(params.limit))
+    const query = qs.toString()
+    return fetchAdmin(`/admin/users${query ? `?${query}` : ''}`) as Promise<TatvaUsersResponse>
+  },
+  vendorLeads: (params?: { page?: number; limit?: number; status?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.page) qs.set('page', String(params.page))
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.status) qs.set('status', params.status)
+    const query = qs.toString()
+    return fetchAdmin(`/admin/vendor-leads${query ? `?${query}` : ''}`) as Promise<VendorLeadsResponse>
+  },
   summaries: () => fetchAdmin('/admin/summaries'),
   logs: (params?: { session_id?: string; event?: string; limit?: number }) => {
     const qs = new URLSearchParams()

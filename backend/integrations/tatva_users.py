@@ -15,6 +15,7 @@ from backend.utils.logger import log_event
 
 CHECK_PHONE_PATH = "/users/api/users/check-phone"
 REGISTER_PHONE_PATH = "/users/api/users/register-phone"
+LIST_USERS_PATH = "/users/api/users"
 TATVA_HTTP_HEADERS = {"User-Agent": "TatvaOps-Omni/1.0", "Accept": "application/json"}
 
 VENDOR_BLOCKED_MESSAGE = (
@@ -590,6 +591,81 @@ async def register_tatva_user_for_session(session: Session) -> Optional[str]:
             return await register_new_tatva_user_for_session(session)
 
     return None
+
+
+def _tatva_admin_headers() -> dict[str, str]:
+    headers = {
+        **TATVA_HTTP_HEADERS,
+        "Content-Type": "application/json",
+    }
+    api_key = (get_settings().admin_api_key or "").strip()
+    if api_key and api_key != "changeme":
+        headers["X-Admin-Key"] = api_key
+    return headers
+
+
+async def fetch_tatva_users(
+    *,
+    page: int = 1,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """GET registered Tatva users for Krsna admin panel."""
+    settings = get_settings()
+    base_url = (settings.tatva_users_api_base_url or "").rstrip("/")
+    if not base_url:
+        return {
+            "success": False,
+            "message": "Tatva API not configured",
+            "data": {"users": [], "total": 0, "page": page, "limit": limit, "totalPages": 0},
+        }
+
+    params = {"page": max(1, page), "limit": max(1, min(limit, 100))}
+    url = f"{base_url}{LIST_USERS_PATH}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers=_tatva_admin_headers()) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "data": {
+                "users": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+                "totalPages": 0,
+                "error_status": exc.response.status_code,
+            },
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "data": {"users": [], "total": 0, "page": page, "limit": limit, "totalPages": 0},
+        }
+
+    if not isinstance(payload, dict):
+        return {
+            "success": False,
+            "message": "Invalid response from Tatva users API",
+            "data": {"users": [], "total": 0, "page": page, "limit": limit, "totalPages": 0},
+        }
+
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    users = data.get("users") if isinstance(data.get("users"), list) else []
+    return {
+        "success": bool(payload.get("success", True)),
+        "message": str(payload.get("message") or ""),
+        "data": {
+            "users": users,
+            "total": int(data.get("total") or len(users)),
+            "page": int(data.get("page") or page),
+            "limit": int(data.get("limit") or limit),
+            "totalPages": int(data.get("totalPages") or 1),
+        },
+    }
 
 
 # Back-compat alias used in tests

@@ -162,3 +162,71 @@ async def submit_presales_on_project_decline(session: Session) -> bool:
     if not session.flow_state.get("project_declined"):
         return False
     return await submit_presales_lead(session, flag=PRESALES_FLAG_LOW)
+
+
+async def fetch_presales_records(
+    *,
+    page: int = 1,
+    limit: int = 20,
+    flag: str | None = None,
+) -> dict[str, Any]:
+    """GET presales list from Tatva admin API for Krsna admin panel."""
+    settings = get_settings()
+    base_url = (settings.tatva_users_api_base_url or "").rstrip("/")
+    if not base_url:
+        return {
+            "success": False,
+            "message": "Tatva API not configured",
+            "data": {"items": [], "total": 0, "page": page, "limit": limit, "totalPages": 0},
+        }
+
+    params: dict[str, str | int] = {"page": max(1, page), "limit": max(1, min(limit, 100))}
+    if flag and flag.strip().lower() in (PRESALES_FLAG_HIGH, PRESALES_FLAG_LOW):
+        params["flag"] = flag.strip().lower()
+
+    url = f"{base_url}{PRESALES_PATH}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers=_presales_headers()) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "data": {
+                "items": [],
+                "total": 0,
+                "page": page,
+                "limit": limit,
+                "totalPages": 0,
+                "error_status": exc.response.status_code,
+            },
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "data": {"items": [], "total": 0, "page": page, "limit": limit, "totalPages": 0},
+        }
+
+    if not isinstance(payload, dict):
+        return {
+            "success": False,
+            "message": "Invalid response from Tatva presales API",
+            "data": {"items": [], "total": 0, "page": page, "limit": limit, "totalPages": 0},
+        }
+
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    return {
+        "success": bool(payload.get("success", True)),
+        "message": str(payload.get("message") or ""),
+        "data": {
+            "items": items,
+            "total": int(data.get("total") or len(items)),
+            "page": int(data.get("page") or page),
+            "limit": int(data.get("limit") or limit),
+            "totalPages": int(data.get("totalPages") or 1),
+        },
+    }

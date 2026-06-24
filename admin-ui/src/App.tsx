@@ -11,6 +11,9 @@ import Summaries from './pages/Summaries'
 import Logs from './pages/Logs'
 import SystemHealth from './pages/SystemHealth'
 import Files from './pages/Files'
+import Presales from './pages/Presales'
+import Users from './pages/Users'
+import VendorLeads from './pages/VendorLeads'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated() ? <>{children}</> : <Navigate to="/krsna" replace />
@@ -39,6 +42,9 @@ export default function App() {
                 <Route path="sessions" element={<Sessions />} />
                 <Route path="sessions/:id" element={<SessionDetail />} />
                 <Route path="enquiries" element={<Enquiries />} />
+                <Route path="presales" element={<Presales />} />
+                <Route path="users" element={<Users />} />
+                <Route path="vendor-leads" element={<VendorLeads />} />
                 <Route path="summaries" element={<Summaries />} />
                 <Route path="logs" element={<Logs />} />
                 <Route path="files" element={<Files />} />
