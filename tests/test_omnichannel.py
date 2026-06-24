@@ -501,7 +501,7 @@ async def test_willing_to_create_project_uses_interactive_template(monkeypatch):
         "preferred_contact_time": "morning",
         "tatva_user_id": "abc",
     })
-    for field in ("client_name", "city", "property_location", "preferred_contact_time"):
+    for field in ("client_name", "city", "property_location"):
         se.mark_field_validated(session, field, session.extracted_fields.get(field, ""))
 
     flow_calls: list[dict] = []
@@ -686,7 +686,7 @@ def test_returning_user_prepare_clears_prior_enquiry_fields():
     assert not se.needs_service_selection(session)
     step = hybrid_flow.get_current_step(session)
     assert step is not None
-    assert step.get("field") == "willing_to_create_project"
+    assert step.get("field") == "city"
 
 
 @pytest.mark.asyncio
@@ -706,9 +706,15 @@ async def test_returning_user_without_city_yes_to_project_goes_to_services():
         "client_name": "Madhu shree",
         "email": "test@gmail.com",
         "tatva_user_id": "abc123",
+        "city": "Bengaluru",
+        "property_location": "HSR Layout",
     })
 
     prepare_returning_user_for_project_decision(session)
+    se.mark_field_validated(session, "city", "Bengaluru")
+    se.mark_field_validated(session, "property_location", "HSR Layout")
+    from backend.integrations.returning_user_flow import position_session_for_project_decision
+    position_session_for_project_decision(session)
     step = hybrid_flow.get_current_step(session)
     assert step is not None
     assert step.get("field") == "willing_to_create_project"
@@ -1810,12 +1816,12 @@ def test_home_interiors_mcq_uses_shared_dynamic_list(monkeypatch):
     assert "interior project" in q1["prompt"].lower()
 
 
-def test_willing_to_create_project_follows_contact_time():
+def test_willing_to_create_project_follows_property_location():
     from backend.intelligence.qualification_builder import build_client_details_steps
 
     steps = build_client_details_steps()
     fields = [s["field"] for s in steps]
-    assert fields.index("preferred_contact_time") < fields.index("willing_to_create_project")
+    assert fields.index("property_location") < fields.index("willing_to_create_project")
     step = next(s for s in steps if s["field"] == "willing_to_create_project")
     assert step["prompt"].startswith("Would you like to proceed with creating your project?")
     assert [o["label"] for o in step["options"]] == ["Yes, Create My Project", "No, I'm Just Exploring"]
@@ -1951,18 +1957,6 @@ async def test_project_declined_follow_up_message():
     assert "restart after 5 minutes" in resp.text.lower()
 
 
-def test_preferred_contact_time_uses_whatsapp_list_template():
-    from backend.intelligence.qualification_builder import build_client_details_steps
-    from backend.agents.chat.twilio_client import mcq_uses_interactive_delivery
-
-    step = next(s for s in build_client_details_steps() if s["field"] == "preferred_contact_time")
-    assert "(only if Needed)" in step["prompt"]
-    assert step["twilio_content_sid"] == "HX4e36328276831fc79aa5feb83f0b86a4"
-    assert step.get("require_content_variables") is True
-    assert step.get("twilio_list_prompt") == step["prompt"]
-    assert mcq_uses_interactive_delivery(step) is True
-
-
 def test_mcq_in_current_stage_only():
     session = Session(
         session_id="t", phone_number="+1",
@@ -1971,7 +1965,7 @@ def test_mcq_in_current_stage_only():
         active_consultant="vivek",
     )
     se.start_client_stage(session)
-    for f in ["client_name", "city", "property_location", "preferred_contact_time", "willing_to_create_project"]:
+    for f in ["client_name", "city", "property_location", "willing_to_create_project"]:
         session.mark_field_complete(f, "x")
     session.mark_field_complete("phone_number", "+1")
     se.mark_stage_complete(session, "client_details")
@@ -2191,20 +2185,13 @@ def test_invalid_mcq_reasks_current_question():
         se.mark_field_validated(session, field, value)
     step = hybrid_flow.get_current_step(session)
     assert step is not None
-    assert step["field"] == "preferred_contact_time"
-    prompt_snippet = step["prompt"][:30]
-
-    reply, handled = hybrid_flow.process_hybrid_turn(session, "morning")
-    assert handled is True
-    assert se.field_is_complete(session, "preferred_contact_time")
-    step = hybrid_flow.get_current_step(session)
-    assert step is not None
     assert step["field"] == "willing_to_create_project"
+    prompt_snippet = step["prompt"][:30]
 
     reply, handled = hybrid_flow.process_hybrid_turn(session, "banana pizza random")
     assert handled is True
     assert "Sorry" in reply
-    assert "create a project" in reply.lower()
+    assert "creating your project" in reply.lower()
     assert not se.field_is_complete(session, "willing_to_create_project")
 
 
@@ -2315,8 +2302,8 @@ async def test_off_topic_during_mcq_reasks_not_guardrail():
     controller = ConversationController()
     resp = await controller.process_message(session, "what is the cricket score", channel="whatsapp")
     assert "Sorry" in resp.text
-    assert "contact" in resp.text.lower()
-    assert not se.field_is_complete(session, "preferred_contact_time")
+    assert "project" in resp.text.lower()
+    assert not se.field_is_complete(session, "willing_to_create_project")
 
 
 def test_livestock_does_not_trigger_stock_off_topic():

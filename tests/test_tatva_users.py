@@ -413,14 +413,13 @@ async def test_existing_user_no_edit_continues_to_project_creation():
     session.extracted_fields["email"] = "pramod.d@tatvaops.com"
 
     msg = prepare_returning_user_for_project_decision(session)
-    assert "proceed with creating your project" in msg.lower()
-    assert "city" not in msg.lower() or "create" in msg.lower()
+    assert "which city" in msg.lower()
     assert se.field_is_complete(session, "client_name")
-    assert se.field_is_complete(session, "city")
-    assert se.field_is_complete(session, "property_location")
+    assert not se.field_is_complete(session, "city")
+    assert not se.field_is_complete(session, "property_location")
     step = hybrid_flow.get_current_step(session)
     assert step is not None
-    assert step.get("field") == "willing_to_create_project"
+    assert step.get("field") == "city"
 
 
 @pytest.mark.asyncio
