@@ -165,7 +165,7 @@ async def test_project_declined_no_triggers_register_and_presales(monkeypatch):
     assert register_calls == ["wa_decline"]
     assert presales_calls == [("wa_decline", PRESALES_FLAG_LOW)]
     assert session.flow_state.get("project_declined") is True
-    assert "not looking to start a project" in (resp.text or "").lower()
+    assert "thank you for exploring tatvaops" in (resp.text or "").lower()
 
 
 @pytest.mark.asyncio
