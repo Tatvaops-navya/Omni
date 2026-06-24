@@ -344,10 +344,6 @@ def complete_returning_user_identity_fields(
     else:
         se.mark_field_validated(session, "email", "")
 
-    contact = preserved.get("preferred_contact_time", "")
-    if contact:
-        se.mark_field_validated(session, "preferred_contact_time", contact)
-
 
 def ensure_returning_reenquiry_prepared(session: Session) -> None:
     """Reset prior enquiry data and require fresh location before create-project."""
@@ -393,7 +389,7 @@ def next_client_detail_step_before_project(session: Session) -> dict[str, Any] |
     for step in build_client_details_steps():
         field = str(step.get("field") or "")
         if field == "willing_to_create_project":
-            if location_fields_complete(session) and se.field_is_complete(session, "preferred_contact_time"):
+            if location_fields_complete(session):
                 return dict(step)
             return None
         if field in identity_fields and is_returning_registered_user(session):
@@ -444,10 +440,6 @@ def complete_known_client_details_for_returning_user(
     if not prop:
         prop = RETURNING_MISSING_LOCATION_PLACEHOLDER
     se.mark_field_validated(session, "property_location", prop)
-    contact = preserved.get("preferred_contact_time", "")
-    if not contact:
-        contact = "morning"
-    se.mark_field_validated(session, "preferred_contact_time", contact)
 
 
 def advance_returning_user_to_service_selection(session: Session) -> None:
@@ -478,8 +470,6 @@ def position_session_for_project_decision(session: Session) -> dict[str, Any] | 
     """Prepare returning user and return the project-creation MCQ when location is complete."""
     ensure_returning_reenquiry_prepared(session)
     if not location_fields_complete(session):
-        return None
-    if not se.field_is_complete(session, "preferred_contact_time"):
         return None
     step = willing_to_create_project_step()
     if not step:

@@ -27,9 +27,6 @@ FLOW_FILE_BY_SERVICE: dict[ServiceCategory, str] = {
 # Back-compat alias
 SECTION_TITLES = STAGE_TITLES
 
-# Dedicated contact-time list (Morning/Afternoon/Evening/Night).
-CONTACT_TIME_TWILIO_CONTENT_SID = "HX4e36328276831fc79aa5feb83f0b86a4"
-
 
 def _mcq_option_count(step: dict) -> int:
     return len([o for o in step.get("options", []) if str(o.get("value", "")).lower() != "__other__"])
@@ -60,15 +57,12 @@ def _resolve_mcq_twilio_sid(step: dict) -> str | None:
     """
     Twilio list template for MCQ steps.
     - Flow JSON may define a service-specific SID (home_interiors, electrical, …).
-    - Contact time uses its dedicated template.
     - Other service_q steps use variable 2/3/4/5-row MCQ templates (Choose option).
     """
     explicit = step.get("twilio_content_sid")
     if explicit:
         return str(explicit)
     field = str(step.get("field", ""))
-    if field == "preferred_contact_time":
-        return CONTACT_TIME_TWILIO_CONTENT_SID
     if field == "willing_to_create_project":
         return _variable_mcq_list_sid(2)
     if (
@@ -92,8 +86,7 @@ def _attach_mcq_list_delivery(out: dict, sid: str, step: dict) -> dict:
         out["twilio_list_prompt"] = str(step.get("prompt") or "").strip()
     count = _mcq_option_count(step)
     if (
-        sid == CONTACT_TIME_TWILIO_CONTENT_SID
-        or field.startswith("service_q")
+        field.startswith("service_q")
         or field.startswith("order_")
         or field.startswith("file_order_")
         or field.startswith("__edit_")
@@ -101,8 +94,7 @@ def _attach_mcq_list_delivery(out: dict, sid: str, step: dict) -> dict:
         or field == "willing_to_create_project"
     ):
         out["twilio_list_slots"] = count
-        if sid != CONTACT_TIME_TWILIO_CONTENT_SID:
-            out["twilio_list_use_descriptions"] = True
+        out["twilio_list_use_descriptions"] = True
     return out
 
 
@@ -213,19 +205,6 @@ def build_client_details_steps() -> list[dict]:
         {"id": "cd_email", "stage": "client_details", "type": "descriptive", "field": "email", "prompt": "Email address (optional).", "optional": True},
         {"id": "cd_city", "stage": "client_details", "type": "descriptive", "field": "city", "prompt": "Which city are you located in?"},
         {"id": "cd_property_loc", "stage": "client_details", "type": "descriptive", "field": "property_location", "prompt": "Where is your property located? (City, Locality)"},
-        _enrich_mcq_step({
-            "id": "cd_contact_time",
-            "stage": "client_details",
-            "type": "mcq",
-            "field": "preferred_contact_time",
-            "prompt": "Preferred contact time? (only if Needed)",
-            "options": [
-                {"label": "Morning", "value": "morning"},
-                {"label": "Afternoon", "value": "afternoon"},
-                {"label": "Evening", "value": "evening"},
-                {"label": "Night", "value": "night"},
-            ],
-        }),
         _enrich_mcq_step({
             "id": "cd_create_project",
             "stage": "client_details",
