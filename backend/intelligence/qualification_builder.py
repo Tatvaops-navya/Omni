@@ -320,7 +320,6 @@ def format_final_review(session, *, include_footer: bool | None = None) -> str:
         f"- Phone: {_humanize('phone_number', ef.get('phone_number'), service_category=service_key)}",
         f"- Location: {_humanize('city', ef.get('city'), service_category=service_key)}",
         f"- Property location: {_humanize('property_location', ef.get('property_location'), service_category=service_key)}",
-        f"- Preferred contact time: {_humanize('preferred_contact_time', ef.get('preferred_contact_time'), service_category=service_key)}",
         f"- Willing to create project: {_humanize('willing_to_create_project', ef.get('willing_to_create_project'), service_category=service_key)}",
         f"- Email: {_humanize('email', ef.get('email'), service_category=service_key)}",
         "",
