@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, MessageSquare, FileText, ClipboardList,
-  BookOpen, ScrollText, Activity, LogOut, Flower2, Paperclip
+  ScrollText, Activity, LogOut, Flower2, Paperclip, UserCheck, Users as UsersIcon, Briefcase
 } from 'lucide-react'
 import { clearToken } from '../api/client'
 import clsx from 'clsx'
@@ -10,6 +10,9 @@ const nav = [
   { to: '/krsna/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/krsna/sessions', icon: MessageSquare, label: 'Sessions' },
   { to: '/krsna/enquiries', icon: ClipboardList, label: 'Enquiries' },
+  { to: '/krsna/presales', icon: UserCheck, label: 'Pre-sales' },
+  { to: '/krsna/users', icon: UsersIcon, label: 'Users' },
+  { to: '/krsna/vendor-leads', icon: Briefcase, label: 'Vendor Leads' },
   { to: '/krsna/summaries', icon: FileText, label: 'Summaries' },
   { to: '/krsna/logs', icon: ScrollText, label: 'Logs' },
   { to: '/krsna/files', icon: Paperclip, label: 'Files' },

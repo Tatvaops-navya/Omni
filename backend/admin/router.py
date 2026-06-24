@@ -174,6 +174,43 @@ async def get_session_detail(session_id: str, auth=Depends(require_admin)):
     }
 
 
+# ─── Presales (Tatva API) ─────────────────────────────────────────────────────
+
+@router.get("/presales")
+async def get_presales(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    flag: Optional[str] = Query(None),
+    auth=Depends(require_admin),
+):
+    from backend.integrations.tatva_presales import fetch_presales_records
+
+    return await fetch_presales_records(page=page, limit=limit, flag=flag)
+
+
+@router.get("/users")
+async def get_tatva_users(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
+    auth=Depends(require_admin),
+):
+    from backend.integrations.tatva_users import fetch_tatva_users
+
+    return await fetch_tatva_users(page=page, limit=limit)
+
+
+@router.get("/vendor-leads")
+async def get_vendor_leads(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None),
+    auth=Depends(require_admin),
+):
+    from backend.integrations.tatva_vendor_leads import fetch_vendor_leads
+
+    return await fetch_vendor_leads(page=page, limit=limit, status=status or None)
+
+
 # ─── Enquiries ────────────────────────────────────────────────────────────────
 
 @router.get("/enquiries")
