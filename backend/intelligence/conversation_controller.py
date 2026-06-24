@@ -329,11 +329,10 @@ class ConversationController:
                 return AgentResponse(text=thanks, session=session)
 
         if session.flow_state.get("project_declined"):
+            from backend.intelligence.hybrid_flow import PROJECT_DECLINED_FOLLOWUP
+
             session.add_message(MessageRole.USER, user_message)
-            hold = (
-                "Thank you for connecting with TatvaOps. "
-                "If you would like to start a new enquiry, please restart after 5 minutes."
-            )
+            hold = PROJECT_DECLINED_FOLLOWUP
             session.add_message(MessageRole.ASSISTANT, hold)
             return AgentResponse(text=hold, session=session)
 

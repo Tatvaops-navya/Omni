@@ -38,11 +38,25 @@ STAGE_BRIDGES = {
 SERVICE_SELECTION_TRANSITION = "Got it. Let us continue."
 
 PROJECT_DECLINED_FAREWELL = (
-    "Thank you for sharing your details with TatvaOps.\n\n"
-    "We understand you are not looking to start a project at this time. "
-    "Whenever you are ready, we will be glad to assist you.\n\n"
-    "Wishing you all the best.\n\n"
-    "If you would like to start a new enquiry, please restart after 5 minutes."
+    "*Thank you for exploring TatvaOps!* ✨\n\n"
+    "We completely understand that you may still be evaluating your options, "
+    "gathering ideas, or planning for the future.\n\n"
+    "Whenever you're ready, TatvaOps will be here to help you with:\n"
+    "🏡 Home Construction & Renovation\n"
+    "🎨 Interior Design & Modular Solutions\n"
+    "☀️ Solar & Sustainable Living Solutions\n"
+    "📋 Transparent Quotations & Project Tracking\n"
+    "🛡️ Verified Professionals & Quality Assurance\n\n"
+    "In the meantime, feel free to browse, compare, and discover possibilities. "
+    "Your next project deserves the right partner, and we'd love the opportunity "
+    "to be part of that journey.\n\n"
+    "*Ready to begin later?* Simply start a new enquiry and we'll pick things up from there.\n\n"
+    "💙 _Thank you for considering TatvaOps. We look forward to helping you build with confidence._"
+)
+
+PROJECT_DECLINED_FOLLOWUP = (
+    "Thank you for exploring TatvaOps. "
+    "When you're ready, simply start a new enquiry and we'll pick things up from there."
 )
 
 
