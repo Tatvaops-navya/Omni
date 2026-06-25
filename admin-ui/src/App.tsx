@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
-import { isAuthenticated } from './api/client'
+import { getUser, isAuthenticated, isPresalesUser } from './api/client'
 import Login from './pages/Login'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
@@ -14,9 +14,25 @@ import Files from './pages/Files'
 import Presales from './pages/Presales'
 import Users from './pages/Users'
 import VendorLeads from './pages/VendorLeads'
+import MyLeads from './pages/MyLeads'
+import Team from './pages/Team'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated() ? <>{children}</> : <Navigate to="/krsna" replace />
+}
+
+function HomeRedirect() {
+  if (isPresalesUser()) {
+    return <Navigate to="my-leads" replace />
+  }
+  return <Navigate to="dashboard" replace />
+}
+
+function AdminOnly({ children }: { children: React.ReactNode }) {
+  if (isPresalesUser()) {
+    return <Navigate to="/krsna/my-leads" replace />
+  }
+  return <>{children}</>
 }
 
 export default function App() {
@@ -38,18 +54,20 @@ export default function App() {
           <PrivateRoute>
             <Layout>
               <Routes>
-                <Route path="dashboard" element={<Dashboard />} />
-                <Route path="sessions" element={<Sessions />} />
-                <Route path="sessions/:id" element={<SessionDetail />} />
-                <Route path="enquiries" element={<Enquiries />} />
-                <Route path="presales" element={<Presales />} />
-                <Route path="users" element={<Users />} />
-                <Route path="vendor-leads" element={<VendorLeads />} />
-                <Route path="summaries" element={<Summaries />} />
-                <Route path="logs" element={<Logs />} />
-                <Route path="files" element={<Files />} />
-                <Route path="system" element={<SystemHealth />} />
-                <Route index element={<Navigate to="dashboard" replace />} />
+                <Route index element={<HomeRedirect />} />
+                <Route path="my-leads" element={<MyLeads />} />
+                <Route path="dashboard" element={<AdminOnly><Dashboard /></AdminOnly>} />
+                <Route path="sessions" element={<AdminOnly><Sessions /></AdminOnly>} />
+                <Route path="sessions/:id" element={<AdminOnly><SessionDetail /></AdminOnly>} />
+                <Route path="enquiries" element={<AdminOnly><Enquiries /></AdminOnly>} />
+                <Route path="presales" element={<AdminOnly><Presales /></AdminOnly>} />
+                <Route path="team" element={<AdminOnly><Team /></AdminOnly>} />
+                <Route path="users" element={<AdminOnly><Users /></AdminOnly>} />
+                <Route path="vendor-leads" element={<AdminOnly><VendorLeads /></AdminOnly>} />
+                <Route path="summaries" element={<AdminOnly><Summaries /></AdminOnly>} />
+                <Route path="logs" element={<AdminOnly><Logs /></AdminOnly>} />
+                <Route path="files" element={<AdminOnly><Files /></AdminOnly>} />
+                <Route path="system" element={<AdminOnly><SystemHealth /></AdminOnly>} />
               </Routes>
             </Layout>
           </PrivateRoute>

@@ -15,7 +15,9 @@ twilio>=9.0.0
 # HTTP client (Upstash Redis REST + Vapi)
 httpx>=0.28.0
 
-# Supabase (use a widely-compatible version)
+# Supabase (Krsna CRM lead assignments)
+supabase>=2.10.0
+
 # Async utilities
 anyio>=4.0.0
 

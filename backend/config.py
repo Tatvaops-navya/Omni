@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     admin_password: str = "changeme"
     admin_api_key: str = "changeme"
 
+    # Supabase (Krsna CRM — lead assignments)
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    crm_password_pepper: str = "tatvaops-crm"
+
     # App
     environment: str = "development"
     log_level: str = "INFO"
