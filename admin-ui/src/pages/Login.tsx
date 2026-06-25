@@ -45,7 +45,7 @@ export default function Login() {
             <Flower2 className="w-8 h-8 text-indigo-400" />
           </div>
           <h1 className="text-2xl font-semibold text-slate-200">Krsna Panel</h1>
-          <p className="text-slate-500 text-sm mt-1">Aadhya AI Operations · TatvaOps</p>
+          <p className="text-slate-500 text-sm mt-1">EVA AI Operations_TatvaOps</p>
         </div>
 
         <div className="flex gap-2 mb-4">
