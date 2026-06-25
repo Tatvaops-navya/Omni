@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     upstash_redis_rest_token: str = ""
     session_ttl_hours: int = 24
     # End in-progress WhatsApp/voice chats after this many minutes without a user reply
-    session_idle_timeout_minutes: int = 5
+    session_idle_timeout_minutes: int = 2
 
     # Tatva user API (check-phone on first message; register-phone at create-project step for new users)
     tatva_users_api_base_url: str = "https://api.withtatva.ai"
