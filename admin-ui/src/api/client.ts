@@ -7,18 +7,54 @@ const BASE_URL = import.meta.env.DEV
 
 let authToken: string | null = sessionStorage.getItem('aadhya_admin_token')
 
-export function setToken(token: string) {
+export type CrmUser = {
+  id?: string | null
+  name?: string | null
+  email?: string | null
+  role: 'admin' | 'presales' | 'rm' | string
+}
+
+function loadStoredUser(): CrmUser | null {
+  try {
+    const raw = sessionStorage.getItem('aadhya_crm_user')
+    return raw ? JSON.parse(raw) as CrmUser : null
+  } catch {
+    return null
+  }
+}
+
+let crmUser: CrmUser | null = loadStoredUser()
+
+export function setToken(token: string, user?: CrmUser | null) {
   authToken = token
   sessionStorage.setItem('aadhya_admin_token', token)
+  if (user) {
+    crmUser = user
+    sessionStorage.setItem('aadhya_crm_user', JSON.stringify(user))
+  }
 }
 
 export function clearToken() {
   authToken = null
+  crmUser = null
   sessionStorage.removeItem('aadhya_admin_token')
+  sessionStorage.removeItem('aadhya_crm_user')
+}
+
+export function getUser(): CrmUser | null {
+  return crmUser || loadStoredUser()
 }
 
 export function isAuthenticated(): boolean {
   return !!authToken
+}
+
+export function isAdminUser(): boolean {
+  return getUser()?.role === 'admin'
+}
+
+export function isPresalesUser(): boolean {
+  return getUser()?.role === 'presales'
 }
 
 async function fetchAdmin(path: string, options: RequestInit = {}) {
@@ -39,6 +75,15 @@ async function fetchAdmin(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
+export type LeadAssignmentMeta = {
+  status?: string
+  presales_user_id?: string | null
+  assignee_name?: string | null
+  assignee_email?: string | null
+  assigned_at?: string | null
+  notes?: string | null
+}
+
 export type PresalesItem = {
   _id: string
   name?: string
@@ -49,11 +94,13 @@ export type PresalesItem = {
   propertyLocation?: string
   createdAt?: string
   updatedAt?: string
+  assignment?: LeadAssignmentMeta
 }
 
 export type PresalesResponse = {
   success: boolean
   message?: string
+  crm_configured?: boolean
   data: {
     items: PresalesItem[]
     total: number
@@ -143,6 +190,51 @@ export const api = {
     }
     return data
   },
+
+  crmLogin: async (email: string, password: string) => {
+    const res = await fetch(`${BASE_URL}/admin/crm-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : 'Invalid credentials'
+      throw new Error(detail)
+    }
+    return data
+  },
+
+  me: () => fetchAdmin('/admin/me'),
+
+  crmUsers: (role?: string) => {
+    const qs = role ? `?role=${encodeURIComponent(role)}` : ''
+    return fetchAdmin(`/admin/crm-users${qs}`) as Promise<{ users: CrmUser[]; configured: boolean }>
+  },
+
+  createCrmUser: (body: { name: string; email: string; password: string; role: string }) =>
+    fetchAdmin('/admin/crm-users', { method: 'POST', body: JSON.stringify(body) }),
+
+  assignPresalesLead: (externalId: string, body: { presales_user_id: string; snapshot: Record<string, unknown> }) =>
+    fetchAdmin(`/admin/lead-assignments/${externalId}/assign-presales`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  myLeads: (params?: { page?: number; limit?: number; status?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.page) qs.set('page', String(params.page))
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.status) qs.set('status', params.status)
+    const query = qs.toString()
+    return fetchAdmin(`/admin/my-leads${query ? `?${query}` : ''}`)
+  },
+
+  completeMyLead: (externalId: string, notes?: string) =>
+    fetchAdmin(`/admin/my-leads/${externalId}/complete`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notes: notes || null }),
+    }),
 
   dashboard: () => fetchAdmin('/admin/dashboard'),
   sessions: () => fetchAdmin('/admin/sessions'),

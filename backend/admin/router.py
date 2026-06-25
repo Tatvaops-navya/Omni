@@ -32,8 +32,12 @@ async def admin_login(body: LoginRequest):
     """Exchange admin password for a session token."""
     if body.password != settings.admin_password:
         raise HTTPException(status_code=401, detail="Invalid password")
-    token = generate_session_token()
-    return {"token": token, "expires_in_hours": 8}
+    token = generate_session_token(role="admin", name="Admin")
+    return {
+        "token": token,
+        "expires_in_hours": 8,
+        "user": {"role": "admin", "name": "Admin", "email": None, "id": None},
+    }
 
 
 # ─── Dashboard ────────────────────────────────────────────────────────────────
@@ -184,8 +188,16 @@ async def get_presales(
     auth=Depends(require_admin),
 ):
     from backend.integrations.tatva_presales import fetch_presales_records
+    from backend.crm import store as crm_store
 
-    return await fetch_presales_records(page=page, limit=limit, flag=flag)
+    result = await fetch_presales_records(page=page, limit=limit, flag=flag)
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    if crm_store.crm_available() and items:
+        data["items"] = crm_store.enrich_presales_items(items)
+        result["data"] = data
+    result["crm_configured"] = crm_store.crm_available()
+    return result
 
 
 @router.get("/users")

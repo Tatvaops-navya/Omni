@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, PresalesItem } from '../api/client'
+import { api, CrmUser, PresalesItem } from '../api/client'
 import clsx from 'clsx'
 import { format } from 'date-fns'
+import toast from 'react-hot-toast'
 
 const PLACEHOLDER_NAMES = new Set(['__returning_user__', 'registered user'])
 
@@ -20,14 +21,30 @@ function formatDate(iso: string | undefined): string {
   }
 }
 
+function statusLabel(status: string | undefined): string {
+  return (status || 'unassigned').replace(/_/g, ' ')
+}
+
 export default function Presales() {
   const [items, setItems] = useState<PresalesItem[]>([])
+  const [team, setTeam] = useState<CrmUser[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [flagFilter, setFlagFilter] = useState('')
+  const [crmConfigured, setCrmConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [assigningId, setAssigningId] = useState<string | null>(null)
+
+  const loadTeam = useCallback(async () => {
+    try {
+      const data = await api.crmUsers('presales')
+      setTeam(data.users || [])
+    } catch {
+      setTeam([])
+    }
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -44,6 +61,7 @@ export default function Presales() {
       setItems(data.data?.items || [])
       setTotal(data.data?.total ?? 0)
       setTotalPages(data.data?.totalPages ?? 1)
+      setCrmConfigured(!!data.crm_configured)
     } catch {
       setError('Failed to load presales records.')
       setItems([])
@@ -53,14 +71,32 @@ export default function Presales() {
   }, [page, flagFilter])
 
   useEffect(() => {
+    loadTeam()
     load()
     const id = setInterval(load, 30000)
     return () => clearInterval(id)
-  }, [load])
+  }, [load, loadTeam])
 
   useEffect(() => {
     setPage(1)
   }, [flagFilter])
+
+  const handleAssign = async (row: PresalesItem, presalesUserId: string) => {
+    if (!presalesUserId) return
+    setAssigningId(row._id)
+    try {
+      await api.assignPresalesLead(row._id, {
+        presales_user_id: presalesUserId,
+        snapshot: { ...row },
+      })
+      toast.success('Lead assigned')
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Assignment failed')
+    } finally {
+      setAssigningId(null)
+    }
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -68,7 +104,8 @@ export default function Presales() {
         <div>
           <h1 className="text-xl font-semibold text-slate-200">Pre-sales</h1>
           <p className="text-sm text-slate-500 mt-1">
-            {total} record{total !== 1 ? 's' : ''} from Tatva · refreshes every 30s
+            {total} record{total !== 1 ? 's' : ''} from Tatva
+            {crmConfigured ? ' · assignment enabled' : ' · configure Supabase for assignment'}
           </p>
         </div>
         <select
@@ -82,9 +119,7 @@ export default function Presales() {
         </select>
       </div>
 
-      {error && (
-        <div className="card text-red-400 text-sm">{error}</div>
-      )}
+      {error && <div className="card text-red-400 text-sm">{error}</div>}
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
@@ -93,64 +128,86 @@ export default function Presales() {
               <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
-                <th className="px-4 py-3 font-medium">Email</th>
                 <th className="px-4 py-3 font-medium">Flag</th>
                 <th className="px-4 py-3 font-medium">Location</th>
-                <th className="px-4 py-3 font-medium min-w-[200px]">Property</th>
+                <th className="px-4 py-3 font-medium">Assignee</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Assign</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
               </tr>
             </thead>
             <tbody>
               {loading && items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
                     Loading presales records...
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
                     No presales records found.
                   </td>
                 </tr>
               ) : (
-                items.map(row => (
-                  <tr
-                    key={row._id}
-                    className="border-b border-slate-700/30 hover:bg-navy-700/30"
-                  >
-                    <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
-                      {displayName(row.name)}
-                    </td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                      {row.phoneNumber || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
-                      {row.email || '—'}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={clsx(
-                          'badge uppercase',
-                          row.flag === 'high'
-                            ? 'bg-teal-600/20 text-teal-300'
-                            : 'bg-amber-600/20 text-amber-300',
+                items.map(row => {
+                  const assignment = row.assignment
+                  const currentAssignee = assignment?.presales_user_id || ''
+                  return (
+                    <tr
+                      key={row._id}
+                      className="border-b border-slate-700/30 hover:bg-navy-700/30"
+                    >
+                      <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
+                        {displayName(row.name)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                        {row.phoneNumber || '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={clsx(
+                            'badge uppercase',
+                            row.flag === 'high'
+                              ? 'bg-teal-600/20 text-teal-300'
+                              : 'bg-amber-600/20 text-amber-300',
+                          )}
+                        >
+                          {row.flag || '—'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-400 max-w-[140px] truncate" title={row.location}>
+                        {row.location || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                        {assignment?.assignee_name || '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-400 capitalize text-xs">
+                        {statusLabel(assignment?.status)}
+                      </td>
+                      <td className="px-4 py-3">
+                        {crmConfigured && team.length > 0 ? (
+                          <select
+                            className="input text-xs py-1.5 min-w-[120px]"
+                            value={currentAssignee}
+                            disabled={assigningId === row._id}
+                            onChange={e => handleAssign(row, e.target.value)}
+                          >
+                            <option value="">Assign to...</option>
+                            {team.map(u => (
+                              <option key={u.id || ''} value={u.id || ''}>{u.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-xs text-slate-600">—</span>
                         )}
-                      >
-                        {row.flag || '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 max-w-[160px] truncate" title={row.location}>
-                      {row.location || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-400 max-w-[240px] truncate" title={row.propertyLocation}>
-                      {row.propertyLocation || '—'}
-                    </td>
-                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
-                      {formatDate(row.createdAt)}
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
+                        {formatDate(row.createdAt)}
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -158,26 +215,10 @@ export default function Presales() {
 
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
-            <span className="text-xs text-slate-500">
-              Page {page} of {totalPages}
-            </span>
+            <span className="text-xs text-slate-500">Page {page} of {totalPages}</span>
             <div className="flex gap-2">
-              <button
-                type="button"
-                className="btn-ghost disabled:opacity-40"
-                disabled={page <= 1 || loading}
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                className="btn-ghost disabled:opacity-40"
-                disabled={page >= totalPages || loading}
-                onClick={() => setPage(p => p + 1)}
-              >
-                Next
-              </button>
+              <button type="button" className="btn-ghost disabled:opacity-40" disabled={page <= 1 || loading} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</button>
+              <button type="button" className="btn-ghost disabled:opacity-40" disabled={page >= totalPages || loading} onClick={() => setPage(p => p + 1)}>Next</button>
             </div>
           </div>
         )}
