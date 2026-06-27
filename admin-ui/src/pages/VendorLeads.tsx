@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, VendorLeadItem } from '../api/client'
-import clsx from 'clsx'
+import { api, CrmUser, VendorLeadItem } from '../api/client'
+import { StaffCommentDisplay } from '../components/StaffCommentDisplay'
 import { format } from 'date-fns'
+import toast from 'react-hot-toast'
 
 function pick(row: VendorLeadItem, ...keys: string[]): string {
   for (const key of keys) {
@@ -22,15 +23,49 @@ function formatDate(iso: string | undefined): string {
   }
 }
 
+function vendorStatusBadge(status: string) {
+  const normalized = status.toLowerCase()
+  if (normalized === 'approved') {
+    return 'badge capitalize bg-teal-600/20 text-teal-300'
+  }
+  if (normalized === 'rejected') {
+    return 'badge capitalize bg-red-600/20 text-red-300'
+  }
+  if (normalized === 'pending') {
+    return 'badge capitalize bg-amber-600/20 text-amber-300'
+  }
+  return 'badge capitalize bg-slate-600/20 text-slate-300'
+}
+
+function vendorStatus(row: VendorLeadItem): string {
+  const value = pick(row, 'status', 'leadStatus', 'vendorStatus', 'approvalStatus')
+  return value === '—' ? 'pending' : value
+}
+
 export default function VendorLeads() {
   const [items, setItems] = useState<VendorLeadItem[]>([])
+  const [team, setTeam] = useState<CrmUser[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [limit] = useState(20)
   const [statusFilter, setStatusFilter] = useState('pending')
+  const [crmConfigured, setCrmConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [assigningId, setAssigningId] = useState<string | null>(null)
+
+  const loadTeam = useCallback(async () => {
+    try {
+      const [presales, rm] = await Promise.all([
+        api.crmUsers('presales'),
+        api.crmUsers('rm'),
+      ])
+      setTeam([...(presales.users || []), ...(rm.users || [])])
+    } catch {
+      setTeam([])
+    }
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -47,6 +82,7 @@ export default function VendorLeads() {
       setItems(data.data?.items || [])
       setTotal(data.data?.total ?? 0)
       setTotalPages(data.data?.totalPages ?? 1)
+      setCrmConfigured(!!data.crm_configured)
     } catch {
       setError('Failed to load vendor leads.')
       setItems([])
@@ -54,6 +90,10 @@ export default function VendorLeads() {
       setLoading(false)
     }
   }, [page, limit, statusFilter])
+
+  useEffect(() => {
+    loadTeam()
+  }, [loadTeam])
 
   useEffect(() => {
     setPage(1)
@@ -65,13 +105,34 @@ export default function VendorLeads() {
     return () => clearInterval(id)
   }, [load])
 
+  const rowId = (row: VendorLeadItem) => String(row._id || row.id || '')
+
+  const handleAssign = async (row: VendorLeadItem, staffUserId: string) => {
+    const externalId = rowId(row)
+    if (!staffUserId || !externalId) return
+    setAssigningId(externalId)
+    try {
+      await api.assignVendorLead(externalId, {
+        staff_user_id: staffUserId,
+        snapshot: { ...row },
+      })
+      toast.success('Vendor lead assigned')
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Assignment failed')
+    } finally {
+      setAssigningId(null)
+    }
+  }
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-200">Vendor Leads</h1>
           <p className="text-sm text-slate-500 mt-1">
-            {total} record{total !== 1 ? 's' : ''} from Tatva · refreshes every 30s
+            {total} record{total !== 1 ? 's' : ''} from Tatva
+            {crmConfigured ? ' · assignment enabled' : ' · configure Supabase for assignment'}
           </p>
         </div>
         <select
@@ -102,19 +163,22 @@ export default function VendorLeads() {
                 <th className="px-4 py-3 font-medium">Location</th>
                 <th className="px-4 py-3 font-medium">Service</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Assignee</th>
+                <th className="px-4 py-3 font-medium">Team comment</th>
+                <th className="px-4 py-3 font-medium">Assign</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
               </tr>
             </thead>
             <tbody>
               {loading && items.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
                     Loading vendor leads...
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
                     No vendor leads found.
                   </td>
                 </tr>
@@ -126,9 +190,11 @@ export default function VendorLeads() {
                   const email = pick(row, 'email')
                   const location = pick(row, 'location', 'city', 'address')
                   const service = pick(row, 'service', 'serviceCategory', 'serviceType', 'category')
-                  const status = pick(row, 'status', 'leadStatus')
+                  const leadStatus = vendorStatus(row)
                   const created = pick(row, 'createdAt', 'created_at')
-                  const rowKey = String(row._id || row.id || `${phone}-${created}`)
+                  const rowKey = rowId(row) || `${phone}-${created}`
+                  const assignment = row.assignment
+                  const currentAssignee = assignment?.staff_user_id || assignment?.presales_user_id || assignment?.rm_user_id || ''
 
                   return (
                     <tr
@@ -144,12 +210,31 @@ export default function VendorLeads() {
                       </td>
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{service}</td>
                       <td className="px-4 py-3">
-                        {status !== '—' ? (
-                          <span className="badge capitalize bg-indigo-600/20 text-indigo-300">
-                            {status}
-                          </span>
+                        <span className={vendorStatusBadge(leadStatus)}>{leadStatus}</span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                        {assignment?.assignee_name || '—'}
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <StaffCommentDisplay text={assignment?.notes} />
+                      </td>
+                      <td className="px-4 py-3">
+                        {crmConfigured && team.length > 0 ? (
+                          <select
+                            className="input text-xs py-1.5 min-w-[120px]"
+                            value={currentAssignee}
+                            disabled={assigningId === rowKey}
+                            onChange={e => handleAssign(row, e.target.value)}
+                          >
+                            <option value="">Assign to...</option>
+                            {team.map(u => (
+                              <option key={u.id || ''} value={u.id || ''}>
+                                {u.name} ({u.role})
+                              </option>
+                            ))}
+                          </select>
                         ) : (
-                          <span className="text-slate-500">—</span>
+                          <span className="text-xs text-slate-600">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">

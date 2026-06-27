@@ -1,10 +1,10 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, MessageSquare, FileText, ClipboardList,
-  ScrollText, Activity, LogOut, Flower2, Paperclip, UserCheck, Users as UsersIcon,
-  Briefcase, UserCircle, UsersRound,
+  LayoutDashboard, MessageSquare, ClipboardList,
+  ScrollText, Activity, LogOut, Flower2, UserCheck, Users as UsersIcon,
+  Briefcase, UserCircle,
 } from 'lucide-react'
-import { clearToken, getUser, isAdminUser, isPresalesUser } from '../api/client'
+import { clearToken, getUser, isAdminUser, isPresalesUser, isRmUser } from '../api/client'
 import clsx from 'clsx'
 
 const adminNav = [
@@ -12,23 +12,30 @@ const adminNav = [
   { to: '/krsna/sessions', icon: MessageSquare, label: 'Sessions' },
   { to: '/krsna/enquiries', icon: ClipboardList, label: 'Enquiries' },
   { to: '/krsna/presales', icon: UserCheck, label: 'Pre-sales' },
-  { to: '/krsna/team', icon: UsersRound, label: 'Team' },
   { to: '/krsna/users', icon: UsersIcon, label: 'Users' },
   { to: '/krsna/vendor-leads', icon: Briefcase, label: 'Vendor Leads' },
-  { to: '/krsna/summaries', icon: FileText, label: 'Summaries' },
   { to: '/krsna/logs', icon: ScrollText, label: 'Logs' },
-  { to: '/krsna/files', icon: Paperclip, label: 'Files' },
   { to: '/krsna/system', icon: Activity, label: 'System Health' },
 ]
 
 const presalesNav = [
+  { to: '/krsna/enquiries', icon: ClipboardList, label: 'Enquiries' },
+  { to: '/krsna/my-leads', icon: UserCircle, label: 'My Leads' },
+]
+
+const rmNav = [
+  { to: '/krsna/enquiries', icon: ClipboardList, label: 'Enquiries' },
   { to: '/krsna/my-leads', icon: UserCircle, label: 'My Leads' },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const user = getUser()
-  const nav = isPresalesUser() && !isAdminUser() ? presalesNav : adminNav
+  const nav = isPresalesUser() && !isAdminUser()
+    ? presalesNav
+    : isRmUser() && !isAdminUser()
+      ? rmNav
+      : adminNav
 
   const handleLogout = () => {
     clearToken()

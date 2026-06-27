@@ -29,8 +29,17 @@ class AssignPresalesRequest(BaseModel):
     snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
+class AssignStaffLeadRequest(BaseModel):
+    staff_user_id: str
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
 class CompletePresalesRequest(BaseModel):
     notes: Optional[str] = None
+
+
+class LeadNotesRequest(BaseModel):
+    notes: str = Field(default="", max_length=2000)
 
 
 @router.post("/crm-login")
@@ -132,45 +141,152 @@ async def assign_presales_lead(
     return {"assignment": row}
 
 
+@router.patch("/lead-assignments/{external_id}/assign-user")
+async def assign_user_lead(
+    external_id: str,
+    body: AssignStaffLeadRequest,
+    auth=Depends(require_admin),
+):
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+
+    staff = crm_store.get_crm_user_by_id(body.staff_user_id)
+    if not staff or not staff.get("active"):
+        raise HTTPException(status_code=400, detail="Invalid team member")
+    role = str(staff.get("role") or "")
+    if role not in {"presales", "rm"}:
+        raise HTTPException(status_code=400, detail="Assign to presales or RM only")
+
+    try:
+        row = crm_store.assign_staff_lead(
+            external_id=external_id,
+            staff_user_id=body.staff_user_id,
+            staff_role=role,
+            snapshot=body.snapshot,
+            source=crm_store.SOURCE_TATVA_PRESALES,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"assignment": row}
+
+
+@router.patch("/lead-assignments/{external_id}/assign-vendor")
+async def assign_vendor_lead(
+    external_id: str,
+    body: AssignStaffLeadRequest,
+    auth=Depends(require_admin),
+):
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+
+    staff = crm_store.get_crm_user_by_id(body.staff_user_id)
+    if not staff or not staff.get("active"):
+        raise HTTPException(status_code=400, detail="Invalid team member")
+    role = str(staff.get("role") or "")
+    if role not in {"presales", "rm"}:
+        raise HTTPException(status_code=400, detail="Assign to presales or RM only")
+
+    try:
+        row = crm_store.assign_staff_lead(
+            external_id=external_id,
+            staff_user_id=body.staff_user_id,
+            staff_role=role,
+            snapshot=body.snapshot,
+            source=crm_store.SOURCE_TATVA_VENDOR,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"assignment": row}
+
+
 @router.get("/my-leads")
 async def get_my_leads(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     status: Optional[str] = Query(None),
+    lead_type: str = Query("user", pattern="^(user|vendor)$"),
     auth=Depends(require_auth),
 ):
     role = auth.get("role")
     user_id = auth.get("user_id")
-    if role not in {"presales"} or not user_id:
-        raise HTTPException(status_code=403, detail="Presales access required")
+    if role not in {"presales", "rm"} or not user_id:
+        raise HTTPException(status_code=403, detail="Team access required")
 
     if not crm_store.crm_available():
         raise HTTPException(status_code=503, detail="CRM database not configured")
 
+    source = (
+        crm_store.SOURCE_TATVA_VENDOR
+        if lead_type == "vendor"
+        else crm_store.SOURCE_TATVA_PRESALES
+    )
     data = crm_store.list_my_leads(
-        presales_user_id=str(user_id),
+        staff_user_id=str(user_id),
+        staff_role=str(role),
+        source=source,
         page=page,
         limit=limit,
         status=status,
     )
-    return {"success": True, "data": data}
+    return {"success": True, "data": data, "lead_type": lead_type}
 
 
 @router.patch("/my-leads/{external_id}/complete")
 async def complete_my_lead(
     external_id: str,
     body: CompletePresalesRequest,
+    lead_type: str = Query("user", pattern="^(user|vendor)$"),
     auth=Depends(require_auth),
 ):
-    if auth.get("role") != "presales" or not auth.get("user_id"):
-        raise HTTPException(status_code=403, detail="Presales access required")
+    role = auth.get("role")
+    user_id = auth.get("user_id")
+    if role not in {"presales", "rm"} or not user_id:
+        raise HTTPException(status_code=403, detail="Team access required")
     if not crm_store.crm_available():
         raise HTTPException(status_code=503, detail="CRM database not configured")
+    source = (
+        crm_store.SOURCE_TATVA_VENDOR
+        if lead_type == "vendor"
+        else crm_store.SOURCE_TATVA_PRESALES
+    )
     try:
-        row = crm_store.mark_presales_completed(
+        row = crm_store.mark_lead_completed(
             external_id=external_id,
-            presales_user_id=str(auth["user_id"]),
+            staff_user_id=str(user_id),
+            staff_role=str(role),
+            source=source,
             notes=body.notes,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"assignment": row}
+
+
+@router.patch("/my-leads/{external_id}/notes")
+async def update_my_lead_notes(
+    external_id: str,
+    body: LeadNotesRequest,
+    lead_type: str = Query("user", pattern="^(user|vendor)$"),
+    auth=Depends(require_auth),
+):
+    role = auth.get("role")
+    user_id = auth.get("user_id")
+    if role not in {"presales", "rm"} or not user_id:
+        raise HTTPException(status_code=403, detail="Team access required")
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+    source = (
+        crm_store.SOURCE_TATVA_VENDOR
+        if lead_type == "vendor"
+        else crm_store.SOURCE_TATVA_PRESALES
+    )
+    try:
+        row = crm_store.update_lead_notes(
+            external_id=external_id,
+            staff_user_id=str(user_id),
+            staff_role=str(role),
+            source=source,
+            notes=body.notes.strip(),
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

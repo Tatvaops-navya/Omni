@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, CrmUser, PresalesItem } from '../api/client'
+import { StaffCommentDisplay } from '../components/StaffCommentDisplay'
 import clsx from 'clsx'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -39,8 +40,11 @@ export default function Presales() {
 
   const loadTeam = useCallback(async () => {
     try {
-      const data = await api.crmUsers('presales')
-      setTeam(data.users || [])
+      const [presales, rm] = await Promise.all([
+        api.crmUsers('presales'),
+        api.crmUsers('rm'),
+      ])
+      setTeam([...(presales.users || []), ...(rm.users || [])])
     } catch {
       setTeam([])
     }
@@ -81,12 +85,12 @@ export default function Presales() {
     setPage(1)
   }, [flagFilter])
 
-  const handleAssign = async (row: PresalesItem, presalesUserId: string) => {
-    if (!presalesUserId) return
+  const handleAssign = async (row: PresalesItem, staffUserId: string) => {
+    if (!staffUserId) return
     setAssigningId(row._id)
     try {
-      await api.assignPresalesLead(row._id, {
-        presales_user_id: presalesUserId,
+      await api.assignUserLead(row._id, {
+        staff_user_id: staffUserId,
         snapshot: { ...row },
       })
       toast.success('Lead assigned')
@@ -132,6 +136,7 @@ export default function Presales() {
                 <th className="px-4 py-3 font-medium">Location</th>
                 <th className="px-4 py-3 font-medium">Assignee</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Team comment</th>
                 <th className="px-4 py-3 font-medium">Assign</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
               </tr>
@@ -139,20 +144,20 @@ export default function Presales() {
             <tbody>
               {loading && items.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                     Loading presales records...
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                     No presales records found.
                   </td>
                 </tr>
               ) : (
                 items.map(row => {
                   const assignment = row.assignment
-                  const currentAssignee = assignment?.presales_user_id || ''
+                  const currentAssignee = assignment?.staff_user_id || assignment?.presales_user_id || assignment?.rm_user_id || ''
                   return (
                     <tr
                       key={row._id}
@@ -185,6 +190,9 @@ export default function Presales() {
                       <td className="px-4 py-3 text-slate-400 capitalize text-xs">
                         {statusLabel(assignment?.status)}
                       </td>
+                      <td className="px-4 py-3 align-top">
+                        <StaffCommentDisplay text={assignment?.notes} />
+                      </td>
                       <td className="px-4 py-3">
                         {crmConfigured && team.length > 0 ? (
                           <select
@@ -195,7 +203,9 @@ export default function Presales() {
                           >
                             <option value="">Assign to...</option>
                             {team.map(u => (
-                              <option key={u.id || ''} value={u.id || ''}>{u.name}</option>
+                              <option key={u.id || ''} value={u.id || ''}>
+                                {u.name} ({u.role})
+                              </option>
                             ))}
                           </select>
                         ) : (

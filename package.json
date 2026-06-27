@@ -1,0 +1,14 @@
+{
+  "name": "omnichannel",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Aadhya omnichannel — Vercel (admin-ui) + Render (FastAPI backend)",
+  "scripts": {
+    "dev:ui": "npm run dev --prefix admin-ui",
+    "install:frontend": "npm install --prefix admin-ui",
+    "build": "npm run build --prefix admin-ui",
+    "build:frontend": "npm run build --prefix admin-ui",
+    "vercel-build": "npm ci --prefix admin-ui && npm run build --prefix admin-ui",
+    "build:backend": "pip install -r requirements.txt"
+  }
+}

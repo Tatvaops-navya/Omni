@@ -12,8 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.admin.auth import require_admin, require_admin_sse, generate_session_token
+from backend.admin.auth import require_admin, require_admin_sse, require_staff, generate_session_token
 from backend.config import get_settings
+from backend.storage import supabase_store
 from backend.storage.redis_store import get_session, delete_session, list_all_sessions
 from backend.utils.logger import get_recent_logs
 from backend.schemas.session import ConversationStage
@@ -219,27 +220,119 @@ async def get_vendor_leads(
     auth=Depends(require_admin),
 ):
     from backend.integrations.tatva_vendor_leads import fetch_vendor_leads
+    from backend.crm import store as crm_store
 
-    return await fetch_vendor_leads(page=page, limit=limit, status=status or None)
+    result = await fetch_vendor_leads(page=page, limit=limit, status=status or None)
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    if crm_store.crm_available() and items:
+        data["items"] = crm_store.enrich_vendor_items(items)
+        result["data"] = data
+    result["crm_configured"] = crm_store.crm_available()
+    return result
 
 
 # ─── Enquiries ────────────────────────────────────────────────────────────────
 
-@router.get("/enquiries")
-async def get_enquiries(auth=Depends(require_admin)):
-    sessions = await list_all_sessions()
-    return {
-        "enquiries": [
-            {
-                "session_id": s.session_id,
-                "phone_number": s.phone_number,
-                "channel": s.channel,
-                "extracted_fields": s.extracted_fields,
-                "completed_fields": s.completed_fields,
-                "completion_pct": s.field_completion_pct,
-            }
-            for s in sessions if s.extracted_fields
+def _live_session_to_enquiry(session) -> dict[str, Any]:
+    from backend.storage.supabase_store import _all_enquiry_attachment_records
+
+    status = "declined" if session.flow_state.get("project_declined") else "in_progress"
+    if session.summary_generated:
+        status = "completed"
+    fields = dict(session.extracted_fields or {})
+    fields["_enquiry_status"] = status
+    tatva_summary = session.flow_state.get("tatva_enquiry_summary")
+    if isinstance(tatva_summary, dict) and tatva_summary:
+        fields["tatva_enquiry_summary"] = tatva_summary
+    tatva_id = session.flow_state.get("tatva_enquiry_id")
+    if tatva_id:
+        fields["tatva_enquiry_id"] = str(tatva_id)
+    file_records = _all_enquiry_attachment_records(session)
+    if file_records:
+        fields["_enquiry_files"] = file_records
+        fields["_enquiry_attachment_urls"] = [
+            str(item.get("file_url") or "").strip()
+            for item in file_records
+            if str(item.get("file_url") or "").strip()
         ]
+    return {
+        "session_id": session.session_id,
+        "phone_number": session.phone_number,
+        "channel": session.channel,
+        "service_category": session.service_category.value if session.service_category else None,
+        "extracted_fields": fields,
+        "completed_fields": session.completed_fields,
+        "completion_pct": session.field_completion_pct,
+        "lead_score": session.lead_score,
+        "lead_tier": session.lead_tier,
+        "status": status,
+        "attachment_count": len(file_records),
+        "attachments": file_records,
+        "created_at": session.created_at.isoformat(),
+        "last_active": session.last_active.isoformat(),
+        "source": "live",
+    }
+
+
+@router.get("/enquiries")
+async def get_enquiries(auth=Depends(require_staff)):
+    from backend.crm import store as crm_store
+
+    stored = await supabase_store.get_all_enquiries()
+    by_session: dict[str, dict[str, Any]] = {
+        str(row.get("session_id") or ""): row for row in stored if row.get("session_id")
+    }
+
+    for session in await list_all_sessions():
+        if not session.extracted_fields:
+            continue
+        live = _live_session_to_enquiry(session)
+        sid = live["session_id"]
+        existing = by_session.get(sid)
+        if existing:
+            existing["completion_pct"] = max(
+                int(existing.get("completion_pct") or 0),
+                int(live.get("completion_pct") or 0),
+            )
+            if not existing.get("attachments") and live.get("attachments"):
+                existing["attachments"] = live["attachments"]
+                existing["attachment_count"] = live["attachment_count"]
+            if live.get("status") == "in_progress":
+                existing["status"] = "in_progress"
+                existing["extracted_fields"] = live["extracted_fields"]
+                existing["last_active"] = live["last_active"]
+            continue
+        by_session[sid] = live
+
+    enquiries = sorted(
+        by_session.values(),
+        key=lambda row: str(row.get("last_active") or row.get("created_at") or ""),
+        reverse=True,
+    )
+
+    role = auth.get("role")
+    user_id = auth.get("user_id")
+    scoped_to_assignments = False
+    if role in {"presales", "rm"} and user_id:
+        assigned_phones = crm_store.assigned_phones_for_staff(
+            str(user_id),
+            str(role),
+        )
+        enquiries = [
+            row for row in enquiries
+            if crm_store.enquiry_matches_assigned_phones(row, assigned_phones)
+        ]
+        scoped_to_assignments = True
+
+    from backend.admin.enquiry_display import enrich_enquiries
+
+    enquiries = await enrich_enquiries(enquiries)
+    return {
+        "enquiries": enquiries,
+        "configured": supabase_store.is_configured(),
+        "count": len(enquiries),
+        "scoped_to_assignments": scoped_to_assignments,
     }
 
 

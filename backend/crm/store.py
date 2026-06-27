@@ -9,6 +9,7 @@ from backend.config import get_settings
 from backend.storage.supabase_client import get_supabase_client, is_supabase_configured
 
 SOURCE_TATVA_PRESALES = "tatva_presales"
+SOURCE_TATVA_VENDOR = "tatva_vendor"
 
 STATUS_UNASSIGNED = "unassigned"
 STATUS_ASSIGNED = "assigned"
@@ -38,6 +39,29 @@ def _client():
 
 def crm_available() -> bool:
     return is_supabase_configured()
+
+
+def _staff_column_for_role(role: str) -> str:
+    if role == "presales":
+        return "presales_user_id"
+    if role == "rm":
+        return "rm_user_id"
+    raise ValueError("invalid staff role")
+
+
+def get_crm_user_by_id(user_id: str) -> Optional[dict[str, Any]]:
+    if not crm_available():
+        return None
+    result = (
+        _client()
+        .table("crm_users")
+        .select("id,name,email,role,active")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    rows = result.data or []
+    return rows[0] if rows else None
 
 
 def list_crm_users(*, role: str | None = None, active_only: bool = True) -> list[dict[str, Any]]:
@@ -121,15 +145,33 @@ def assign_presales_lead(
     snapshot: dict[str, Any],
     source: str = SOURCE_TATVA_PRESALES,
 ) -> dict[str, Any]:
+    return assign_staff_lead(
+        external_id=external_id,
+        staff_user_id=presales_user_id,
+        staff_role="presales",
+        snapshot=snapshot,
+        source=source,
+    )
+
+
+def assign_staff_lead(
+    *,
+    external_id: str,
+    staff_user_id: str,
+    staff_role: str,
+    snapshot: dict[str, Any],
+    source: str,
+) -> dict[str, Any]:
+    col = _staff_column_for_role(staff_role)
     now = _now_iso()
-    row = {
+    row: dict[str, Any] = {
         "source": source,
         "external_id": external_id,
-        "presales_user_id": presales_user_id,
         "status": STATUS_ASSIGNED,
         "snapshot": snapshot,
         "assigned_at": now,
         "updated_at": now,
+        col: staff_user_id,
     }
     result = (
         _client()
@@ -145,7 +187,9 @@ def assign_presales_lead(
 
 def list_my_leads(
     *,
-    presales_user_id: str,
+    staff_user_id: str,
+    staff_role: str,
+    source: str = SOURCE_TATVA_PRESALES,
     page: int = 1,
     limit: int = 20,
     status: str | None = None,
@@ -153,12 +197,13 @@ def list_my_leads(
     if not crm_available():
         return {"items": [], "total": 0, "page": page, "limit": limit, "totalPages": 0}
 
+    col = _staff_column_for_role(staff_role)
     query = (
         _client()
         .table("lead_assignments")
         .select("*", count="exact")
-        .eq("source", SOURCE_TATVA_PRESALES)
-        .eq("presales_user_id", presales_user_id)
+        .eq("source", source)
+        .eq(col, staff_user_id)
     )
     if status:
         query = query.eq("status", status)
@@ -187,6 +232,24 @@ def mark_presales_completed(
     presales_user_id: str,
     notes: str | None = None,
 ) -> dict[str, Any]:
+    return mark_lead_completed(
+        external_id=external_id,
+        staff_user_id=presales_user_id,
+        staff_role="presales",
+        source=SOURCE_TATVA_PRESALES,
+        notes=notes,
+    )
+
+
+def mark_lead_completed(
+    *,
+    external_id: str,
+    staff_user_id: str,
+    staff_role: str,
+    source: str,
+    notes: str | None = None,
+) -> dict[str, Any]:
+    col = _staff_column_for_role(staff_role)
     now = _now_iso()
     update: dict[str, Any] = {
         "status": STATUS_PRESALES_COMPLETED,
@@ -199,15 +262,123 @@ def mark_presales_completed(
         _client()
         .table("lead_assignments")
         .update(update)
-        .eq("source", SOURCE_TATVA_PRESALES)
+        .eq("source", source)
         .eq("external_id", external_id)
-        .eq("presales_user_id", presales_user_id)
+        .eq(col, staff_user_id)
         .execute()
     )
     data = (result.data or [None])[0]
     if not data:
         raise RuntimeError("Lead not found or not assigned to you")
     return data
+
+
+def update_lead_notes(
+    *,
+    external_id: str,
+    staff_user_id: str,
+    staff_role: str,
+    source: str,
+    notes: str,
+) -> dict[str, Any]:
+    col = _staff_column_for_role(staff_role)
+    now = _now_iso()
+    result = (
+        _client()
+        .table("lead_assignments")
+        .update({"notes": notes, "updated_at": now})
+        .eq("source", source)
+        .eq("external_id", external_id)
+        .eq(col, staff_user_id)
+        .execute()
+    )
+    data = (result.data or [None])[0]
+    if not data:
+        raise RuntimeError("Lead not found or not assigned to you")
+    return data
+
+
+def normalize_phone(phone: str) -> str:
+    digits = "".join(c for c in (phone or "") if c.isdigit())
+    if len(digits) >= 10:
+        return digits[-10:]
+    return digits
+
+
+def assigned_phones_for_staff(
+    staff_user_id: str,
+    staff_role: str,
+    *,
+    source: str | None = SOURCE_TATVA_PRESALES,
+) -> set[str]:
+    """Phone numbers from leads assigned to this presales/RM team member."""
+    if not crm_available():
+        return set()
+    col = _staff_column_for_role(staff_role)
+    query = (
+        _client()
+        .table("lead_assignments")
+        .select("snapshot")
+        .eq(col, staff_user_id)
+    )
+    if source:
+        query = query.eq("source", source)
+    result = query.execute()
+    phones: set[str] = set()
+    phone_keys = ("phoneNumber", "phone", "phone_number", "mobile")
+    for row in result.data or []:
+        snap = row.get("snapshot") if isinstance(row.get("snapshot"), dict) else {}
+        for key in phone_keys:
+            raw = snap.get(key)
+            if raw:
+                norm = normalize_phone(str(raw))
+                if norm:
+                    phones.add(norm)
+                    break
+    return phones
+
+
+def enquiry_phone_keys(enquiry: dict[str, Any]) -> set[str]:
+    phones: set[str] = set()
+    candidates = [enquiry.get("phone_number")]
+    fields = enquiry.get("extracted_fields")
+    if isinstance(fields, dict):
+        candidates.append(fields.get("phone_number"))
+    for raw in candidates:
+        if raw:
+            norm = normalize_phone(str(raw))
+            if norm:
+                phones.add(norm)
+    return phones
+
+
+def enquiry_matches_assigned_phones(
+    enquiry: dict[str, Any],
+    assigned_phones: set[str],
+) -> bool:
+    if not assigned_phones:
+        return False
+    return bool(enquiry_phone_keys(enquiry) & assigned_phones)
+
+
+def _assignment_meta(
+    assignment: dict[str, Any],
+    users_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    pid = assignment.get("presales_user_id")
+    rid = assignment.get("rm_user_id")
+    assignee_id = pid or rid
+    assignee = users_by_id.get(assignee_id) if assignee_id else None
+    return {
+        "status": assignment.get("status") or STATUS_UNASSIGNED,
+        "presales_user_id": pid,
+        "rm_user_id": rid,
+        "staff_user_id": assignee_id,
+        "assignee_name": (assignee or {}).get("name"),
+        "assignee_email": (assignee or {}).get("email"),
+        "assigned_at": assignment.get("assigned_at"),
+        "notes": assignment.get("notes"),
+    }
 
 
 def enrich_presales_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -221,19 +392,30 @@ def enrich_presales_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for item in items:
         ext_id = str(item.get("_id") or "")
         assignment = assignments.get(ext_id) or {}
-        assignee = None
-        pid = assignment.get("presales_user_id")
-        if pid and pid in users_by_id:
-            assignee = users_by_id[pid]
         enriched.append({
             **item,
-            "assignment": {
-                "status": assignment.get("status") or STATUS_UNASSIGNED,
-                "presales_user_id": pid,
-                "assignee_name": (assignee or {}).get("name"),
-                "assignee_email": (assignee or {}).get("email"),
-                "assigned_at": assignment.get("assigned_at"),
-                "notes": assignment.get("notes"),
-            },
+            "assignment": _assignment_meta(assignment, users_by_id),
+        })
+    return enriched
+
+
+def enrich_vendor_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge Tatva vendor lead rows with Supabase assignment metadata."""
+    if not items:
+        return []
+    ids = [
+        str(i.get("_id") or i.get("id") or "")
+        for i in items
+        if i.get("_id") or i.get("id")
+    ]
+    assignments = get_assignments_by_external_ids(ids, source=SOURCE_TATVA_VENDOR)
+    users_by_id = {u["id"]: u for u in list_crm_users(active_only=True)}
+    enriched: list[dict[str, Any]] = []
+    for item in items:
+        ext_id = str(item.get("_id") or item.get("id") or "")
+        assignment = assignments.get(ext_id) or {}
+        enriched.append({
+            **item,
+            "assignment": _assignment_meta(assignment, users_by_id),
         })
     return enriched

@@ -1,21 +1,18 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
-import { getUser, isAuthenticated, isPresalesUser } from './api/client'
+import { getUser, isAuthenticated, isPresalesUser, isRmUser, isStaffUser } from './api/client'
 import Login from './pages/Login'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Sessions from './pages/Sessions'
 import SessionDetail from './pages/SessionDetail'
 import Enquiries from './pages/Enquiries'
-import Summaries from './pages/Summaries'
 import Logs from './pages/Logs'
 import SystemHealth from './pages/SystemHealth'
-import Files from './pages/Files'
 import Presales from './pages/Presales'
 import Users from './pages/Users'
 import VendorLeads from './pages/VendorLeads'
 import MyLeads from './pages/MyLeads'
-import Team from './pages/Team'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated() ? <>{children}</> : <Navigate to="/krsna" replace />
@@ -25,12 +22,22 @@ function HomeRedirect() {
   if (isPresalesUser()) {
     return <Navigate to="my-leads" replace />
   }
+  if (isRmUser()) {
+    return <Navigate to="my-leads" replace />
+  }
   return <Navigate to="dashboard" replace />
 }
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
-  if (isPresalesUser()) {
-    return <Navigate to="/krsna/my-leads" replace />
+  if (isPresalesUser() || isRmUser()) {
+    return <Navigate to="/krsna/enquiries" replace />
+  }
+  return <>{children}</>
+}
+
+function StaffOnly({ children }: { children: React.ReactNode }) {
+  if (!isStaffUser()) {
+    return <Navigate to="/krsna" replace />
   }
   return <>{children}</>
 }
@@ -59,14 +66,13 @@ export default function App() {
                 <Route path="dashboard" element={<AdminOnly><Dashboard /></AdminOnly>} />
                 <Route path="sessions" element={<AdminOnly><Sessions /></AdminOnly>} />
                 <Route path="sessions/:id" element={<AdminOnly><SessionDetail /></AdminOnly>} />
-                <Route path="enquiries" element={<AdminOnly><Enquiries /></AdminOnly>} />
+                <Route path="enquiries" element={<StaffOnly><Enquiries /></StaffOnly>} />
                 <Route path="presales" element={<AdminOnly><Presales /></AdminOnly>} />
-                <Route path="team" element={<AdminOnly><Team /></AdminOnly>} />
+                <Route path="team" element={<Navigate to="/krsna/dashboard" replace />} />
                 <Route path="users" element={<AdminOnly><Users /></AdminOnly>} />
                 <Route path="vendor-leads" element={<AdminOnly><VendorLeads /></AdminOnly>} />
-                <Route path="summaries" element={<AdminOnly><Summaries /></AdminOnly>} />
+                <Route path="summaries" element={<Navigate to="/krsna/dashboard" replace />} />
                 <Route path="logs" element={<AdminOnly><Logs /></AdminOnly>} />
-                <Route path="files" element={<AdminOnly><Files /></AdminOnly>} />
                 <Route path="system" element={<AdminOnly><SystemHealth /></AdminOnly>} />
               </Routes>
             </Layout>
