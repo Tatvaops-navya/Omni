@@ -108,6 +108,17 @@ def _resolve_auth_context(
     )
 
 
+async def require_staff(
+    request: Request,
+    api_key: Optional[str] = Depends(API_KEY_HEADER),
+):
+    """Admin, presales, and RM team members."""
+    ctx = _resolve_auth_context(request, api_key)
+    if ctx.get("method") == "api_key" or ctx.get("role") in {"admin", "presales", "rm"}:
+        return ctx
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Staff access required")
+
+
 async def require_admin(
     request: Request,
     api_key: Optional[str] = Depends(API_KEY_HEADER),

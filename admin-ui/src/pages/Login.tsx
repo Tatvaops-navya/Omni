@@ -25,7 +25,7 @@ export default function Login() {
       if (res.token) {
         setToken(res.token, res.user)
         const role = res.user?.role || 'admin'
-        navigate(role === 'presales' ? '/krsna/my-leads' : '/krsna/dashboard')
+        navigate(role === 'presales' || role === 'rm' ? '/krsna/my-leads' : '/krsna/dashboard')
       } else {
         toast.error('Login failed')
       }

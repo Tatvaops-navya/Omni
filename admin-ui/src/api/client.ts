@@ -57,6 +57,19 @@ export function isPresalesUser(): boolean {
   return getUser()?.role === 'presales'
 }
 
+export function isRmUser(): boolean {
+  return getUser()?.role === 'rm'
+}
+
+export function isStaffUser(): boolean {
+  const role = getUser()?.role
+  return role === 'admin' || role === 'presales' || role === 'rm'
+}
+
+export function canViewEnquiryAttachments(): boolean {
+  return isStaffUser()
+}
+
 async function fetchAdmin(path: string, options: RequestInit = {}) {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -78,6 +91,8 @@ async function fetchAdmin(path: string, options: RequestInit = {}) {
 export type LeadAssignmentMeta = {
   status?: string
   presales_user_id?: string | null
+  rm_user_id?: string | null
+  staff_user_id?: string | null
   assignee_name?: string | null
   assignee_email?: string | null
   assigned_at?: string | null
@@ -161,12 +176,14 @@ export type VendorLeadItem = {
   leadStatus?: string
   createdAt?: string
   created_at?: string
+  assignment?: LeadAssignmentMeta
   [key: string]: unknown
 }
 
 export type VendorLeadsResponse = {
   success: boolean
   message?: string
+  crm_configured?: boolean
   data: {
     items: VendorLeadItem[]
     total: number
@@ -221,19 +238,38 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  myLeads: (params?: { page?: number; limit?: number; status?: string }) => {
+  assignUserLead: (externalId: string, body: { staff_user_id: string; snapshot: Record<string, unknown> }) =>
+    fetchAdmin(`/admin/lead-assignments/${externalId}/assign-user`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  assignVendorLead: (externalId: string, body: { staff_user_id: string; snapshot: Record<string, unknown> }) =>
+    fetchAdmin(`/admin/lead-assignments/${externalId}/assign-vendor`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  myLeads: (params?: { page?: number; limit?: number; status?: string; lead_type?: 'user' | 'vendor' }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.status) qs.set('status', params.status)
+    if (params?.lead_type) qs.set('lead_type', params.lead_type)
     const query = qs.toString()
     return fetchAdmin(`/admin/my-leads${query ? `?${query}` : ''}`)
   },
 
-  completeMyLead: (externalId: string, notes?: string) =>
-    fetchAdmin(`/admin/my-leads/${externalId}/complete`, {
+  completeMyLead: (externalId: string, notes?: string, leadType: 'user' | 'vendor' = 'user') =>
+    fetchAdmin(`/admin/my-leads/${externalId}/complete?lead_type=${leadType}`, {
       method: 'PATCH',
       body: JSON.stringify({ notes: notes || null }),
+    }),
+
+  saveMyLeadComment: (externalId: string, notes: string, leadType: 'user' | 'vendor' = 'user') =>
+    fetchAdmin(`/admin/my-leads/${externalId}/notes?lead_type=${leadType}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notes }),
     }),
 
   dashboard: () => fetchAdmin('/admin/dashboard'),

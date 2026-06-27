@@ -54,6 +54,9 @@ async def save_attachment(
             mime_type=content_type,
             uploaded_at=datetime.utcnow(),
         )
+        existing_urls = {str(a.file_url or "").strip() for a in session.attachments}
+        if public_url in existing_urls:
+            return next(a for a in session.attachments if str(a.file_url) == public_url)
         session.attachments.append(meta)
         return meta
     except Exception as e:
