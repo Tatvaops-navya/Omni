@@ -1,0 +1,2 @@
+# Install from repo root (Render / CI). Keeps a single source of truth in backend/.
+-r backend/requirements.txt
