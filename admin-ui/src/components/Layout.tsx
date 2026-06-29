@@ -72,7 +72,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="px-3 py-4 border-t border-slate-700/50">
-          <span className="text-xs text-slate-500 px-3">TatvaOps ┬╖ v1.0</span>
+          <span className="text-xs text-slate-500 px-3">TatvaOps · v1.0</span>
           <button onClick={handleLogout} className="nav-item w-full mt-2">
             <LogOut className="w-4 h-4" />
             Sign Out

@@ -1,7 +1,7 @@
 ﻿export function StaffCommentDisplay({ text }: { text?: string | null }) {
   const value = (text || '').trim()
   if (!value) {
-    return <span className="text-slate-600 text-xs">ΓÇö</span>
+    return <span className="text-slate-600 text-xs">—</span>
   }
   return (
     <p

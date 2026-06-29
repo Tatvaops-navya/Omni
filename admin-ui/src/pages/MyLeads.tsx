@@ -70,11 +70,11 @@ function snap(row: MyLeadRow, ...keys: string[]): string {
     const v = snapshot[key]
     if (v != null && String(v).trim()) return String(v)
   }
-  return 'ΓÇö'
+  return '—'
 }
 
 function formatDate(iso: string | undefined): string {
-  if (!iso) return 'ΓÇö'
+  if (!iso) return '—'
   try {
     return format(new Date(iso), 'dd MMM yyyy, HH:mm')
   } catch {

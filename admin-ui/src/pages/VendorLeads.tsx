@@ -11,11 +11,11 @@ function pick(row: VendorLeadItem, ...keys: string[]): string {
       return String(value).trim()
     }
   }
-  return 'ΓÇö'
+  return '—'
 }
 
 function formatDate(iso: string | undefined): string {
-  if (!iso) return 'ΓÇö'
+  if (!iso) return '—'
   try {
     return format(new Date(iso), 'dd MMM yyyy, HH:mm')
   } catch {
@@ -39,7 +39,7 @@ function vendorStatusBadge(status: string) {
 
 function vendorStatus(row: VendorLeadItem): string {
   const value = pick(row, 'status', 'leadStatus', 'vendorStatus', 'approvalStatus')
-  return value === 'ΓÇö' ? 'pending' : value
+  return value === '—' ? 'pending' : value
 }
 
 export default function VendorLeads() {
@@ -132,7 +132,7 @@ export default function VendorLeads() {
           <h1 className="text-xl font-semibold text-slate-200">Vendor Leads</h1>
           <p className="text-sm text-slate-500 mt-1">
             {total} record{total !== 1 ? 's' : ''} from Tatva
-            {crmConfigured ? ' ┬╖ assignment enabled' : ' ┬╖ configure Supabase for assignment'}
+            {crmConfigured ? ' · assignment enabled' : ' · configure Supabase for assignment'}
           </p>
         </div>
         <select
@@ -213,7 +213,7 @@ export default function VendorLeads() {
                         <span className={vendorStatusBadge(leadStatus)}>{leadStatus}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                        {assignment?.assignee_name || 'ΓÇö'}
+                        {assignment?.assignee_name || '—'}
                       </td>
                       <td className="px-4 py-3 align-top">
                         <StaffCommentDisplay text={assignment?.notes} />
@@ -234,11 +234,11 @@ export default function VendorLeads() {
                             ))}
                           </select>
                         ) : (
-                          <span className="text-xs text-slate-600">ΓÇö</span>
+                          <span className="text-xs text-slate-600">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
-                        {formatDate(created !== 'ΓÇö' ? created : undefined)}
+                        {formatDate(created !== '—' ? created : undefined)}
                       </td>
                     </tr>
                   )
@@ -250,7 +250,7 @@ export default function VendorLeads() {
 
         <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
           <span className="text-xs text-slate-500">
-            Page {page} of {totalPages} ┬╖ {total} total
+            Page {page} of {totalPages} · {total} total
           </span>
           <div className="flex gap-2">
             <button

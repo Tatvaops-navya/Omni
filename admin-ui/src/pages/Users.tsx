@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { format } from 'date-fns'
 
 function formatDate(iso: string | undefined): string {
-  if (!iso) return 'ΓÇö'
+  if (!iso) return '—'
   try {
     return format(new Date(iso), 'dd MMM yyyy, HH:mm')
   } catch {
@@ -13,7 +13,7 @@ function formatDate(iso: string | undefined): string {
 }
 
 function displayName(user: TatvaUserItem): string {
-  return user.fullName || user.userName || 'ΓÇö'
+  return user.fullName || user.userName || '—'
 }
 
 export default function Users() {
@@ -55,7 +55,7 @@ export default function Users() {
       <div>
         <h1 className="text-xl font-semibold text-slate-200">Users</h1>
         <p className="text-sm text-slate-500 mt-1">
-          {total} registered user{total !== 1 ? 's' : ''} from Tatva ┬╖ refreshes every 30s
+          {total} registered user{total !== 1 ? 's' : ''} from Tatva · refreshes every 30s
         </p>
       </div>
 
@@ -102,13 +102,13 @@ export default function Users() {
                       {displayName(row)}
                     </td>
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
-                      {row.userName || 'ΓÇö'}
+                      {row.userName || '—'}
                     </td>
                     <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                      {row.phoneNumber || 'ΓÇö'}
+                      {row.phoneNumber || '—'}
                     </td>
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
-                      {row.email || 'ΓÇö'}
+                      {row.email || '—'}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -119,14 +119,14 @@ export default function Users() {
                             : 'bg-slate-600/30 text-slate-400',
                         )}
                       >
-                        {row.status || 'ΓÇö'}
+                        {row.status || '—'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-400 capitalize">
-                      {row.role || 'ΓÇö'}
+                      {row.role || '—'}
                     </td>
                     <td className="px-4 py-3 text-slate-500">
-                      {row.flag || 'ΓÇö'}
+                      {row.flag || '—'}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -152,7 +152,7 @@ export default function Users() {
 
         <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
           <span className="text-xs text-slate-500">
-            Page {page} of {totalPages} ┬╖ {total} total
+            Page {page} of {totalPages} · {total} total
           </span>
           <div className="flex gap-2">
             <button

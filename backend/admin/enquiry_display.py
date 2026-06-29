@@ -107,7 +107,7 @@ def build_requirements_summary(
         else:
             value = display_label(field, raw, service_category=service_category)
 
-        if not value or value == "ΓÇö":
+        if not value or value == "—":
             value = str(raw).strip()
         if not value:
             continue
