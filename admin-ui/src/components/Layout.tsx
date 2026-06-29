@@ -1,7 +1,7 @@
 ﻿import { NavLink, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, MessageSquare, ClipboardList,
-  ScrollText, Activity, LogOut, Flower2, UserCheck, Users as UsersIcon,
+  LayoutDashboard, ClipboardList,
+  Activity, LogOut, Flower2, UserCheck, Users as UsersIcon,
   Briefcase, UserCircle,
 } from 'lucide-react'
 import { clearToken, getUser, isAdminUser, isPresalesUser, isRmUser } from '../api/client'
@@ -9,12 +9,10 @@ import clsx from 'clsx'
 
 const adminNav = [
   { to: '/krsna/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/krsna/sessions', icon: MessageSquare, label: 'Sessions' },
   { to: '/krsna/enquiries', icon: ClipboardList, label: 'Enquiries' },
   { to: '/krsna/presales', icon: UserCheck, label: 'Pre-sales' },
   { to: '/krsna/users', icon: UsersIcon, label: 'Users' },
   { to: '/krsna/vendor-leads', icon: Briefcase, label: 'Vendor Leads' },
-  { to: '/krsna/logs', icon: ScrollText, label: 'Logs' },
   { to: '/krsna/system', icon: Activity, label: 'System Health' },
 ]
 

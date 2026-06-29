@@ -4,10 +4,7 @@ import { getUser, isAuthenticated, isPresalesUser, isRmUser, isStaffUser } from 
 import Login from './pages/Login'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
-import Sessions from './pages/Sessions'
-import SessionDetail from './pages/SessionDetail'
 import Enquiries from './pages/Enquiries'
-import Logs from './pages/Logs'
 import SystemHealth from './pages/SystemHealth'
 import Presales from './pages/Presales'
 import Users from './pages/Users'
@@ -64,15 +61,15 @@ export default function App() {
                 <Route index element={<HomeRedirect />} />
                 <Route path="my-leads" element={<MyLeads />} />
                 <Route path="dashboard" element={<AdminOnly><Dashboard /></AdminOnly>} />
-                <Route path="sessions" element={<AdminOnly><Sessions /></AdminOnly>} />
-                <Route path="sessions/:id" element={<AdminOnly><SessionDetail /></AdminOnly>} />
+                <Route path="sessions" element={<Navigate to="/krsna/dashboard" replace />} />
+                <Route path="sessions/:id" element={<Navigate to="/krsna/dashboard" replace />} />
                 <Route path="enquiries" element={<StaffOnly><Enquiries /></StaffOnly>} />
                 <Route path="presales" element={<AdminOnly><Presales /></AdminOnly>} />
                 <Route path="team" element={<Navigate to="/krsna/dashboard" replace />} />
                 <Route path="users" element={<AdminOnly><Users /></AdminOnly>} />
                 <Route path="vendor-leads" element={<AdminOnly><VendorLeads /></AdminOnly>} />
                 <Route path="summaries" element={<Navigate to="/krsna/dashboard" replace />} />
-                <Route path="logs" element={<AdminOnly><Logs /></AdminOnly>} />
+                <Route path="logs" element={<Navigate to="/krsna/dashboard" replace />} />
                 <Route path="system" element={<AdminOnly><SystemHealth /></AdminOnly>} />
               </Routes>
             </Layout>

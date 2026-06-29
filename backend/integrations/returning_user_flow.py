@@ -273,13 +273,10 @@ def apply_returning_location_choice(session: Session, choice: str) -> None:
 
 def existing_user_welcome_text(session: Session) -> str:
     full_name = display_client_name(session)
-    email = display_client_email(session)
     if full_name:
         greeting = f"Hi there {full_name} 👋"
     else:
         greeting = "Hi there 👋"
-    if email:
-        greeting = f"{greeting}\n{email}"
     return (
         f"{greeting}\n\n"
         "Great to see you again! I'm EVA, your TatvaOps assistant.\n\n"

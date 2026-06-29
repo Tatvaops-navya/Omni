@@ -206,7 +206,7 @@ def test_returning_user_steps_and_greeting():
     session.extracted_fields["email"] = "pramod.d@tatvaops.com"
     text = _returning_user_greeting_text(session)
     assert "Hi there John Doe" in text
-    assert "pramod.d@tatvaops.com" in text
+    assert "pramod.d@tatvaops.com" not in text
     assert "EVA" in text
     assert _first_name("Rahul Sharma") == "Rahul"
 
