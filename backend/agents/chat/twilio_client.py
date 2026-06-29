@@ -210,6 +210,66 @@ async def send_whatsapp_attachment_cta_links(to: str, attachments: list | None) 
             await asyncio.sleep(0.35)
 
 
+async def send_whatsapp_media_message(to: str, media_url: str, *, body: str = "") -> bool:
+    """Send a WhatsApp message with an inline image/video attachment."""
+    url = (media_url or "").strip()
+    if not url:
+        return False
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        loop = asyncio.get_event_loop()
+
+        def _create():
+            kwargs: dict[str, Any] = {
+                "from_": settings.twilio_whatsapp_from,
+                "to": to,
+                "media_url": [url],
+            }
+            text = (body or "").strip()
+            if text:
+                kwargs["body"] = text
+            return client.messages.create(**kwargs)
+
+        await loop.run_in_executor(None, _create)
+        return True
+    except Exception as exc:
+        print(f"[Twilio] Media send error: {exc}")
+        return False
+
+
+async def send_session_attachment_previews(to: str, session) -> None:
+    """
+    Let users open files they uploaded during final review (before Tatva CDN URLs exist).
+    Images/videos are sent inline; other types use a tappable preview link.
+    """
+    if not session:
+        return
+    try:
+        from backend.media.router import list_session_attachment_links
+    except ImportError:
+        return
+
+    links = list_session_attachment_links(session)
+    if not links:
+        return
+
+    import asyncio
+
+    for link in links:
+        kind = link.get("kind") or "file"
+        url = link["url"]
+        label = link["label"]
+        if kind in ("image", "video"):
+            sent = await send_whatsapp_media_message(to, url, body=label.removeprefix("↗ ").strip())
+            if not sent:
+                await send_whatsapp_message(to, f"{label}\n{url}")
+        else:
+            await send_whatsapp_message(to, f"{label}\n{url}")
+        await asyncio.sleep(0.35)
+
+
 async def send_context_then_mcq_list(
     to: str,
     context_body: str,

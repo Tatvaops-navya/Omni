@@ -352,11 +352,10 @@ def format_final_review(session, *, include_footer: bool | None = None) -> str:
         "*Requirements Shared*",
     ]
     blocks.extend(_format_requirements_review(session, service_key=service_key))
-    blocks.extend([
-        "",
-        "*Files*",
-        f"- {_format_attachments_review(session, service_key=service_key)}",
-    ])
+    file_lines = _format_attachments_review_lines(session, service_key=service_key)
+    blocks.append("")
+    blocks.append("*Files*")
+    blocks.extend(f"- {line}" for line in file_lines)
     if include_footer is None:
         include_footer = not (session.flow_state or {}).get("final_review_outbound_step")
     if include_footer:
@@ -411,9 +410,17 @@ def _format_requirements_review(session, *, service_key: str = "") -> list[str]:
 def _format_attachments_review(session, *, service_key: str = "") -> str:
     from backend.intelligence import hybrid_flow
 
+    return "\n".join(
+        _format_attachments_review_lines(session, service_key=service_key)
+    )
+
+
+def _format_attachments_review_lines(session, *, service_key: str = "") -> list[str]:
+    from backend.intelligence import hybrid_flow
+
     hybrid_flow.sync_attachment_fields(session)
     if hybrid_flow.attachment_count(session) > 0:
-        return hybrid_flow.format_attachment_review_line(session)
+        return hybrid_flow.format_attachment_review_lines(session)
     ef = session.extracted_fields
     for step in get_service_questionnaire_steps(session):
         if step.get("type") != "file_request":
@@ -422,12 +429,12 @@ def _format_attachments_review(session, *, service_key: str = "") -> str:
         if field:
             raw = ef.get(field, "none")
             if str(raw).strip().lower() in ("skipped", "skip", "none", ""):
-                return "No files uploaded"
-            return _humanize(field, raw, service_category=service_key)
+                return ["No files uploaded"]
+            return [_humanize(field, raw, service_category=service_key)]
     raw = ef.get("attachments", "none")
     if str(raw).strip().lower() in ("skipped", "skip", "none", ""):
-        return "No files uploaded"
-    return _humanize("attachments", raw, service_category=service_key)
+        return ["No files uploaded"]
+    return [_humanize("attachments", raw, service_category=service_key)]
 
 
 # Alias

@@ -802,15 +802,38 @@ def attachment_upload_value(session: Session) -> str:
 
 def format_attachment_review_line(session: Session) -> str:
     """Client-facing file count for final review / summary."""
+    lines = format_attachment_review_lines(session)
+    if len(lines) == 1:
+        return lines[0]
+    return "\n".join(lines)
+
+
+def format_attachment_review_lines(session: Session) -> list[str]:
+    """Per-file preview labels for the final review Files section."""
     count = attachment_count(session)
     if count <= 0:
         field = resolve_file_upload_field(session)
         raw = str(session.extracted_fields.get(field) or "").strip().lower()
         if raw in ("skipped", "skip", "none", ""):
-            return "No files uploaded"
+            return ["No files uploaded"]
+    if count <= 0:
+        return ["No files uploaded"]
+
+    from backend.integrations.tatva_enquiry_submit import _ATTACHMENT_KIND_LABELS, _attachment_kind
+
+    lines: list[str] = []
+    for meta in session.attachments or []:
+        kind = _attachment_kind(
+            url=str(meta.file_url or ""),
+            key=str(meta.file_name or ""),
+            mime=str(meta.mime_type or ""),
+        )
+        lines.append(f"↗ {_ATTACHMENT_KIND_LABELS[kind]}")
+    if lines:
+        return lines
     if count == 1:
-        return "1 file uploaded"
-    return f"{count} files uploaded"
+        return ["1 file uploaded"]
+    return [f"{count} files uploaded"]
 
 
 def sync_attachment_fields(session: Session, *, complete_step: bool = True) -> None:

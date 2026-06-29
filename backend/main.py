@@ -15,6 +15,8 @@ from backend.config import get_settings
 from backend.agents.chat.whatsapp_handler import router as whatsapp_router
 from backend.agents.voice.vapi_handler import router as vapi_router
 from backend.admin.router import router as admin_router
+from backend.admin.crm_router import router as crm_router
+from backend.media.router import router as media_router
 
 
 @asynccontextmanager
@@ -53,6 +55,8 @@ app.include_router(vapi_router)
 
 # ─── Admin API ─────────────────────────────────────────────────────────────────
 app.include_router(admin_router)
+app.include_router(crm_router)
+app.include_router(media_router)
 
 # ─── Admin UI Static Files ─────────────────────────────────────────────────────
 ADMIN_BUILD_DIR = Path(__file__).parent.parent / "admin-ui" / "dist"

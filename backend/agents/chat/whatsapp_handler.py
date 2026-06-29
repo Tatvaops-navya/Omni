@@ -50,6 +50,7 @@ from backend.agents.chat.twilio_client import (
     send_whatsapp_message,
     send_whatsapp_flow,
     send_whatsapp_attachment_cta_links,
+    send_session_attachment_previews,
     twiml_response,
     _format_mcq_plain_fallback,
 )
@@ -855,6 +856,8 @@ async def _send_file_upload_follow_up(
         context_body = f"{file_ack}\n\n{follow_up}".strip() if follow_up else (file_ack or "").strip()
 
     await send_context_then_mcq_list(phone_number, context_body, outbound_step)
+    if is_final_review and hybrid_flow.attachment_count(session) > 0:
+        await send_session_attachment_previews(phone_number, session)
 
 
 async def _debounced_file_upload_follow_up(
@@ -1516,6 +1519,8 @@ async def _handle_whatsapp_message_impl(
     )
     if is_final_review_list:
         await send_context_then_mcq_list(phone_number, reply, outbound_step)
+        if hybrid_flow.attachment_count(session_out) > 0:
+            await send_session_attachment_previews(phone_number, session_out)
         return
 
     if uses_interactive_list:
