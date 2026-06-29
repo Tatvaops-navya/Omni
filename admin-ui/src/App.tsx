@@ -15,6 +15,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated() ? <>{children}</> : <Navigate to="/krsna" replace />
 }
 
+
 function HomeRedirect() {
   if (isPresalesUser()) {
     return <Navigate to="my-leads" replace />
