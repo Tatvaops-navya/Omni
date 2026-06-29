@@ -185,6 +185,24 @@ def assign_staff_lead(
     return data
 
 
+def delete_assignment(
+    *,
+    external_id: str,
+    source: str = SOURCE_TATVA_PRESALES,
+) -> bool:
+    if not crm_available():
+        return False
+    (
+        _client()
+        .table("lead_assignments")
+        .delete()
+        .eq("source", source)
+        .eq("external_id", external_id)
+        .execute()
+    )
+    return True
+
+
 def list_my_leads(
     *,
     staff_user_id: str,

@@ -1,6 +1,7 @@
 ﻿// API client for the Aadhya admin panel
-// Dev: Vite proxy /admin ΓåÆ localhost:8000
-// Production (Vercel): same-origin /admin ΓåÆ Render via vercel.json rewrite (no CORS)
+// Dev: Vite proxy /admin → localhost:8000
+// Production (Vercel): same-origin /admin → Render via vercel.json rewrite (no CORS)
+import type { MeetLinksResponse } from '../types/meet'
 const BASE_URL = import.meta.env.DEV
   ? (import.meta.env.VITE_API_URL || 'http://localhost:8000')
   : ''
@@ -284,6 +285,8 @@ export const api = {
     const query = qs.toString()
     return fetchAdmin(`/admin/presales${query ? `?${query}` : ''}`) as Promise<PresalesResponse>
   },
+  deletePresales: (presalesId: string) =>
+    fetchAdmin(`/admin/presales/${encodeURIComponent(presalesId)}`, { method: 'DELETE' }),
   users: (params?: { page?: number; limit?: number }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))
@@ -291,6 +294,19 @@ export const api = {
     const query = qs.toString()
     return fetchAdmin(`/admin/users${query ? `?${query}` : ''}`) as Promise<TatvaUsersResponse>
   },
+  meetLinks: (params?: { page?: number; limit?: number; user_id?: string; phone?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.page) qs.set('page', String(params.page))
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.user_id) qs.set('user_id', params.user_id)
+    if (params?.phone) qs.set('phone', params.phone)
+    const query = qs.toString()
+    return fetchAdmin(`/admin/meet-links${query ? `?${query}` : ''}`) as Promise<MeetLinksResponse>
+  },
+  confirmMeetSlot: (slotId: string) =>
+    fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/confirm`, { method: 'PATCH' }),
+  rescheduleMeetSlot: (slotId: string) =>
+    fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/reschedule`, { method: 'PATCH' }),
   vendorLeads: (params?: { page?: number; limit?: number; status?: string }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))

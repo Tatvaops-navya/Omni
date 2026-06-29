@@ -1,7 +1,9 @@
 ﻿import { useCallback, useEffect, useState } from 'react'
 import { api, TatvaUserItem } from '../api/client'
+import MeetScheduleModal from '../components/MeetScheduleModal'
 import clsx from 'clsx'
 import { format } from 'date-fns'
+import { Video } from 'lucide-react'
 
 function formatDate(iso: string | undefined): string {
   if (!iso) return '—'
@@ -24,6 +26,7 @@ export default function Users() {
   const [limit] = useState(10)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [meetUser, setMeetUser] = useState<TatvaUserItem | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -77,18 +80,19 @@ export default function Users() {
                 <th className="px-4 py-3 font-medium">Flag</th>
                 <th className="px-4 py-3 font-medium">Email verified</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
+                <th className="px-4 py-3 font-medium">Meet</th>
               </tr>
             </thead>
             <tbody>
               {loading && users.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={10} className="px-4 py-12 text-center text-slate-500">
                     Loading users...
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={10} className="px-4 py-12 text-center text-slate-500">
                     No users found.
                   </td>
                 </tr>
@@ -143,6 +147,17 @@ export default function Users() {
                     <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
                       {formatDate(row.createdAt)}
                     </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 transition-colors"
+                        title="View meet schedules"
+                        onClick={() => setMeetUser(row)}
+                      >
+                        <Video className="w-3.5 h-3.5" />
+                        Meet
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -174,6 +189,10 @@ export default function Users() {
           </div>
         </div>
       </div>
+
+      {meetUser && (
+        <MeetScheduleModal user={meetUser} onClose={() => setMeetUser(null)} />
+      )}
     </div>
   )
 }

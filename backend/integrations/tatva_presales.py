@@ -230,3 +230,40 @@ async def fetch_presales_records(
             "totalPages": int(data.get("totalPages") or 1),
         },
     }
+
+
+async def delete_presales_record(presales_id: str) -> dict[str, Any]:
+    """DELETE presales lead from Tatva admin API."""
+    record_id = (presales_id or "").strip()
+    if not record_id:
+        return {"success": False, "message": "Missing presales id"}
+
+    settings = get_settings()
+    base_url = (settings.tatva_users_api_base_url or "").rstrip("/")
+    if not base_url:
+        return {"success": False, "message": "Tatva API not configured"}
+
+    url = f"{base_url}{PRESALES_PATH}/{record_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers=_presales_headers()) as client:
+            response = await client.delete(url)
+            response.raise_for_status()
+            payload = response.json() if response.content else {}
+    except httpx.HTTPStatusError as exc:
+        return {
+            "success": False,
+            "message": str(exc),
+            "error_status": exc.response.status_code,
+        }
+    except Exception as exc:
+        return {"success": False, "message": str(exc)}
+
+    if isinstance(payload, dict) and payload.get("success") is False:
+        return {
+            "success": False,
+            "message": str(payload.get("message") or "Delete failed"),
+        }
+    return {
+        "success": True,
+        "message": str((payload or {}).get("message") or "Deleted"),
+    }

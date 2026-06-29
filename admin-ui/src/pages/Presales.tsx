@@ -4,7 +4,7 @@ import { StaffCommentDisplay } from '../components/StaffCommentDisplay'
 import EnquiryViewModal from '../components/EnquiryViewModal'
 import clsx from 'clsx'
 import { format } from 'date-fns'
-import { Eye } from 'lucide-react'
+import { Eye, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const PLACEHOLDER_NAMES = new Set(['__returning_user__', 'registered user'])
@@ -39,6 +39,7 @@ export default function Presales() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [assigningId, setAssigningId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [viewLead, setViewLead] = useState<{ name?: string; phone?: string } | null>(null)
 
   const loadTeam = useCallback(async () => {
@@ -105,6 +106,23 @@ export default function Presales() {
     }
   }
 
+  const handleDelete = async (row: PresalesItem) => {
+    const label = displayName(row.name) !== '—' ? displayName(row.name) : row.phoneNumber || 'this lead'
+    if (!window.confirm(`Delete presales record for ${label}? This cannot be undone.`)) {
+      return
+    }
+    setDeletingId(row._id)
+    try {
+      await api.deletePresales(row._id)
+      toast.success('Presales record deleted')
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -141,8 +159,8 @@ export default function Presales() {
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Team comment</th>
                 <th className="px-4 py-3 font-medium">Assign</th>
-                <th className="px-4 py-3 font-medium">Actions</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
+                <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -216,21 +234,32 @@ export default function Presales() {
                           <span className="text-xs text-slate-600">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          className="p-1.5 rounded-md text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-colors"
-                          title="View enquiry"
-                          onClick={() => setViewLead({
-                            name: displayName(row.name),
-                            phone: row.phoneNumber,
-                          })}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                      </td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
                         {formatDate(row.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-colors"
+                            title="View enquiry"
+                            onClick={() => setViewLead({
+                              name: row.name,
+                              phone: row.phoneNumber,
+                            })}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                            title="Delete presales record"
+                            disabled={deletingId === row._id}
+                            onClick={() => handleDelete(row)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )

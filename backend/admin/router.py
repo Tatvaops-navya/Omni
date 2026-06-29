@@ -201,6 +201,22 @@ async def get_presales(
     return result
 
 
+@router.delete("/presales/{presales_id}")
+async def delete_presales(presales_id: str, auth=Depends(require_admin)):
+    from backend.integrations.tatva_presales import delete_presales_record
+    from backend.crm import store as crm_store
+
+    result = await delete_presales_record(presales_id)
+    if not result.get("success"):
+        status = int(result.get("error_status") or 502)
+        if status < 400 or status > 599:
+            status = 502
+        raise HTTPException(status_code=status, detail=result.get("message") or "Delete failed")
+    if crm_store.crm_available():
+        crm_store.delete_assignment(external_id=presales_id)
+    return result
+
+
 @router.get("/users")
 async def get_tatva_users(
     page: int = Query(1, ge=1),
@@ -210,6 +226,37 @@ async def get_tatva_users(
     from backend.integrations.tatva_users import fetch_tatva_users
 
     return await fetch_tatva_users(page=page, limit=limit)
+
+
+@router.get("/meet-links")
+async def get_meet_links(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    user_id: Optional[str] = Query(None),
+    phone: Optional[str] = Query(None),
+    auth=Depends(require_admin),
+):
+    from backend.integrations.tatva_meet_links import fetch_meet_links
+
+    return await fetch_meet_links(page=page, limit=limit, user_id=user_id, phone=phone)
+
+
+@router.patch("/meet-links/slots/{slot_id}/confirm")
+async def confirm_meet_slot(slot_id: str, auth=Depends(require_admin)):
+    """Placeholder until Tatva confirm PUT/PATCH API is wired."""
+    raise HTTPException(
+        status_code=501,
+        detail="Confirm meet slot API is not configured yet. Wire Tatva PUT endpoint when available.",
+    )
+
+
+@router.patch("/meet-links/slots/{slot_id}/reschedule")
+async def reschedule_meet_slot(slot_id: str, auth=Depends(require_admin)):
+    """Placeholder until Tatva reschedule PUT/PATCH API is wired."""
+    raise HTTPException(
+        status_code=501,
+        detail="Reschedule meet slot API is not configured yet. Wire Tatva PUT endpoint when available.",
+    )
 
 
 @router.get("/vendor-leads")
