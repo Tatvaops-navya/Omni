@@ -14,6 +14,8 @@ if (Test-Path $EnvFile) {
     }
 }
 
+
+
 $Url = "http://localhost:8000/webhook/whatsapp"
 function Send([string]$Body) {
     $r = Invoke-WebRequest -Uri $Url -Method POST -Body @{ From = $From; Body = $Body }
