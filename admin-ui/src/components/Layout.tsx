@@ -1,29 +1,29 @@
 ﻿import { NavLink, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, ClipboardList,
+  LayoutDashboard,
   Activity, LogOut, Flower2, UserCheck, Users as UsersIcon,
-  Briefcase, UserCircle,
+  Briefcase, UserCircle, FolderKanban, BadgeCheck,
 } from 'lucide-react'
 import { clearToken, getUser, isAdminUser, isPresalesUser, isRmUser } from '../api/client'
 import clsx from 'clsx'
 
 const adminNav = [
   { to: '/krsna/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/krsna/enquiries', icon: ClipboardList, label: 'Enquiries' },
   { to: '/krsna/presales', icon: UserCheck, label: 'Pre-sales' },
   { to: '/krsna/users', icon: UsersIcon, label: 'Users' },
   { to: '/krsna/vendor-leads', icon: Briefcase, label: 'Vendor Leads' },
+  { to: '/krsna/vendors', icon: BadgeCheck, label: 'Vendors' },
   { to: '/krsna/system', icon: Activity, label: 'System Health' },
 ]
 
 const presalesNav = [
-  { to: '/krsna/enquiries', icon: ClipboardList, label: 'Enquiries' },
   { to: '/krsna/my-leads', icon: UserCircle, label: 'My Leads' },
+  { to: '/krsna/my-projects', icon: FolderKanban, label: 'My Projects' },
 ]
 
 const rmNav = [
-  { to: '/krsna/enquiries', icon: ClipboardList, label: 'Enquiries' },
   { to: '/krsna/my-leads', icon: UserCircle, label: 'My Leads' },
+  { to: '/krsna/my-projects', icon: FolderKanban, label: 'My Projects' },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {

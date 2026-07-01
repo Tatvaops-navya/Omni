@@ -157,9 +157,7 @@ export default function VendorLeads() {
           onChange={e => setStatusFilter(e.target.value)}
         >
           <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
           <option value="rejected">Rejected</option>
-          <option value="">All statuses</option>
         </select>
       </div>
 

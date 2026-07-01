@@ -34,7 +34,7 @@ function MeetSlotCard({
 }: {
   record: MeetLinkRecord
   slot: MeetSlot
-  onAction: (action: 'confirm' | 'reschedule', slotId: string) => void
+  onAction: (action: 'confirm' | 'reschedule', meetLinkId: string, slotId: string) => void
   busySlotId: string | null
 }) {
   const user = record.userId || {}
@@ -42,6 +42,7 @@ function MeetSlotCard({
   const phone = user.phoneNumber || '—'
   const email = user.email || '—'
   const slotId = slot.slotId || ''
+  const meetLinkId = record._id || ''
   const busy = busySlotId === slotId
 
   return (
@@ -94,16 +95,16 @@ function MeetSlotCard({
         <button
           type="button"
           className="btn-ghost text-xs uppercase tracking-wide"
-          disabled={!slotId || busy}
-          onClick={() => onAction('reschedule', slotId)}
+          disabled={!slotId || !meetLinkId || busy}
+          onClick={() => onAction('reschedule', meetLinkId, slotId)}
         >
           Reschedule
         </button>
         <button
           type="button"
           className="btn-primary text-xs uppercase tracking-wide"
-          disabled={!slotId || busy}
-          onClick={() => onAction('confirm', slotId)}
+          disabled={!slotId || !meetLinkId || busy}
+          onClick={() => onAction('confirm', meetLinkId, slotId)}
         >
           Confirm
         </button>
@@ -152,12 +153,16 @@ export default function MeetScheduleModal({
     return () => { cancelled = true }
   }, [user._id, user.phoneNumber])
 
-  const handleAction = async (action: 'confirm' | 'reschedule', slotId: string) => {
-    if (!slotId) return
+  const handleAction = async (
+    action: 'confirm' | 'reschedule',
+    meetLinkId: string,
+    slotId: string,
+  ) => {
+    if (!slotId || !meetLinkId) return
     setBusySlotId(slotId)
     try {
       if (action === 'confirm') {
-        await api.confirmMeetSlot(slotId)
+        await api.confirmMeetSlot(meetLinkId, slotId)
         toast.success('Meet slot confirmed')
       } else {
         await api.rescheduleMeetSlot(slotId)

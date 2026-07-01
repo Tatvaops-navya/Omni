@@ -23,7 +23,7 @@ function LeadCommentCell({
 }: {
   externalId: string
   initialNote?: string
-  leadType: LeadTab
+  leadType: 'user' | 'vendor'
 }) {
   const [draft, setDraft] = useState(initialNote || '')
   const [saving, setSaving] = useState(false)
@@ -170,12 +170,16 @@ export default function MyLeads() {
     }
   }
 
-  const handleMeetAction = async (action: 'confirm' | 'reschedule', slotId: string) => {
-    if (!slotId) return
+  const handleMeetAction = async (
+    action: 'confirm' | 'reschedule',
+    meetLinkId: string,
+    slotId: string,
+  ) => {
+    if (!slotId || !meetLinkId) return
     setBusySlotId(slotId)
     try {
       if (action === 'confirm') {
-        await api.confirmMeetSlot(slotId)
+        await api.confirmMeetSlot(meetLinkId, slotId)
         toast.success('Meet slot confirmed')
       } else {
         await api.rescheduleMeetSlot(slotId)
@@ -271,6 +275,7 @@ export default function MyLeads() {
                 ) : (
                   meetRows.map(({ record, slot }) => {
                     const user = record.userId
+                    const meetLinkId = record._id || ''
                     const slotId = slot.slotId || ''
                     const busy = busySlotId === slotId
                     return (
@@ -318,16 +323,16 @@ export default function MyLeads() {
                             <button
                               type="button"
                               className="btn-ghost text-xs text-slate-400"
-                              disabled={!slotId || busy}
-                              onClick={() => handleMeetAction('reschedule', slotId)}
+                              disabled={!slotId || !meetLinkId || busy}
+                              onClick={() => handleMeetAction('reschedule', meetLinkId, slotId)}
                             >
                               Reschedule
                             </button>
                             <button
                               type="button"
                               className="btn-ghost text-xs text-teal-400"
-                              disabled={!slotId || busy}
-                              onClick={() => handleMeetAction('confirm', slotId)}
+                              disabled={!slotId || !meetLinkId || busy}
+                              onClick={() => handleMeetAction('confirm', meetLinkId, slotId)}
                             >
                               Confirm
                             </button>

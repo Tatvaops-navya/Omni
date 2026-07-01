@@ -299,6 +299,34 @@ async def complete_my_lead(
     return {"assignment": row}
 
 
+@router.get("/my-projects")
+async def get_my_projects(
+    employee_id: Optional[str] = Query(None),
+    auth=Depends(require_auth),
+):
+    from backend.integrations.tatva_employee_projects import (
+        fetch_employee_projects,
+        resolve_employee_id_by_email,
+    )
+
+    role = auth.get("role")
+    if role not in {"presales", "rm", "admin"}:
+        raise HTTPException(status_code=403, detail="Team access required")
+
+    emp_id = (employee_id or "").strip()
+    if not emp_id:
+        emp_id = await resolve_employee_id_by_email(str(auth.get("email") or "")) or ""
+
+    if not emp_id:
+        return {
+            "success": False,
+            "message": "No Tatva employee linked to this account",
+            "data": {"items": [], "employee_id": None},
+        }
+
+    return await fetch_employee_projects(emp_id)
+
+
 @router.patch("/my-leads/{external_id}/notes")
 async def update_my_lead_notes(
     external_id: str,

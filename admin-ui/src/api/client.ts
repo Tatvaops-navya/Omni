@@ -8,6 +8,13 @@ const BASE_URL = OMNICHANNEL_API_BASE
 
 export { OMNICHANNEL_API_BASE, TATVA_API_BASE, TATVA_API_ORIGIN } from './config'
 
+/** Tatva approved vendors — https://api.withtatva.ai/vendor/api/vendors */
+export const TATVA_VENDORS_PATH = '/vendor/api/vendors'
+/** Tatva employee projects — https://api.withtatva.ai/admin/api/admin/employees/{id}/projects */
+export const TATVA_MY_PROJECTS_EMPLOYEE_ID = '69ef0a0a11db8baeba77b711'
+export const TATVA_EMPLOYEE_PROJECTS_PATH =
+  `/admin/api/admin/employees/${TATVA_MY_PROJECTS_EMPLOYEE_ID}/projects`
+
 let authToken: string | null = sessionStorage.getItem('aadhya_admin_token')
 
 export type CrmUser = {
@@ -97,11 +104,22 @@ async function fetchTatva(path: string, options: RequestInit = {}) {
     Accept: 'application/json',
     ...(options.headers as Record<string, string> || {}),
   }
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`
+  }
   if (method !== 'GET' && method !== 'HEAD') {
     headers['Content-Type'] = headers['Content-Type'] || 'application/json'
   }
   const res = await fetch(`${TATVA_API_BASE}${path}`, { ...options, headers })
-  if (!res.ok) throw new Error(`Tatva API HTTP ${res.status}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({} as Record<string, unknown>))
+    const msg = typeof body.message === 'string'
+      ? body.message
+      : typeof body.detail === 'string'
+        ? body.detail
+        : `Tatva API HTTP ${res.status}`
+    throw new Error(msg)
+  }
   return res.json()
 }
 
@@ -346,6 +364,131 @@ export type VendorLeadsResponse = {
   }
 }
 
+function flattenVendorRecord(entry: Record<string, unknown>): VendorLeadItem {
+  const vendor = entry.vendor
+  if (!vendor || typeof vendor !== 'object' || Array.isArray(vendor)) {
+    return entry as VendorLeadItem
+  }
+
+  const v = vendor as Record<string, unknown>
+  const addresses = Array.isArray(v.addresses) ? v.addresses : []
+  const primaryAddress = addresses.find(
+    (addr): addr is Record<string, unknown> =>
+      !!addr && typeof addr === 'object' && Boolean((addr as { isDefault?: boolean }).isDefault),
+  ) || (addresses[0] && typeof addresses[0] === 'object' ? addresses[0] as Record<string, unknown> : null)
+
+  const formattedAddress = primaryAddress
+    ? String(primaryAddress.formattedAddress || '').trim()
+    : ''
+  const mapLocation = v.googleMapLocation
+  const mapAddress = mapLocation && typeof mapLocation === 'object' && !Array.isArray(mapLocation)
+    ? String((mapLocation as { address?: string }).address || '').trim()
+    : ''
+
+  const fullName = String(v.fullName || '').trim()
+  const contactName = String(v.primaryContactPerson || '').trim()
+  const displayName = fullName && fullName.toLowerCase() !== 'unknown'
+    ? fullName
+    : contactName || fullName || String(v.designation || '').trim()
+
+  return {
+    ...v,
+    ...entry,
+    _id: String(v._id || v.id || ''),
+    id: String(v._id || v.id || ''),
+    name: displayName,
+    fullName: displayName,
+    services: entry.services ?? v.services,
+    addresses,
+    location: formattedAddress || String(v.businessAddress || '').trim() || mapAddress,
+    businessAddress: formattedAddress || String(v.businessAddress || '').trim() || mapAddress,
+    assignment: entry.assignment as VendorLeadItem['assignment'],
+  } as VendorLeadItem
+}
+
+function normalizeVendorsList(payload: Record<string, unknown>): VendorLeadItem[] {
+  let raw: unknown[] = []
+  const data = payload.data
+  if (Array.isArray(data)) {
+    raw = data
+  } else if (data && typeof data === 'object') {
+    const obj = data as Record<string, unknown>
+    for (const key of ['vendors', 'items', 'leads']) {
+      const value = obj[key]
+      if (Array.isArray(value)) {
+        raw = value
+        break
+      }
+    }
+  } else if (Array.isArray(payload.vendors)) {
+    raw = payload.vendors
+  } else {
+    const paged = normalizeTatvaPagedItems(payload, ['vendors', 'items', 'leads'])
+    raw = paged.items
+  }
+
+  return raw
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+    .map(flattenVendorRecord)
+}
+
+export type EmployeeProjectItem = {
+  _id?: string
+  id?: string
+  projectId?: string
+  project_id?: string
+  name?: string
+  projectName?: string
+  title?: string
+  customerName?: string
+  clientName?: string
+  userName?: string
+  location?: string
+  propertyLocation?: string
+  city?: string
+  status?: string
+  stage?: string
+  role?: string
+  assignedAt?: string
+  assigned_at?: string
+  createdAt?: string
+  updatedAt?: string
+  user?: { fullName?: string; name?: string; phoneNumber?: string; email?: string }
+  customer?: { fullName?: string; name?: string; phoneNumber?: string; email?: string }
+  userId?: { fullName?: string; name?: string; phoneNumber?: string; email?: string }
+  employeeId?: { _id?: string; fullName?: string; name?: string; email?: string }
+  [key: string]: unknown
+}
+
+export type EmployeeProjectsResponse = {
+  success: boolean
+  message?: string
+  data: {
+    items: EmployeeProjectItem[]
+    employee_id?: string | null
+    employee_name?: string
+    total?: number
+  }
+}
+
+function normalizeEmployeeProjects(payload: Record<string, unknown>): EmployeeProjectItem[] {
+  const data = payload.data
+  if (Array.isArray(data)) {
+    return data.filter((item): item is EmployeeProjectItem => !!item && typeof item === 'object')
+  }
+  if (data && typeof data === 'object') {
+    const obj = data as Record<string, unknown>
+    for (const key of ['projects', 'items', 'assignments']) {
+      const value = obj[key]
+      if (Array.isArray(value)) {
+        return value.filter((item): item is EmployeeProjectItem => !!item && typeof item === 'object')
+      }
+    }
+  }
+  const paged = normalizeTatvaPagedItems(payload, ['projects', 'items', 'assignments'])
+  return paged.items as EmployeeProjectItem[]
+}
+
 export const api = {
   login: async (password: string) => {
     const res = await fetch(`${BASE_URL}/admin/login`, {
@@ -441,6 +584,48 @@ export const api = {
     return fetchAdmin(`/admin/my-leads${query ? `?${query}` : ''}`)
   },
 
+  myProjects: async () => {
+    const payload = await fetchTatva(TATVA_EMPLOYEE_PROJECTS_PATH) as Record<string, unknown>
+    const items = normalizeEmployeeProjects(payload)
+    const dataObj = (
+      payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+    ) ? payload.data as Record<string, unknown> : {}
+    const employee = dataObj.employee
+    const employeeName = employee && typeof employee === 'object'
+      ? String(
+        (employee as { fullName?: string; name?: string }).fullName
+        || (employee as { name?: string }).name
+        || '',
+      ).trim()
+      : ''
+    return {
+      success: Boolean(payload.success ?? true),
+      message: typeof payload.message === 'string' ? payload.message : undefined,
+      data: {
+        items,
+        employee_id: TATVA_MY_PROJECTS_EMPLOYEE_ID,
+        employee_name: employeeName || undefined,
+        total: items.length,
+      },
+    } satisfies EmployeeProjectsResponse
+  },
+
+  employeeProjects: async (employeeId: string) => {
+    const payload = await fetchTatva(
+      `/admin/api/admin/employees/${encodeURIComponent(employeeId)}/projects`,
+    ) as Record<string, unknown>
+    const items = normalizeEmployeeProjects(payload)
+    return {
+      success: Boolean(payload.success ?? true),
+      message: typeof payload.message === 'string' ? payload.message : undefined,
+      data: {
+        items,
+        employee_id: employeeId,
+        total: items.length,
+      },
+    } satisfies EmployeeProjectsResponse
+  },
+
   completeMyLead: (externalId: string, notes?: string, leadType: 'user' | 'vendor' = 'user') =>
     fetchAdmin(`/admin/my-leads/${externalId}/complete?lead_type=${leadType}`, {
       method: 'PATCH',
@@ -517,8 +702,13 @@ export const api = {
     }
     return payload
   },
-  confirmMeetSlot: (slotId: string) =>
-    fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/confirm`, { method: 'PATCH' }),
+  confirmMeetSlot: (meetLinkId: string, slotId: string) =>
+    fetchTatva(`/users/api/meet-links/${encodeURIComponent(meetLinkId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        slots: [{ slotId, status: 'scheduled' }],
+      }),
+    }),
   rescheduleMeetSlot: (slotId: string) =>
     fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/reschedule`, { method: 'PATCH' }),
   vendorLeads: async (params?: { page?: number; limit?: number; status?: string }) => {
@@ -562,6 +752,58 @@ export const api = {
       }
     }
   },
+
+  vendors: async (params?: { page?: number; limit?: number }) => {
+    const page = params?.page ?? 1
+    const limit = params?.limit ?? 100
+    const tatva = await fetchTatva(
+      `${TATVA_VENDORS_PATH}?page=${page}&limit=${limit}`,
+    ) as Record<string, unknown>
+    const items = normalizeVendorsList(tatva)
+    const dataObj = (
+      tatva.data && typeof tatva.data === 'object' && !Array.isArray(tatva.data)
+    ) ? tatva.data as Record<string, unknown> : {}
+    const pagination = (
+      dataObj.pagination && typeof dataObj.pagination === 'object'
+    ) ? dataObj.pagination as Record<string, unknown> : {}
+    const paged = normalizeTatvaPagedItems(tatva, ['vendors', 'items', 'leads'])
+    const total = Number(pagination.total ?? paged.total ?? items.length)
+    const totalPages = Number(
+      pagination.pages ?? pagination.totalPages ?? paged.totalPages ?? Math.max(1, Math.ceil(total / limit)),
+    )
+    try {
+      const enrich = await fetchAdmin('/admin/vendor-leads/enrich', {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      }) as { items?: VendorLeadItem[]; crm_configured?: boolean }
+      return {
+        success: Boolean(tatva.success ?? true),
+        message: typeof tatva.message === 'string' ? tatva.message : undefined,
+        crm_configured: !!enrich.crm_configured,
+        data: {
+          items: enrich.items || items,
+          total,
+          page,
+          limit,
+          totalPages,
+        },
+      } satisfies VendorLeadsResponse
+    } catch {
+      return {
+        success: Boolean(tatva.success ?? true),
+        message: typeof tatva.message === 'string' ? tatva.message : undefined,
+        crm_configured: false,
+        data: {
+          items,
+          total,
+          page,
+          limit,
+          totalPages,
+        },
+      } satisfies VendorLeadsResponse
+    }
+  },
+
   summaries: () => fetchAdmin('/admin/summaries'),
   logs: (params?: { session_id?: string; event?: string; limit?: number }) => {
     const qs = new URLSearchParams()
