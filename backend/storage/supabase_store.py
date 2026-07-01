@@ -483,27 +483,30 @@ async def upsert_session_log(session) -> bool:
     if client is None:
         return False
 
-    row = {
-        "session_id": session.session_id,
-        "phone_number": session.phone_number,
-        "channel": session.channel,
-        "conversation_stage": session.conversation_stage.value if session.conversation_stage else None,
-        "field_completion_pct": session.field_completion_pct,
-        "turn_count": session.turn_count,
-        "service_category": session.service_category.value if session.service_category else None,
-        "active_consultant": session.active_consultant,
-        "lead_score": session.lead_score,
-        "lead_tier": session.lead_tier,
-        "flow_state": session.flow_state or {},
-        "last_active": session.last_active.isoformat() if session.last_active else _now_iso(),
-    }
-    client.table("sessions_log").upsert(row, on_conflict="session_id").execute()
+    try:
+        row = {
+            "session_id": session.session_id,
+            "phone_number": session.phone_number,
+            "channel": session.channel,
+            "conversation_stage": session.conversation_stage.value if session.conversation_stage else None,
+            "field_completion_pct": session.field_completion_pct,
+            "turn_count": session.turn_count,
+            "service_category": session.service_category.value if session.service_category else None,
+            "active_consultant": session.active_consultant,
+            "lead_score": session.lead_score,
+            "lead_tier": session.lead_tier,
+            "flow_state": session.flow_state or {},
+            "last_active": session.last_active.isoformat() if session.last_active else _now_iso(),
+        }
+        client.table("sessions_log").upsert(row, on_conflict="session_id").execute()
 
-    if session.extracted_fields:
-        status = "declined" if session.flow_state.get("project_declined") else "in_progress"
-        if session.summary_generated:
-            status = "completed"
-        _upsert_enquiry_row(session, status=status, save_attachments=False)
+        if session.extracted_fields:
+            status = "declined" if session.flow_state.get("project_declined") else "in_progress"
+            if session.summary_generated:
+                status = "completed"
+            _upsert_enquiry_row(session, status=status, save_attachments=False)
+    except Exception:
+        return False
 
     return True
 

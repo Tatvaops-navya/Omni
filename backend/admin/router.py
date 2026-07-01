@@ -218,8 +218,14 @@ async def enrich_presales(body: dict, auth=Depends(require_admin)):
     from backend.crm import store as crm_store
 
     items = body.get("items") if isinstance(body.get("items"), list) else []
+    enriched = items
+    if items and crm_store.crm_available():
+        try:
+            enriched = crm_store.enrich_presales_items(items)
+        except Exception:
+            enriched = items
     return {
-        "items": crm_store.enrich_presales_items(items) if items else [],
+        "items": enriched,
         "crm_configured": crm_store.crm_available(),
     }
 
@@ -316,8 +322,14 @@ async def enrich_vendor_leads(body: dict, auth=Depends(require_admin)):
     from backend.crm import store as crm_store
 
     items = body.get("items") if isinstance(body.get("items"), list) else []
+    enriched = items
+    if items and crm_store.crm_available():
+        try:
+            enriched = crm_store.enrich_vendor_items(items)
+        except Exception:
+            enriched = items
     return {
-        "items": crm_store.enrich_vendor_items(items) if items else [],
+        "items": enriched,
         "crm_configured": crm_store.crm_available(),
     }
 

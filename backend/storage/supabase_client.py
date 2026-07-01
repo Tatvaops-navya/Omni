@@ -10,20 +10,25 @@ from backend.config import get_settings
 @lru_cache
 def is_supabase_configured() -> bool:
     settings = get_settings()
-    return bool(
-        (settings.supabase_url or "").strip()
-        and (settings.supabase_service_role_key or "").strip()
-    )
+    url = (getattr(settings, "supabase_url", None) or "").strip()
+    key = (getattr(settings, "supabase_service_role_key", None) or "").strip()
+    return bool(url and key)
 
 
 @lru_cache
 def get_supabase_client() -> Any:
     if not is_supabase_configured():
         return None
-    from supabase import create_client
+    try:
+        from supabase import create_client
+    except ImportError:
+        return None
 
     settings = get_settings()
-    return create_client(
-        settings.supabase_url.strip(),
-        settings.supabase_service_role_key.strip(),
-    )
+    try:
+        return create_client(
+            settings.supabase_url.strip(),
+            settings.supabase_service_role_key.strip(),
+        )
+    except Exception:
+        return None

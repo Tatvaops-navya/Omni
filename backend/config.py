@@ -4,7 +4,7 @@ Configuration via environment variables (Pydantic Settings)
 """
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import List
@@ -82,6 +82,19 @@ class Settings(BaseSettings):
 
     # Tatva user API (check-phone on first message; register-phone at create-project step for new users)
     tatva_users_api_base_url: str = "https://api.withtatva.ai"
+
+    # Supabase (enquiries, CRM assignments, session logs) — optional; WhatsApp works without it
+    supabase_url: str = ""
+    supabase_service_role_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SUPABASE_SERVICE_ROLE_KEY",
+            "SUPABASE_SERVICE_KEY",
+        ),
+    )
+
+    # CRM team login password hashing
+    crm_password_pepper: str = "tatvaops-crm"
 
     # Admin
     admin_password: str = "changeme"
