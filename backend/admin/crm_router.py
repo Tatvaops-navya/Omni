@@ -1,4 +1,4 @@
-﻿"""Krsna CRM API ΓÇö team users, lead assignment, my leads."""
+"""Krsna CRM API ΓÇö team users, lead assignment, my leads."""
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -31,6 +31,15 @@ class AssignPresalesRequest(BaseModel):
 
 class AssignStaffLeadRequest(BaseModel):
     staff_user_id: str
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssignTatvaEmployeeRequest(BaseModel):
+    employee_id: str
+    employee_name: str = ""
+    employee_email: str = ""
+    employee_department: str = ""
+    employee_role: str = ""
     snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -134,6 +143,34 @@ async def assign_presales_lead(
         row = crm_store.assign_presales_lead(
             external_id=external_id,
             presales_user_id=body.presales_user_id,
+            snapshot=body.snapshot,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"assignment": row}
+
+
+@router.patch("/lead-assignments/{external_id}/assign-employee")
+async def assign_tatva_employee_lead(
+    external_id: str,
+    body: AssignTatvaEmployeeRequest,
+    auth=Depends(require_admin),
+):
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+
+    employee_id = body.employee_id.strip()
+    if not employee_id:
+        raise HTTPException(status_code=400, detail="Employee id required")
+
+    try:
+        row = crm_store.assign_tatva_employee_lead(
+            external_id=external_id,
+            employee_id=employee_id,
+            employee_name=body.employee_name.strip(),
+            employee_email=body.employee_email.strip(),
+            employee_department=body.employee_department.strip(),
+            employee_role=body.employee_role.strip(),
             snapshot=body.snapshot,
         )
     except Exception as exc:

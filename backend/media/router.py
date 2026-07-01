@@ -55,6 +55,12 @@ def public_attachment_url(session_id: str, index: int) -> str:
     return f"{base}/media/wa/{session_id}/{index}?t={token}"
 
 
+def admin_attachment_preview_url(session_id: str, index: int) -> str:
+    """Same-origin preview path for admin UI (Vite/Vercel proxy → backend)."""
+    token = attachment_preview_token(session_id, index)
+    return f"/media/wa/{session_id}/{index}?t={token}"
+
+
 @router.get("/media/wa/{session_id}/{attachment_index}")
 async def serve_whatsapp_attachment(
     session_id: str,
@@ -64,15 +70,46 @@ async def serve_whatsapp_attachment(
     if attachment_index < 0 or not verify_attachment_preview_token(session_id, attachment_index, t):
         raise HTTPException(status_code=404, detail="Not found")
 
+    meta = None
     session = await get_session(session_id)
-    if not session:
+    if session:
+        attachments = list(session.attachments or [])
+        if attachment_index < len(attachments):
+            meta = attachments[attachment_index]
+
+    if meta is None:
+        from backend.storage.supabase_store import (
+            _cache_attachment_row,
+            _client as supabase_client,
+            get_whatsapp_attachment_record,
+        )
+
+        record = get_whatsapp_attachment_record(session_id, attachment_index)
+        if record and str(record.get("file_url") or "").startswith("twilio:"):
+            record = await _cache_attachment_row(session_id, record)
+            row_id = record.get("id")
+            cached_url = str(record.get("file_url") or "")
+            if row_id and cached_url and not cached_url.startswith("twilio:"):
+                db = supabase_client()
+                if db is not None:
+                    try:
+                        db.table("enquiry_attachments").update(
+                            {"file_url": cached_url},
+                        ).eq("id", row_id).execute()
+                    except Exception:
+                        pass
+        if record:
+            from backend.schemas.session import AttachmentMeta
+
+            meta = AttachmentMeta(
+                file_name=str(record.get("file_name") or "Uploaded file"),
+                file_url=str(record.get("file_url") or ""),
+                mime_type=str(record.get("mime_type") or ""),
+            )
+
+    if meta is None:
         raise HTTPException(status_code=404, detail="Not found")
 
-    attachments = list(session.attachments or [])
-    if attachment_index >= len(attachments):
-        raise HTTPException(status_code=404, detail="Not found")
-
-    meta = attachments[attachment_index]
     url = (meta.file_url or "").strip()
     if not url:
         raise HTTPException(status_code=404, detail="Not found")

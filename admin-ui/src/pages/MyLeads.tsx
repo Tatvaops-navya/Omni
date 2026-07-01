@@ -1,10 +1,12 @@
-﻿import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
+import type { MeetLinkRecord, MeetSlot } from '../types/meet'
 import clsx from 'clsx'
 import { format } from 'date-fns'
+import { ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-type LeadTab = 'user' | 'vendor'
+type LeadTab = 'user' | 'vendor' | 'meet'
 
 type MyLeadRow = {
   external_id: string
@@ -82,9 +84,37 @@ function formatDate(iso: string | undefined): string {
   }
 }
 
+function formatSlotWhen(iso: string | undefined): string {
+  if (!iso) return '—'
+  try {
+    return format(new Date(iso), 'dd MMM yyyy, hh:mm a')
+  } catch {
+    return iso
+  }
+}
+
+function slotStatusClass(status: string | undefined): string {
+  const value = (status || 'pending').toLowerCase()
+  if (value === 'scheduled' || value === 'confirmed') {
+    return 'bg-teal-600/20 text-teal-300'
+  }
+  if (value === 'cancelled' || value === 'canceled') {
+    return 'bg-red-600/20 text-red-300'
+  }
+  return 'bg-amber-600/20 text-amber-300'
+}
+
+function meetCustomerName(record: MeetLinkRecord): string {
+  const user = record.userId
+  if (!user) return '—'
+  return user.fullName || user.userName || user.phoneNumber || '—'
+}
+
 export default function MyLeads() {
   const [tab, setTab] = useState<LeadTab>('user')
   const [items, setItems] = useState<MyLeadRow[]>([])
+  const [meetRecords, setMeetRecords] = useState<MeetLinkRecord[]>([])
+  const [busySlotId, setBusySlotId] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -95,13 +125,26 @@ export default function MyLeads() {
     setLoading(true)
     setError('')
     try {
-      const data = await api.myLeads({ page, limit: 20, lead_type: tab })
-      setItems(data.data?.items || [])
-      setTotal(data.data?.total ?? 0)
-      setTotalPages(data.data?.totalPages ?? 1)
+      if (tab === 'meet') {
+        const data = await api.meetLinks({ page, limit: 20 })
+        if (!data.success && data.message) {
+          setError(data.message)
+        }
+        setMeetRecords(data.data || [])
+        setTotal(data.pagination?.total ?? (data.data || []).length)
+        setTotalPages(data.pagination?.totalPages ?? 1)
+        setItems([])
+      } else {
+        const data = await api.myLeads({ page, limit: 20, lead_type: tab })
+        setItems(data.data?.items || [])
+        setTotal(data.data?.total ?? 0)
+        setTotalPages(data.data?.totalPages ?? 1)
+        setMeetRecords([])
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load leads')
+      setError(e instanceof Error ? e.message : 'Failed to load')
       setItems([])
+      setMeetRecords([])
     } finally {
       setLoading(false)
     }
@@ -119,7 +162,7 @@ export default function MyLeads() {
 
   const handleComplete = async (externalId: string) => {
     try {
-      await api.completeMyLead(externalId, undefined, tab)
+      await api.completeMyLead(externalId, undefined, tab === 'vendor' ? 'vendor' : 'user')
       toast.success('Marked as completed')
       load()
     } catch (e) {
@@ -127,14 +170,50 @@ export default function MyLeads() {
     }
   }
 
-  const tabLabel = tab === 'user' ? 'user' : 'vendor'
+  const handleMeetAction = async (action: 'confirm' | 'reschedule', slotId: string) => {
+    if (!slotId) return
+    setBusySlotId(slotId)
+    try {
+      if (action === 'confirm') {
+        await api.confirmMeetSlot(slotId)
+        toast.success('Meet slot confirmed')
+      } else {
+        await api.rescheduleMeetSlot(slotId)
+        toast.success('Meet slot rescheduled')
+      }
+      load()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Action failed'
+      if (msg.includes('501') || msg.toLowerCase().includes('not configured')) {
+        toast.error(`${action === 'confirm' ? 'Confirm' : 'Reschedule'} API coming soon`)
+      } else {
+        toast.error(msg)
+      }
+    } finally {
+      setBusySlotId(null)
+    }
+  }
+
+  const meetRows = useMemo(() => {
+    const rows: { record: MeetLinkRecord; slot: MeetSlot }[] = []
+    for (const record of meetRecords) {
+      for (const slot of record.slots || []) {
+        rows.push({ record, slot })
+      }
+    }
+    return rows
+  }, [meetRecords])
+
+  const tabLabel = tab === 'user' ? 'user' : tab === 'vendor' ? 'vendor' : 'meet'
 
   return (
     <div className="p-6 space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-slate-200">My Leads</h1>
         <p className="text-sm text-slate-500 mt-1">
-          {total} assigned {tabLabel} lead{total !== 1 ? 's' : ''}
+          {tab === 'meet'
+            ? `${total} meet schedule${total !== 1 ? 's' : ''}`
+            : `${total} assigned ${tabLabel} lead${total !== 1 ? 's' : ''}`}
         </p>
       </div>
 
@@ -142,6 +221,7 @@ export default function MyLeads() {
         {([
           { key: 'user' as const, label: 'User Leads' },
           { key: 'vendor' as const, label: 'Vendor Leads' },
+          { key: 'meet' as const, label: 'Meet' },
         ]).map(({ key, label }) => (
           <button
             key={key}
@@ -163,7 +243,103 @@ export default function MyLeads() {
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          {tab === 'user' ? (
+          {tab === 'meet' ? (
+            <table className="w-full text-sm text-left">
+              <thead>
+                <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-4 py-3 font-medium">Customer</th>
+                  <th className="px-4 py-3 font-medium">Phone</th>
+                  <th className="px-4 py-3 font-medium">Email</th>
+                  <th className="px-4 py-3 font-medium">Scheduled</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Meet link</th>
+                  <th className="px-4 py-3 font-medium">Description</th>
+                  <th className="px-4 py-3 font-medium">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && meetRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-12 text-center text-slate-500">Loading meet schedules...</td>
+                  </tr>
+                ) : meetRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                      No meet schedules found.
+                    </td>
+                  </tr>
+                ) : (
+                  meetRows.map(({ record, slot }) => {
+                    const user = record.userId
+                    const slotId = slot.slotId || ''
+                    const busy = busySlotId === slotId
+                    return (
+                      <tr
+                        key={slotId || `${record._id}-${slot.scheduledAt}`}
+                        className="border-b border-slate-700/30 hover:bg-navy-700/30"
+                      >
+                        <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
+                          {meetCustomerName(record)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                          {user?.phoneNumber || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
+                          {user?.email || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-slate-300 whitespace-nowrap text-xs">
+                          {formatSlotWhen(slot.scheduledAt)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={clsx('badge uppercase text-[10px]', slotStatusClass(slot.status))}>
+                            {slot.status || 'pending'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 max-w-[160px]">
+                          {record.meetLink ? (
+                            <a
+                              href={record.meetLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-indigo-400 hover:text-indigo-300 text-xs inline-flex items-center gap-1 truncate"
+                              title={record.meetLink}
+                            >
+                              Join <ExternalLink className="w-3 h-3 shrink-0" />
+                            </a>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 max-w-[140px] truncate" title={record.description}>
+                          {record.description || '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              className="btn-ghost text-xs text-slate-400"
+                              disabled={!slotId || busy}
+                              onClick={() => handleMeetAction('reschedule', slotId)}
+                            >
+                              Reschedule
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-ghost text-xs text-teal-400"
+                              disabled={!slotId || busy}
+                              onClick={() => handleMeetAction('confirm', slotId)}
+                            >
+                              Confirm
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          ) : tab === 'user' ? (
             <table className="w-full text-sm text-left">
               <thead>
                 <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">

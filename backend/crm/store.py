@@ -1,4 +1,4 @@
-﻿"""Supabase persistence for CRM users and lead assignments."""
+"""Supabase persistence for CRM users and lead assignments."""
 from __future__ import annotations
 
 import hashlib
@@ -379,6 +379,50 @@ def enquiry_matches_assigned_phones(
     return bool(enquiry_phone_keys(enquiry) & assigned_phones)
 
 
+TATVA_EMPLOYEE_PREFIX = "tatva:"
+
+
+def _tatva_assignee_from_snapshot(assignment: dict[str, Any]) -> tuple[str | None, str | None]:
+    snap = assignment.get("snapshot") or {}
+    te = snap.get("tatva_employee") if isinstance(snap, dict) else None
+    if not isinstance(te, dict):
+        return None, None
+    name = str(te.get("name") or "").strip() or None
+    email = str(te.get("email") or "").strip() or None
+    return name, email
+
+
+def assign_tatva_employee_lead(
+    *,
+    external_id: str,
+    employee_id: str,
+    employee_name: str = "",
+    employee_email: str = "",
+    employee_department: str = "",
+    employee_role: str = "",
+    snapshot: dict[str, Any],
+    source: str = SOURCE_TATVA_PRESALES,
+) -> dict[str, Any]:
+    staff_id = f"{TATVA_EMPLOYEE_PREFIX}{employee_id}"
+    full_snapshot = {
+        **snapshot,
+        "tatva_employee": {
+            "id": employee_id,
+            "name": employee_name,
+            "email": employee_email,
+            "department": employee_department,
+            "role": employee_role,
+        },
+    }
+    return assign_staff_lead(
+        external_id=external_id,
+        staff_user_id=staff_id,
+        staff_role="presales",
+        snapshot=full_snapshot,
+        source=source,
+    )
+
+
 def _assignment_meta(
     assignment: dict[str, Any],
     users_by_id: dict[str, dict[str, Any]],
@@ -387,13 +431,19 @@ def _assignment_meta(
     rid = assignment.get("rm_user_id")
     assignee_id = pid or rid
     assignee = users_by_id.get(assignee_id) if assignee_id else None
+    assignee_name = (assignee or {}).get("name")
+    assignee_email = (assignee or {}).get("email")
+    if assignee_id and str(assignee_id).startswith(TATVA_EMPLOYEE_PREFIX):
+        te_name, te_email = _tatva_assignee_from_snapshot(assignment)
+        assignee_name = te_name or assignee_name
+        assignee_email = te_email or assignee_email
     return {
         "status": assignment.get("status") or STATUS_UNASSIGNED,
         "presales_user_id": pid,
         "rm_user_id": rid,
         "staff_user_id": assignee_id,
-        "assignee_name": (assignee or {}).get("name"),
-        "assignee_email": (assignee or {}).get("email"),
+        "assignee_name": assignee_name,
+        "assignee_email": assignee_email,
         "assigned_at": assignment.get("assigned_at"),
         "notes": assignment.get("notes"),
     }

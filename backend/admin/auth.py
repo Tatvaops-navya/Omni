@@ -1,4 +1,4 @@
-﻿"""
+"""
 Aadhya ΓÇô Admin Panel Authentication
 Admin password, CRM team login, and API key protection for /krsna routes.
 """

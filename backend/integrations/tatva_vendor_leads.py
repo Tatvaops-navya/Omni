@@ -1,4 +1,4 @@
-﻿"""
+"""
 Fetch vendor leads from Tatva admin API for Krsna admin panel.
 GET /admin/api/admin/vendor-leads
 """
@@ -90,14 +90,17 @@ async def fetch_vendor_leads(
 
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     items = _extract_items(data)
+    pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
     return {
         "success": bool(payload.get("success", True)),
         "message": str(payload.get("message") or ""),
         "data": {
             "items": items,
-            "total": int(data.get("total") or len(items)),
-            "page": int(data.get("page") or page),
-            "limit": int(data.get("limit") or limit),
-            "totalPages": int(data.get("totalPages") or 1),
+            "total": int(pagination.get("total") or data.get("total") or len(items)),
+            "page": int(pagination.get("page") or data.get("page") or page),
+            "limit": int(pagination.get("limit") or data.get("limit") or limit),
+            "totalPages": int(
+                pagination.get("pages") or pagination.get("totalPages") or data.get("totalPages") or 1
+            ),
         },
     }

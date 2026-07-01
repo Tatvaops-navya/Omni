@@ -1,21 +1,22 @@
 """
-WhatsApp media download — attachments kept on session metadata (Twilio URL reference).
+WhatsApp media download — cache to Supabase Storage when available.
 """
 from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Optional
 
-import httpx
-
 from backend.config import get_settings
 from backend.schemas.session import Session, AttachmentMeta
+from backend.storage.attachment_storage import upload_enquiry_file
 
 settings = get_settings()
 
 
 async def download_twilio_media(media_url: str) -> tuple[bytes, str]:
     """Download media from Twilio with basic auth."""
+    import httpx
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(
             media_url,
@@ -33,7 +34,7 @@ async def save_attachment(
     content_type: str = "",
     file_name: Optional[str] = None,
 ) -> Optional[AttachmentMeta]:
-    """Download from Twilio and record metadata on the session."""
+    """Download from Twilio, cache to Supabase Storage, record metadata on the session."""
     if not media_url:
         return None
     try:
@@ -46,7 +47,15 @@ async def save_attachment(
         elif "pdf" in content_type:
             ext = "pdf"
         fname = file_name or f"{uuid.uuid4().hex[:12]}.{ext}"
-        public_url = f"twilio:{media_url}"
+
+        public_url = upload_enquiry_file(
+            session.session_id,
+            fname,
+            data,
+            content_type,
+        )
+        if not public_url:
+            public_url = f"twilio:{media_url}"
 
         meta = AttachmentMeta(
             file_name=fname,

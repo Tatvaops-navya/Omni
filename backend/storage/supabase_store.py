@@ -1,4 +1,4 @@
-﻿"""
+"""
 Supabase persistence for enquiries, summaries, session logs, and attachments.
 """
 from __future__ import annotations
@@ -132,20 +132,97 @@ def _resolve_enquiry_attachments(
     fields: dict[str, Any],
     db_attachments: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Prefer stored enquiry files; fall back to DB rows or sessions_log."""
-    stored = _stored_file_records(fields)
-    if stored:
-        return stored
-
+    """Prefer enquiry_attachments table; fall back to snapshot JSON or sessions_log."""
     filtered = _filter_stored_attachments(db_attachments, fields)
     if filtered:
-        return filtered
+        return _attachments_for_admin_display(session_id, filtered)
+
+    stored = _stored_file_records(fields)
+    if stored:
+        return _attachments_for_admin_display(session_id, stored)
 
     recovered = _flow_state_attachment_records(session_id)
     if recovered:
-        return recovered
+        return _attachments_for_admin_display(session_id, recovered)
 
     return []
+
+
+def _is_http_url(url: str) -> bool:
+    return url.startswith("http://") or url.startswith("https://")
+
+
+def _url_priority(url: str) -> int:
+    if _is_http_url(url):
+        return 3
+    if url.startswith("/media/"):
+        return 2
+    if url.startswith("twilio:"):
+        return 1
+    return 0
+
+
+def _dedupe_attachments_by_filename(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    ordered_keys: list[str] = []
+    no_key: list[dict[str, Any]] = []
+
+    for item in items:
+        url = str(item.get("file_url") or "").strip()
+        if not url:
+            continue
+        name = str(item.get("file_name") or "").strip().lower()
+        key = name or url
+        entry = dict(item)
+
+        if not name:
+            no_key.append(entry)
+            continue
+
+        if key not in by_key:
+            by_key[key] = entry
+            ordered_keys.append(key)
+            continue
+
+        existing_url = str(by_key[key].get("file_url") or "")
+        if _url_priority(url) > _url_priority(existing_url):
+            by_key[key] = entry
+
+    return [by_key[k] for k in ordered_keys] + no_key
+
+
+def _attachments_for_admin_display(
+    session_id: str,
+    attachments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Show Tatva CDN links only when available; hide WhatsApp/Twilio duplicate sources."""
+    if not attachments or not session_id:
+        return [
+            a for a in attachments
+            if str(a.get("file_url") or "").strip()
+            and not str(a.get("file_url") or "").startswith("twilio:")
+        ]
+
+    normalized = _normalize_attachments_for_admin(session_id, attachments)
+    http_items = [
+        a for a in normalized
+        if _is_http_url(str(a.get("file_url") or ""))
+    ]
+    if http_items:
+        return _dedupe_attachments_by_filename(http_items)
+
+    preview_items = [
+        a for a in normalized
+        if str(a.get("file_url") or "").startswith("/media/")
+    ]
+    if preview_items:
+        return _dedupe_attachments_by_filename(preview_items)
+
+    return [
+        a for a in normalized
+        if str(a.get("file_url") or "").strip()
+        and not str(a.get("file_url") or "").startswith("twilio:")
+    ]
 
 
 def _session_upload_attachments(session) -> list:
@@ -171,7 +248,14 @@ def _filter_stored_attachments(
         allowed_set = {str(u).strip() for u in allowed if str(u).strip()}
         return [a for a in attachments if str(a.get("file_url") or "").strip() in allowed_set]
 
-    # Legacy rows: WhatsApp uploads are stored as twilio:ΓÇª refs ΓÇö exclude Tatva CDN bulk.
+    http_items = [
+        a for a in attachments
+        if _is_http_url(str(a.get("file_url") or ""))
+    ]
+    if http_items:
+        return attachments
+
+    # Legacy rows: WhatsApp uploads are stored as twilio:… refs — exclude Tatva CDN bulk.
     whatsapp_uploads = [
         a for a in attachments
         if str(a.get("file_url") or "").startswith("twilio:")
@@ -204,6 +288,125 @@ def _replace_attachments(session_id: str, session) -> None:
     rows = _attachment_rows(session_id, session)
     if rows:
         client.table("enquiry_attachments").insert(rows).execute()
+
+
+async def _cache_attachment_row(session_id: str, row: dict[str, Any]) -> dict[str, Any]:
+    """Download Twilio media and store in Supabase Storage when still available."""
+    url = str(row.get("file_url") or "")
+    if not url.startswith("twilio:"):
+        return row
+    from backend.storage.attachment_storage import upload_enquiry_file
+    from backend.storage.media_store import download_twilio_media
+
+    twilio_url = url.split(":", 1)[-1]
+    try:
+        data, ctype = await download_twilio_media(twilio_url)
+        cached = upload_enquiry_file(
+            session_id,
+            str(row.get("file_name") or "upload"),
+            data,
+            str(row.get("mime_type") or ctype),
+        )
+        if cached:
+            return {**row, "file_url": cached}
+    except Exception:
+        pass
+    return row
+
+
+async def _replace_attachments_cached(session_id: str, session) -> None:
+    client = _client()
+    if client is None:
+        return
+    client.table("enquiry_attachments").delete().eq("session_id", session_id).execute()
+    rows = _attachment_rows(session_id, session)
+    if not rows:
+        return
+    cached_rows: list[dict[str, Any]] = []
+    for row in rows:
+        cached_rows.append(await _cache_attachment_row(session_id, row))
+    client.table("enquiry_attachments").insert(cached_rows).execute()
+
+
+async def refresh_session_attachment_urls(session_id: str) -> list[dict[str, Any]]:
+    """Backfill Twilio refs to Supabase Storage URLs for admin viewing."""
+    client = _client()
+    if client is None or not session_id:
+        return []
+    result = (
+        client.table("enquiry_attachments")
+        .select("*")
+        .eq("session_id", session_id)
+        .order("uploaded_at")
+        .execute()
+    )
+    rows = [dict(row) for row in (result.data or [])]
+    if not rows:
+        fields_row = (
+            client.table("enquiries")
+            .select("extracted_fields")
+            .eq("session_id", session_id)
+            .limit(1)
+            .execute()
+        )
+        data = (fields_row.data or [None])[0] or {}
+        fields = data.get("extracted_fields") if isinstance(data, dict) else {}
+        rows = _stored_file_records(fields if isinstance(fields, dict) else {})
+
+    updated: list[dict[str, Any]] = []
+    for row in rows:
+        cached = await _cache_attachment_row(session_id, row)
+        row_id = cached.get("id")
+        new_url = str(cached.get("file_url") or "")
+        old_url = str(row.get("file_url") or "")
+        if row_id and new_url and new_url != old_url:
+            try:
+                client.table("enquiry_attachments").update(
+                    {"file_url": new_url},
+                ).eq("id", row_id).execute()
+            except Exception:
+                pass
+        updated.append(cached)
+    return _attachments_for_admin_display(session_id, updated)
+
+
+def get_resolved_enquiry_attachments(session_id: str) -> list[dict[str, Any]]:
+    """Normalized attachment list for admin UI (no Twilio backfill)."""
+    client = _client()
+    if client is None or not session_id:
+        return []
+    result = (
+        client.table("enquiry_attachments")
+        .select("file_name,file_url,mime_type,uploaded_at")
+        .eq("session_id", session_id)
+        .order("uploaded_at")
+        .execute()
+    )
+    rows = [dict(row) for row in (result.data or [])]
+    fields: dict[str, Any] = {}
+    if not rows:
+        fields_row = (
+            client.table("enquiries")
+            .select("extracted_fields")
+            .eq("session_id", session_id)
+            .limit(1)
+            .execute()
+        )
+        data = (fields_row.data or [None])[0] or {}
+        if isinstance(data, dict):
+            fields = data.get("extracted_fields") if isinstance(data.get("extracted_fields"), dict) else {}
+    else:
+        fields_row = (
+            client.table("enquiries")
+            .select("extracted_fields")
+            .eq("session_id", session_id)
+            .limit(1)
+            .execute()
+        )
+        data = (fields_row.data or [None])[0] or {}
+        if isinstance(data, dict):
+            fields = data.get("extracted_fields") if isinstance(data.get("extracted_fields"), dict) else {}
+    return _resolve_enquiry_attachments(session_id, fields, rows)
 
 
 def _upsert_enquiry_row(session, *, status: str, save_attachments: bool) -> bool:
@@ -239,7 +442,11 @@ async def save_enquiry(session) -> bool:
 async def persist_terminal_enquiry(session) -> bool:
     status = "declined" if session.flow_state.get("project_declined") else "completed"
     has_files = bool(_all_enquiry_attachment_records(session))
-    return _upsert_enquiry_row(session, status=status, save_attachments=has_files)
+    if not _upsert_enquiry_row(session, status=status, save_attachments=False):
+        return False
+    if has_files:
+        await _replace_attachments_cached(session.session_id, session)
+    return True
 
 
 async def save_summary(summary, phone_number: str = "") -> bool:
@@ -301,6 +508,69 @@ async def upsert_session_log(session) -> bool:
     return True
 
 
+def get_enquiry_attachment_by_index(session_id: str, index: int) -> dict[str, Any] | None:
+    """Load persisted attachment row (used when Redis session is cleared after submit)."""
+    client = _client()
+    if client is None or not session_id or index < 0:
+        return None
+    result = (
+        client.table("enquiry_attachments")
+        .select("*")
+        .eq("session_id", session_id)
+        .order("uploaded_at")
+        .execute()
+    )
+    rows = list(result.data or [])
+    if index < len(rows):
+        return dict(rows[index])
+    return None
+
+
+def get_whatsapp_attachment_record(session_id: str, wa_index: int) -> dict[str, Any] | None:
+    """Nth WhatsApp upload for a session (preview index, not full attachment table index)."""
+    client = _client()
+    if client is None or not session_id or wa_index < 0:
+        return None
+    result = (
+        client.table("enquiry_attachments")
+        .select("*")
+        .eq("session_id", session_id)
+        .order("uploaded_at")
+        .execute()
+    )
+    wa_rows = [
+        dict(row) for row in (result.data or [])
+        if str(row.get("file_url") or "").startswith("twilio:")
+    ]
+    if wa_index < len(wa_rows):
+        return wa_rows[wa_index]
+    return get_enquiry_attachment_by_index(session_id, wa_index)
+
+
+def _normalize_attachments_for_admin(
+    session_id: str,
+    attachments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Turn twilio: WhatsApp refs into same-origin preview URLs for the admin UI."""
+    if not attachments or not session_id:
+        return attachments
+    from backend.media.router import admin_attachment_preview_url
+
+    normalized: list[dict[str, Any]] = []
+    wa_index = 0
+    for item in attachments:
+        url = str(item.get("file_url") or "").strip()
+        if url.startswith("twilio:"):
+            normalized.append({
+                **item,
+                "file_url": admin_attachment_preview_url(session_id, wa_index),
+            })
+            wa_index += 1
+        else:
+            normalized.append(dict(item))
+    return normalized
+
+
 def _attachments_for_sessions(session_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
     client = _client()
     if client is None or not session_ids:
@@ -315,6 +585,8 @@ def _attachments_for_sessions(session_ids: list[str]) -> dict[str, list[dict[str
     for row in result.data or []:
         sid = str(row.get("session_id") or "")
         grouped.setdefault(sid, []).append(row)
+    for sid in grouped:
+        grouped[sid].sort(key=lambda r: str(r.get("uploaded_at") or ""))
     return grouped
 
 

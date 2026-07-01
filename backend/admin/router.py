@@ -1,4 +1,4 @@
-﻿"""
+"""
 Aadhya ΓÇô Admin API Router
 All endpoints backing the /krsna admin panel.
 Protected by require_admin dependency.
@@ -201,6 +201,38 @@ async def get_presales(
     return result
 
 
+@router.get("/employees")
+async def get_employees(
+    department: str = Query("sales"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    auth=Depends(require_admin),
+):
+    from backend.integrations.tatva_employees import fetch_tatva_employees
+
+    return await fetch_tatva_employees(department=department, page=page, limit=limit)
+
+
+@router.post("/presales/enrich")
+async def enrich_presales(body: dict, auth=Depends(require_admin)):
+    from backend.crm import store as crm_store
+
+    items = body.get("items") if isinstance(body.get("items"), list) else []
+    return {
+        "items": crm_store.enrich_presales_items(items) if items else [],
+        "crm_configured": crm_store.crm_available(),
+    }
+
+
+@router.delete("/presales/{presales_id}/assignment")
+async def delete_presales_assignment(presales_id: str, auth=Depends(require_admin)):
+    from backend.crm import store as crm_store
+
+    if crm_store.crm_available():
+        crm_store.delete_assignment(external_id=presales_id)
+    return {"success": True}
+
+
 @router.delete("/presales/{presales_id}")
 async def delete_presales(presales_id: str, auth=Depends(require_admin)):
     from backend.integrations.tatva_presales import delete_presales_record
@@ -279,10 +311,24 @@ async def get_vendor_leads(
     return result
 
 
-# ΓöÇΓöÇΓöÇ Enquiries ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+@router.post("/vendor-leads/enrich")
+async def enrich_vendor_leads(body: dict, auth=Depends(require_admin)):
+    from backend.crm import store as crm_store
+
+    items = body.get("items") if isinstance(body.get("items"), list) else []
+    return {
+        "items": crm_store.enrich_vendor_items(items) if items else [],
+        "crm_configured": crm_store.crm_available(),
+    }
+
+
+# ΓöÇΓöÇΓöÇ Enquiries
 
 def _live_session_to_enquiry(session) -> dict[str, Any]:
-    from backend.storage.supabase_store import _all_enquiry_attachment_records
+    from backend.storage.supabase_store import (
+        _all_enquiry_attachment_records,
+        _attachments_for_admin_display,
+    )
 
     status = "declined" if session.flow_state.get("project_declined") else "in_progress"
     if session.summary_generated:
@@ -296,6 +342,7 @@ def _live_session_to_enquiry(session) -> dict[str, Any]:
     if tatva_id:
         fields["tatva_enquiry_id"] = str(tatva_id)
     file_records = _all_enquiry_attachment_records(session)
+    file_records = _attachments_for_admin_display(session.session_id, file_records)
     if file_records:
         fields["_enquiry_files"] = file_records
         fields["_enquiry_attachment_urls"] = [
@@ -320,6 +367,18 @@ def _live_session_to_enquiry(session) -> dict[str, Any]:
         "last_active": session.last_active.isoformat(),
         "source": "live",
     }
+
+
+@router.get("/enquiries/{session_id}/attachments")
+async def get_enquiry_attachments(session_id: str, auth=Depends(require_staff)):
+    attachments = supabase_store.get_resolved_enquiry_attachments(session_id)
+    return {"attachments": attachments, "count": len(attachments)}
+
+
+@router.post("/enquiries/{session_id}/attachments/refresh")
+async def refresh_enquiry_attachments(session_id: str, auth=Depends(require_staff)):
+    attachments = await supabase_store.refresh_session_attachment_urls(session_id)
+    return {"attachments": attachments, "count": len(attachments)}
 
 
 @router.get("/enquiries")
@@ -374,7 +433,19 @@ async def get_enquiries(auth=Depends(require_staff)):
 
     from backend.admin.enquiry_display import enrich_enquiries
 
-    enquiries = await enrich_enquiries(enquiries)
+    try:
+        enquiries = await enrich_enquiries(enquiries)
+    except Exception:
+        pass
+
+    from backend.storage.supabase_store import _attachments_for_admin_display
+
+    for row in enquiries:
+        sid = str(row.get("session_id") or "")
+        attachments = row.get("attachments") if isinstance(row.get("attachments"), list) else []
+        row["attachments"] = _attachments_for_admin_display(sid, attachments)
+        row["attachment_count"] = len(row["attachments"])
+
     return {
         "enquiries": enquiries,
         "configured": supabase_store.is_configured(),

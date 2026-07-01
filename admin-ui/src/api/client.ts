@@ -1,10 +1,12 @@
-﻿// API client for the Aadhya admin panel
-// Dev: Vite proxy /admin → localhost:8000
-// Production (Vercel): same-origin /admin → Render via vercel.json rewrite (no CORS)
+// Omnichannel backend: login, enquiries, CRM. Tatva platform: api.withtatva.ai via /tatva-api proxy.
 import type { MeetLinksResponse } from '../types/meet'
-const BASE_URL = import.meta.env.DEV
-  ? (import.meta.env.VITE_API_URL || 'http://localhost:8000')
-  : ''
+import type { EnquiryAttachment } from '../types/enquiry'
+import { normalizePhone } from '../utils/phone'
+import { OMNICHANNEL_API_BASE, TATVA_API_BASE } from './config'
+
+const BASE_URL = OMNICHANNEL_API_BASE
+
+export { OMNICHANNEL_API_BASE, TATVA_API_BASE, TATVA_API_ORIGIN } from './config'
 
 let authToken: string | null = sessionStorage.getItem('aadhya_admin_token')
 
@@ -89,6 +91,68 @@ async function fetchAdmin(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
+async function fetchTatva(path: string, options: RequestInit = {}) {
+  const method = (options.method || 'GET').toUpperCase()
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...(options.headers as Record<string, string> || {}),
+  }
+  if (method !== 'GET' && method !== 'HEAD') {
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json'
+  }
+  const res = await fetch(`${TATVA_API_BASE}${path}`, { ...options, headers })
+  if (!res.ok) throw new Error(`Tatva API HTTP ${res.status}`)
+  return res.json()
+}
+
+function filterMeetLinksForUser(
+  payload: MeetLinksResponse,
+  userId?: string,
+  phone?: string,
+): MeetLinksResponse {
+  const needle = normalizePhone(phone)
+  const items = (payload.data || []).filter(item => {
+    const uid = item.userId?._id || ''
+    if (userId && uid === userId) return true
+    if (needle) {
+      const itemPhone = normalizePhone(item.userId?.phoneNumber)
+      if (itemPhone && itemPhone === needle) return true
+    }
+    return !userId && !needle
+  })
+  return { ...payload, data: items }
+}
+
+function normalizeTatvaPagedItems(
+  payload: Record<string, unknown>,
+  listKeys: string[] = ['items', 'leads', 'users', 'vendorLeads', 'vendor_leads'],
+) {
+  const raw = (
+    payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+  ) ? payload.data as Record<string, unknown> : {}
+
+  let items: unknown[] = []
+  for (const key of listKeys) {
+    const value = raw[key]
+    if (Array.isArray(value)) {
+      items = value
+      break
+    }
+  }
+
+  const pagination = (
+    raw.pagination && typeof raw.pagination === 'object'
+  ) ? raw.pagination as Record<string, unknown> : {}
+
+  return {
+    items,
+    total: Number(pagination.total ?? raw.total ?? items.length),
+    page: Number(pagination.page ?? raw.page ?? 1),
+    limit: Number(pagination.limit ?? raw.limit ?? 20),
+    totalPages: Number(pagination.pages ?? pagination.totalPages ?? raw.totalPages ?? 1),
+  }
+}
+
 export type LeadAssignmentMeta = {
   status?: string
   presales_user_id?: string | null
@@ -108,6 +172,11 @@ export type PresalesItem = {
   phoneNumber?: string
   location?: string
   propertyLocation?: string
+  projectId?: string
+  project_id?: string
+  assignee?: string
+  assigneeName?: string
+  assignedTo?: string | { fullName?: string; name?: string; email?: string }
   createdAt?: string
   updatedAt?: string
   assignment?: LeadAssignmentMeta
@@ -150,6 +219,89 @@ export type TatvaUsersResponse = {
     limit: number
     totalPages: number
   }
+}
+
+export type TatvaEmployee = {
+  _id?: string
+  id?: string
+  employeeId?: string
+  name?: string
+  fullName?: string
+  employeeName?: string
+  firstName?: string
+  lastName?: string
+  email?: string
+  phoneNumber?: string
+  phone?: string
+  department?: string
+  role?: string
+  designation?: string
+  [key: string]: unknown
+}
+
+export function tatvaEmployeeId(emp: TatvaEmployee): string {
+  return String(emp._id || emp.id || emp.employeeId || '').trim()
+}
+
+export function tatvaEmployeeName(emp: TatvaEmployee): string {
+  const direct = emp.fullName || emp.name || emp.employeeName
+  if (direct && String(direct).trim()) return String(direct).trim()
+  const first = String(emp.firstName || '').trim()
+  const last = String(emp.lastName || '').trim()
+  return [first, last].filter(Boolean).join(' ') || 'Employee'
+}
+
+export function tatvaEmployeeRoleName(emp: TatvaEmployee): string {
+  const role = emp.role
+  if (role && typeof role === 'object' && !Array.isArray(role)) {
+    const name = (role as { name?: string }).name
+    if (name && String(name).trim()) return String(name).trim()
+  }
+  return String(emp.designation || (typeof role === 'string' ? role : '') || '').trim()
+}
+
+export function tatvaEmployeeDepartmentName(emp: TatvaEmployee): string {
+  const dept = emp.department
+  if (Array.isArray(dept) && dept.length > 0) {
+    const first = dept[0]
+    if (first && typeof first === 'object' && 'name' in first) {
+      return String((first as { name?: string }).name || '').trim()
+    }
+  }
+  return typeof dept === 'string' ? dept.trim() : ''
+}
+
+export function tatvaEmployeeLabel(emp: TatvaEmployee): string {
+  const name = tatvaEmployeeName(emp)
+  const role = tatvaEmployeeRoleName(emp) || tatvaEmployeeDepartmentName(emp)
+  return role ? `${name} (${role})` : name
+}
+
+function normalizeTatvaEmployees(payload: Record<string, unknown>): TatvaEmployee[] {
+  const raw = payload.data
+  let list: unknown[] = []
+  if (Array.isArray(raw)) {
+    list = raw
+  } else if (raw && typeof raw === 'object') {
+    const data = raw as Record<string, unknown>
+    for (const key of ['employees', 'items', 'users', 'staff']) {
+      const value = data[key]
+      if (Array.isArray(value)) {
+        list = value
+        break
+      }
+    }
+  }
+  if (!list.length) {
+    for (const key of ['employees', 'items']) {
+      const value = payload[key]
+      if (Array.isArray(value)) {
+        list = value
+        break
+      }
+    }
+  }
+  return list.filter((item): item is TatvaEmployee => !!item && typeof item === 'object')
 }
 
 export type VendorLeadItem = {
@@ -230,6 +382,18 @@ export const api = {
     return fetchAdmin(`/admin/crm-users${qs}`) as Promise<{ users: CrmUser[]; configured: boolean }>
   },
 
+  tatvaEmployees: async (
+    department = 'sales',
+    params?: { page?: number; limit?: number },
+  ) => {
+    const page = params?.page ?? 1
+    const limit = params?.limit ?? 50
+    const payload = await fetchTatva(
+      `/admin/api/admin/employees/by-department/${encodeURIComponent(department)}?page=${page}&limit=${limit}`,
+    ) as Record<string, unknown>
+    return { employees: normalizeTatvaEmployees(payload) }
+  },
+
   createCrmUser: (body: { name: string; email: string; password: string; role: string }) =>
     fetchAdmin('/admin/crm-users', { method: 'POST', body: JSON.stringify(body) }),
 
@@ -241,6 +405,22 @@ export const api = {
 
   assignUserLead: (externalId: string, body: { staff_user_id: string; snapshot: Record<string, unknown> }) =>
     fetchAdmin(`/admin/lead-assignments/${externalId}/assign-user`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  assignEmployeeLead: (
+    externalId: string,
+    body: {
+      employee_id: string
+      employee_name?: string
+      employee_email?: string
+      employee_department?: string
+      employee_role?: string
+      snapshot: Record<string, unknown>
+    },
+  ) =>
+    fetchAdmin(`/admin/lead-assignments/${externalId}/assign-employee`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
@@ -277,43 +457,110 @@ export const api = {
   sessions: () => fetchAdmin('/admin/sessions'),
   session: (id: string) => fetchAdmin(`/admin/session/${id}`),
   enquiries: () => fetchAdmin('/admin/enquiries'),
-  presales: (params?: { page?: number; limit?: number; flag?: string }) => {
+
+  refreshEnquiryAttachments: (sessionId: string) =>
+    fetchAdmin(`/admin/enquiries/${encodeURIComponent(sessionId)}/attachments/refresh`, {
+      method: 'POST',
+    }) as Promise<{ attachments?: EnquiryAttachment[]; count?: number }>,
+
+  enquiryAttachments: (sessionId: string) =>
+    fetchAdmin(`/admin/enquiries/${encodeURIComponent(sessionId)}/attachments`) as Promise<{
+      attachments?: EnquiryAttachment[]
+      count?: number
+    }>,
+  presales: async (params?: { page?: number; limit?: number; flag?: string }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.flag) qs.set('flag', params.flag)
     const query = qs.toString()
-    return fetchAdmin(`/admin/presales${query ? `?${query}` : ''}`) as Promise<PresalesResponse>
+    return fetchTatva(`/admin/api/admin/presales${query ? `?${query}` : ''}`) as Promise<PresalesResponse>
   },
-  deletePresales: (presalesId: string) =>
-    fetchAdmin(`/admin/presales/${encodeURIComponent(presalesId)}`, { method: 'DELETE' }),
-  users: (params?: { page?: number; limit?: number }) => {
+  deletePresales: async (presalesId: string) => {
+    const result = await fetchTatva(`/admin/api/admin/presales/${encodeURIComponent(presalesId)}`, {
+      method: 'DELETE',
+    })
+    try {
+      await fetchAdmin(`/admin/presales/${encodeURIComponent(presalesId)}/assignment`, { method: 'DELETE' })
+    } catch {
+      // CRM assignment cleanup is best-effort
+    }
+    return result
+  },
+  users: async (params?: { page?: number; limit?: number }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))
     if (params?.limit) qs.set('limit', String(params.limit))
     const query = qs.toString()
-    return fetchAdmin(`/admin/users${query ? `?${query}` : ''}`) as Promise<TatvaUsersResponse>
+    const tatva = await fetchTatva(`/users/api/users${query ? `?${query}` : ''}`) as TatvaUsersResponse
+    const paged = normalizeTatvaPagedItems(tatva as unknown as Record<string, unknown>, ['users', 'items'])
+    return {
+      success: tatva.success,
+      message: tatva.message,
+      data: {
+        users: paged.items as TatvaUserItem[],
+        total: paged.total,
+        page: paged.page,
+        limit: paged.limit,
+        totalPages: paged.totalPages,
+      },
+    }
   },
-  meetLinks: (params?: { page?: number; limit?: number; user_id?: string; phone?: string }) => {
+  meetLinks: async (params?: { page?: number; limit?: number; user_id?: string; phone?: string }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))
-    if (params?.limit) qs.set('limit', String(params.limit))
-    if (params?.user_id) qs.set('user_id', params.user_id)
-    if (params?.phone) qs.set('phone', params.phone)
+    if (params?.limit) qs.set('limit', String(params?.limit ?? 20))
     const query = qs.toString()
-    return fetchAdmin(`/admin/meet-links${query ? `?${query}` : ''}`) as Promise<MeetLinksResponse>
+    const payload = await fetchTatva(`/users/api/meet-links/all${query ? `?${query}` : ''}`) as MeetLinksResponse
+    if (params?.user_id || params?.phone) {
+      return filterMeetLinksForUser(payload, params.user_id, params.phone)
+    }
+    return payload
   },
   confirmMeetSlot: (slotId: string) =>
     fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/confirm`, { method: 'PATCH' }),
   rescheduleMeetSlot: (slotId: string) =>
     fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/reschedule`, { method: 'PATCH' }),
-  vendorLeads: (params?: { page?: number; limit?: number; status?: string }) => {
+  vendorLeads: async (params?: { page?: number; limit?: number; status?: string }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.status) qs.set('status', params.status)
     const query = qs.toString()
-    return fetchAdmin(`/admin/vendor-leads${query ? `?${query}` : ''}`) as Promise<VendorLeadsResponse>
+    const tatva = await fetchTatva(`/admin/api/admin/vendor-leads${query ? `?${query}` : ''}`) as VendorLeadsResponse
+    const paged = normalizeTatvaPagedItems(tatva as unknown as Record<string, unknown>, ['leads', 'items', 'vendorLeads', 'vendor_leads'])
+    const items = paged.items as VendorLeadItem[]
+    try {
+      const enrich = await fetchAdmin('/admin/vendor-leads/enrich', {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      }) as { items?: VendorLeadItem[]; crm_configured?: boolean }
+      return {
+        success: tatva.success,
+        message: tatva.message,
+        crm_configured: !!enrich.crm_configured,
+        data: {
+          items: enrich.items || items,
+          total: paged.total,
+          page: paged.page,
+          limit: paged.limit,
+          totalPages: paged.totalPages,
+        },
+      }
+    } catch {
+      return {
+        success: tatva.success,
+        message: tatva.message,
+        crm_configured: false,
+        data: {
+          items,
+          total: paged.total,
+          page: paged.page,
+          limit: paged.limit,
+          totalPages: paged.totalPages,
+        },
+      }
+    }
   },
   summaries: () => fetchAdmin('/admin/summaries'),
   logs: (params?: { session_id?: string; event?: string; limit?: number }) => {

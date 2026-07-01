@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api, CrmUser, VendorLeadItem } from '../api/client'
 import { StaffCommentDisplay } from '../components/StaffCommentDisplay'
 import { format } from 'date-fns'
@@ -40,6 +40,22 @@ function vendorStatusBadge(status: string) {
 function vendorStatus(row: VendorLeadItem): string {
   const value = pick(row, 'status', 'leadStatus', 'vendorStatus', 'approvalStatus')
   return value === '—' ? 'pending' : value
+}
+
+function formatVendorServices(row: VendorLeadItem): string {
+  const services = row.services
+  if (Array.isArray(services) && services.length > 0) {
+    const names = services
+      .map(item => {
+        if (item && typeof item === 'object' && 'name' in item) {
+          return String((item as { name?: string }).name || '').trim()
+        }
+        return String(item || '').trim()
+      })
+      .filter(Boolean)
+    if (names.length > 0) return names.join(', ')
+  }
+  return pick(row, 'service', 'serviceCategory', 'serviceType', 'category')
 }
 
 export default function VendorLeads() {
@@ -184,12 +200,12 @@ export default function VendorLeads() {
                 </tr>
               ) : (
                 items.map(row => {
-                  const name = pick(row, 'name', 'fullName', 'contactName', 'vendorName')
+                  const name = pick(row, 'name', 'fullName', 'contactName', 'vendorName', 'designation')
                   const company = pick(row, 'companyName', 'businessName', 'company', 'vendorName')
                   const phone = pick(row, 'phoneNumber', 'phone', 'mobile')
                   const email = pick(row, 'email')
-                  const location = pick(row, 'location', 'city', 'address')
-                  const service = pick(row, 'service', 'serviceCategory', 'serviceType', 'category')
+                  const location = pick(row, 'businessAddress', 'location', 'city', 'address')
+                  const service = formatVendorServices(row)
                   const leadStatus = vendorStatus(row)
                   const created = pick(row, 'createdAt', 'created_at')
                   const rowKey = rowId(row) || `${phone}-${created}`

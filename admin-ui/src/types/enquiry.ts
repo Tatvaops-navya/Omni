@@ -1,6 +1,7 @@
 export type EnquiryAttachment = {
   file_name: string
   file_url: string
+  preview_url?: string
   mime_type?: string
 }
 

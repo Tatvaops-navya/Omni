@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ExternalLink, Paperclip, X } from 'lucide-react'
 import { format } from 'date-fns'
+import { api } from '../api/client'
 import type { Enquiry, EnquiryAttachment } from '../types/enquiry'
 
 function formatValue(field: string, value: unknown): string {
@@ -53,8 +54,39 @@ function isImageAttachment(attachment: EnquiryAttachment): boolean {
   return /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(name)
 }
 
-function isViewableUrl(url: string): boolean {
-  return url.startsWith('http://') || url.startsWith('https://')
+export function isViewableUrl(url: string): boolean {
+  return (
+    url.startsWith('http://')
+    || url.startsWith('https://')
+    || url.startsWith('/media/')
+  )
+}
+
+function attachmentViewUrl(attachment: EnquiryAttachment): string {
+  const preview = String(attachment.preview_url || '').trim()
+  if (preview && isViewableUrl(preview)) return preview
+  const url = String(attachment.file_url || '').trim()
+  if (isViewableUrl(url)) return url
+  return ''
+}
+
+function isWhatsAppRef(attachment: EnquiryAttachment): boolean {
+  const url = String(attachment.file_url || '').trim()
+  return url.startsWith('twilio:') || url.startsWith('whatsapp:')
+}
+
+/** Drop WhatsApp/Twilio duplicates when Tatva CDN links exist for the same enquiry. */
+function filterDisplayAttachments(attachments: EnquiryAttachment[]): EnquiryAttachment[] {
+  const cdn = attachments.filter(a => {
+    const url = String(a.file_url || a.preview_url || '').trim()
+    return url.startsWith('http://') || url.startsWith('https://')
+  })
+  if (cdn.length > 0) return cdn
+
+  const previews = attachments.filter(a => String(a.file_url || '').startsWith('/media/'))
+  if (previews.length > 0) return previews
+
+  return attachments.filter(a => !isWhatsAppRef(a))
 }
 
 function AttachmentPreviewModal({
@@ -64,7 +96,7 @@ function AttachmentPreviewModal({
   attachment: EnquiryAttachment
   onClose: () => void
 }) {
-  const url = attachment.file_url || ''
+  const url = attachmentViewUrl(attachment)
   const isImage = isImageAttachment(attachment)
 
   return (
@@ -85,13 +117,13 @@ function AttachmentPreviewModal({
           </button>
         </div>
         <div className="bg-navy-900 rounded-lg overflow-hidden flex items-center justify-center min-h-[200px] max-h-[75vh]">
-          {isImage && isViewableUrl(url) ? (
+          {isImage && url ? (
             <img
               src={url}
               alt={attachment.file_name || 'Uploaded image'}
               className="max-h-[75vh] max-w-full object-contain"
             />
-          ) : isViewableUrl(url) ? (
+          ) : url ? (
             <div className="p-8 text-center space-y-3">
               <p className="text-slate-400 text-sm">Preview not available for this file type.</p>
               <a
@@ -104,10 +136,13 @@ function AttachmentPreviewModal({
               </a>
             </div>
           ) : (
-            <p className="text-slate-500 text-sm p-8">WhatsApp upload — not viewable in browser.</p>
+            <p className="text-slate-500 text-sm p-8 text-center max-w-md">
+              This file was sent on WhatsApp and the preview link is not available yet.
+              Redeploy the backend or wait for the file to sync to Tatva storage.
+            </p>
           )}
         </div>
-        {isViewableUrl(url) && (
+        {url && (
           <a
             href={url}
             target="_blank"
@@ -122,8 +157,45 @@ function AttachmentPreviewModal({
   )
 }
 
-export function EnquiryFileList({ attachments }: { attachments: EnquiryAttachment[] }) {
+export function EnquiryFileList({
+  attachments: initialAttachments,
+  sessionId,
+}: {
+  attachments: EnquiryAttachment[]
+  sessionId?: string
+}) {
   const [preview, setPreview] = useState<EnquiryAttachment | null>(null)
+  const [attachments, setAttachments] = useState(() => filterDisplayAttachments(initialAttachments))
+
+  useEffect(() => {
+    setAttachments(filterDisplayAttachments(initialAttachments))
+  }, [initialAttachments])
+
+  useEffect(() => {
+    if (!sessionId) return
+    let cancelled = false
+    const resolve = async () => {
+      try {
+        const refreshed = await api.refreshEnquiryAttachments(sessionId)
+        if (!cancelled && refreshed.attachments?.length) {
+          setAttachments(filterDisplayAttachments(refreshed.attachments))
+          return
+        }
+      } catch {
+        // fall through to GET
+      }
+      try {
+        const resolved = await api.enquiryAttachments(sessionId)
+        if (!cancelled && resolved.attachments?.length) {
+          setAttachments(filterDisplayAttachments(resolved.attachments))
+        }
+      } catch {
+        // keep initial list
+      }
+    }
+    void resolve()
+    return () => { cancelled = true }
+  }, [sessionId])
 
   if (attachments.length === 0) {
     return <p className="text-xs text-slate-500">No files for this enquiry.</p>
@@ -133,30 +205,34 @@ export function EnquiryFileList({ attachments }: { attachments: EnquiryAttachmen
     <>
       <ul className="space-y-1.5">
         {attachments.map((a, i) => {
-          const url = a.file_url || ''
-          const viewable = isViewableUrl(url)
+          const url = attachmentViewUrl(a)
           const isImage = isImageAttachment(a)
           return (
-            <li key={`${url}-${i}`} className="flex items-center justify-between gap-2 text-sm">
+            <li key={`${a.file_name}-${url}-${i}`} className="flex items-center justify-between gap-2 text-sm">
               <button
                 type="button"
-                className="text-slate-300 truncate flex items-center gap-1.5 min-w-0 text-left hover:text-indigo-300"
-                disabled={!viewable}
-                onClick={() => viewable && setPreview(a)}
+                className="text-slate-300 truncate flex items-center gap-1.5 min-w-0 text-left hover:text-indigo-300 disabled:cursor-default disabled:hover:text-slate-300"
+                disabled={!url}
+                onClick={() => url && setPreview(a)}
               >
                 <Paperclip className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                 {a.file_name || 'Uploaded file'}
               </button>
-              {viewable ? (
+              {url ? (
                 <button
                   type="button"
                   className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5 shrink-0"
                   onClick={() => setPreview(a)}
                 >
-                  {isImage ? 'View image' : 'View'} <ExternalLink className="w-3 h-3" />
+                  {isImage ? 'View image' : 'Open'} <ExternalLink className="w-3 h-3" />
                 </button>
               ) : (
-                <span className="text-[10px] text-slate-600 shrink-0">WhatsApp upload</span>
+                <span
+                  className="text-[10px] text-slate-500 shrink-0 max-w-[120px] text-right leading-tight"
+                  title="Preview link is not available for this file"
+                >
+                  No link
+                </span>
               )}
             </li>
           )
@@ -178,7 +254,7 @@ export function EnquiryDetailPanel({
 }) {
   const fields = enquiry.extracted_fields || {}
   const requirements = enquiry.requirements_summary || []
-  const attachments = enquiry.attachments || []
+  const attachments = filterDisplayAttachments(enquiry.attachments || [])
   const name = pick(fields, 'client_name') || 'Unknown'
   const phone = formatPhone(enquiry.phone_number) || pick(fields, 'phone_number')
   const email = pick(fields, 'email')
@@ -235,7 +311,10 @@ export function EnquiryDetailPanel({
           <p className="text-xs text-slate-500 mb-2">
             Uploaded files{attachments.length > 0 ? ` (${attachments.length})` : ''}
           </p>
-          <EnquiryFileList attachments={attachments} />
+          <EnquiryFileList
+            attachments={attachments}
+            sessionId={enquiry.session_id}
+          />
         </div>
       )}
 

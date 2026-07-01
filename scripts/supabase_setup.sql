@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS sessions_log (
     last_active TIMESTAMPTZ DEFAULT NOW()
 );
 
--- WhatsApp file metadata (files live in Storage bucket enquiry-files)
+-- WhatsApp file metadata (files live in Storage bucket enquiry-files — create public bucket in Supabase)
 CREATE TABLE IF NOT EXISTS enquiry_attachments (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     session_id TEXT NOT NULL,

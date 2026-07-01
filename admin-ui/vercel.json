@@ -4,8 +4,16 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/tatva-api/:path*",
+      "destination": "https://api.withtatva.ai/:path*"
+    },
+    {
       "source": "/admin/:path*",
       "destination": "https://omni-1-iltl.onrender.com/admin/:path*"
+    },
+    {
+      "source": "/media/:path*",
+      "destination": "https://omni-1-iltl.onrender.com/media/:path*"
     },
     { "source": "/krsna/assets/(.*)", "destination": "/assets/$1" },
     { "source": "/krsna", "destination": "/krsna/" },

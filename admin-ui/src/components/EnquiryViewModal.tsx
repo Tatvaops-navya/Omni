@@ -38,14 +38,40 @@ export default function EnquiryViewModal({
     setError('')
     setEnquiry(null)
     api.enquiries()
-      .then(data => {
+      .then(async data => {
         if (cancelled) return
         const match = findEnquiryByPhone(data.enquiries || [], phone)
         if (!match) {
           setError('No enquiry found for this lead yet.')
           return
         }
-        setEnquiry(match)
+        let enquiry = match
+        if (match.session_id) {
+          try {
+            const refreshed = await api.refreshEnquiryAttachments(match.session_id)
+            if (refreshed.attachments?.length) {
+              enquiry = {
+                ...match,
+                attachments: refreshed.attachments,
+                attachment_count: refreshed.count ?? refreshed.attachments.length,
+              }
+            }
+          } catch {
+            try {
+              const resolved = await api.enquiryAttachments(match.session_id)
+              if (resolved.attachments?.length) {
+                enquiry = {
+                  ...match,
+                  attachments: resolved.attachments,
+                  attachment_count: resolved.count ?? resolved.attachments.length,
+                }
+              }
+            } catch {
+              // keep enquiry from list
+            }
+          }
+        }
+        setEnquiry(enquiry)
       })
       .catch(() => {
         if (!cancelled) setError('Failed to load enquiry.')
