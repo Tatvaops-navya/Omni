@@ -3,8 +3,10 @@ Supabase persistence for enquiries, summaries, session logs, and attachments.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from backend.integrations.tatva_enquiry_submit import _normalize_attachments
 from backend.storage.supabase_client import get_supabase_client, is_supabase_configured
@@ -69,7 +71,11 @@ def _tatva_enquiry_attachment_records(session) -> list[dict[str, Any]]:
 
 
 def _all_enquiry_attachment_records(session) -> list[dict[str, Any]]:
-    """Merge WhatsApp session uploads and Tatva enquiry attachment URLs."""
+    """Files for this enquiry — Tatva CDN only after submit; otherwise WhatsApp session uploads."""
+    tatva_rows = _tatva_enquiry_attachment_records(session)
+    if tatva_rows:
+        return tatva_rows
+
     seen: set[str] = set()
     rows: list[dict[str, Any]] = []
 
@@ -85,13 +91,6 @@ def _all_enquiry_attachment_records(session) -> list[dict[str, Any]]:
             "mime_type": str(meta.mime_type or ""),
             "uploaded_at": uploaded.isoformat() if hasattr(uploaded, "isoformat") else _now_iso(),
         })
-
-    for item in _tatva_enquiry_attachment_records(session):
-        url = str(item.get("file_url") or "").strip()
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        rows.append(item)
 
     return rows
 
@@ -153,6 +152,8 @@ def _is_http_url(url: str) -> bool:
 
 
 def _url_priority(url: str) -> int:
+    if _is_tatva_cdn_url(url):
+        return 4
     if _is_http_url(url):
         return 3
     if url.startswith("/media/"):
@@ -160,6 +161,35 @@ def _url_priority(url: str) -> int:
     if url.startswith("twilio:"):
         return 1
     return 0
+
+
+def _is_tatva_cdn_url(url: str) -> bool:
+    from backend.config import get_settings
+
+    needle = (url or "").strip()
+    if not needle:
+        return False
+    base = str(getattr(get_settings(), "tatva_attachment_cdn_base_url", "") or "").strip().rstrip("/")
+    if base and needle.startswith(base):
+        return True
+    lowered = needle.lower()
+    return "cloudfront.net" in lowered and "/enquiries/" in lowered
+
+
+def _is_supabase_enquiry_file_url(url: str) -> bool:
+    lowered = (url or "").lower()
+    return "supabase.co/storage" in lowered and "enquiry-files" in lowered
+
+
+def _attachment_logical_name(item: dict[str, Any]) -> str:
+    """Normalize file names so WhatsApp + CDN copies of the same upload dedupe."""
+    name = str(item.get("file_name") or "").strip().lower()
+    if not name:
+        path = unquote(urlparse(str(item.get("file_url") or "")).path)
+        name = path.rsplit("/", 1)[-1].lower()
+    if not name:
+        return ""
+    return re.sub(r"_\d{10,}(?=\.[^./]+$)", "", name)
 
 
 def _dedupe_attachments_by_filename(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -171,11 +201,10 @@ def _dedupe_attachments_by_filename(items: list[dict[str, Any]]) -> list[dict[st
         url = str(item.get("file_url") or "").strip()
         if not url:
             continue
-        name = str(item.get("file_name") or "").strip().lower()
-        key = name or url
+        key = _attachment_logical_name(item) or url
         entry = dict(item)
 
-        if not name:
+        if not key or key == url:
             no_key.append(entry)
             continue
 
@@ -204,12 +233,22 @@ def _attachments_for_admin_display(
         ]
 
     normalized = _normalize_attachments_for_admin(session_id, attachments)
+    tatva_items = [
+        a for a in normalized
+        if _is_tatva_cdn_url(str(a.get("file_url") or ""))
+    ]
+    if tatva_items:
+        return _dedupe_attachments_by_filename(tatva_items)
+
     http_items = [
         a for a in normalized
         if _is_http_url(str(a.get("file_url") or ""))
     ]
     if http_items:
-        return _dedupe_attachments_by_filename(http_items)
+        # Drop Supabase-cached WhatsApp copies when other HTTP URLs exist.
+        non_supabase = [a for a in http_items if not _is_supabase_enquiry_file_url(str(a.get("file_url") or ""))]
+        pool = non_supabase or http_items
+        return _dedupe_attachments_by_filename(pool)
 
     preview_items = [
         a for a in normalized

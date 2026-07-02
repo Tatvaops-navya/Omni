@@ -75,18 +75,60 @@ function isWhatsAppRef(attachment: EnquiryAttachment): boolean {
   return url.startsWith('twilio:') || url.startsWith('whatsapp:')
 }
 
-/** Drop WhatsApp/Twilio duplicates when Tatva CDN links exist for the same enquiry. */
+function isTatvaCdnUrl(url: string): boolean {
+  const u = url.trim().toLowerCase()
+  return u.includes('cloudfront.net') && u.includes('/enquiries/')
+}
+
+function isSupabaseEnquiryFileUrl(url: string): boolean {
+  const u = url.trim().toLowerCase()
+  return u.includes('supabase.co/storage') && u.includes('enquiry-files')
+}
+
+function logicalAttachmentName(attachment: EnquiryAttachment): string {
+  const raw = (attachment.file_name || attachment.file_url || '').trim().toLowerCase()
+  const name = raw.includes('/') ? (raw.split('/').pop() || raw) : raw
+  return name.replace(/_\d{10,}(\.[^./]+$)/, '$1')
+}
+
+function dedupeByLogicalName(attachments: EnquiryAttachment[]): EnquiryAttachment[] {
+  const byKey = new Map<string, EnquiryAttachment>()
+  const order: string[] = []
+  for (const item of attachments) {
+    const key = logicalAttachmentName(item) || String(item.file_url || '')
+    if (!byKey.has(key)) {
+      byKey.set(key, item)
+      order.push(key)
+      continue
+    }
+    const existing = byKey.get(key)!
+    const existingUrl = String(existing.file_url || '')
+    const nextUrl = String(item.file_url || '')
+    if (isTatvaCdnUrl(nextUrl) && !isTatvaCdnUrl(existingUrl)) {
+      byKey.set(key, item)
+    }
+  }
+  return order.map(k => byKey.get(k)!)
+}
+
+/** Drop WhatsApp/Twilio and Supabase-cache duplicates when Tatva CDN links exist. */
 function filterDisplayAttachments(attachments: EnquiryAttachment[]): EnquiryAttachment[] {
-  const cdn = attachments.filter(a => {
+  const tatva = attachments.filter(a => isTatvaCdnUrl(String(a.file_url || a.preview_url || '')))
+  if (tatva.length > 0) return dedupeByLogicalName(tatva)
+
+  const http = attachments.filter(a => {
     const url = String(a.file_url || a.preview_url || '').trim()
     return url.startsWith('http://') || url.startsWith('https://')
   })
-  if (cdn.length > 0) return cdn
+  if (http.length > 0) {
+    const nonSupabase = http.filter(a => !isSupabaseEnquiryFileUrl(String(a.file_url || '')))
+    return dedupeByLogicalName(nonSupabase.length > 0 ? nonSupabase : http)
+  }
 
   const previews = attachments.filter(a => String(a.file_url || '').startsWith('/media/'))
-  if (previews.length > 0) return previews
+  if (previews.length > 0) return dedupeByLogicalName(previews)
 
-  return attachments.filter(a => !isWhatsAppRef(a))
+  return dedupeByLogicalName(attachments.filter(a => !isWhatsAppRef(a)))
 }
 
 function AttachmentPreviewModal({
