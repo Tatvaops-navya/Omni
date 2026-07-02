@@ -27,6 +27,41 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _enquiry_file_field_names(fields: dict[str, Any]) -> list[str]:
+    return [k for k in fields if k == "attachments" or str(k).startswith("file_order_")]
+
+
+def _field_value_indicates_upload(value: Any) -> bool:
+    raw = str(value or "").strip().lower()
+    if not raw or raw in ("skipped", "skip", "none", "provided via attachment"):
+        return False
+    return "uploaded" in raw
+
+
+def _enquiry_had_user_uploads_from_fields(fields: dict[str, Any]) -> bool:
+    """True only when the lead uploaded files during this enquiry (not Tatva account noise)."""
+    if not fields:
+        return False
+    file_fields = _enquiry_file_field_names(fields)
+    for key in file_fields:
+        raw = str(fields.get(key) or "").strip().lower()
+        if raw in ("skipped", "skip", "none"):
+            return False
+        if _field_value_indicates_upload(fields.get(key)):
+            return True
+    urls = fields.get("_enquiry_attachment_urls")
+    if isinstance(urls, list) and urls and not file_fields:
+        return True
+    return False
+
+
+def _session_had_user_uploads(session) -> bool:
+    if _session_upload_attachments(session):
+        return True
+    fields = getattr(session, "extracted_fields", None) or {}
+    return _enquiry_had_user_uploads_from_fields(fields)
+
+
 def _enriched_fields(session, *, status: str | None = None) -> dict[str, Any]:
     from backend.admin.enquiry_display import snapshot_requirements_for_session
 
@@ -71,7 +106,10 @@ def _tatva_enquiry_attachment_records(session) -> list[dict[str, Any]]:
 
 
 def _all_enquiry_attachment_records(session) -> list[dict[str, Any]]:
-    """Files for this enquiry — Tatva CDN only after submit; otherwise WhatsApp session uploads."""
+    """Files uploaded in this WhatsApp enquiry only — never Tatva account history."""
+    if not _session_had_user_uploads(session):
+        return []
+
     tatva_rows = _tatva_enquiry_attachment_records(session)
     if tatva_rows:
         return tatva_rows
@@ -132,6 +170,9 @@ def _resolve_enquiry_attachments(
     db_attachments: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Prefer enquiry_attachments table; fall back to snapshot JSON or sessions_log."""
+    if not _enquiry_had_user_uploads_from_fields(fields):
+        return []
+
     filtered = _filter_stored_attachments(db_attachments, fields)
     if filtered:
         return _attachments_for_admin_display(session_id, filtered)
@@ -282,6 +323,9 @@ def _filter_stored_attachments(
     fields: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Keep only files belonging to this enquiry's upload step."""
+    if not _enquiry_had_user_uploads_from_fields(fields):
+        return []
+
     allowed = fields.get("_enquiry_attachment_urls")
     if isinstance(allowed, list) and allowed:
         allowed_set = {str(u).strip() for u in allowed if str(u).strip()}
@@ -372,6 +416,19 @@ async def refresh_session_attachment_urls(session_id: str) -> list[dict[str, Any
     client = _client()
     if client is None or not session_id:
         return []
+
+    fields_row = (
+        client.table("enquiries")
+        .select("extracted_fields")
+        .eq("session_id", session_id)
+        .limit(1)
+        .execute()
+    )
+    data = (fields_row.data or [None])[0] or {}
+    fields = data.get("extracted_fields") if isinstance(data, dict) else {}
+    if not _enquiry_had_user_uploads_from_fields(fields if isinstance(fields, dict) else {}):
+        return []
+
     result = (
         client.table("enquiry_attachments")
         .select("*")
@@ -381,15 +438,6 @@ async def refresh_session_attachment_urls(session_id: str) -> list[dict[str, Any
     )
     rows = [dict(row) for row in (result.data or [])]
     if not rows:
-        fields_row = (
-            client.table("enquiries")
-            .select("extracted_fields")
-            .eq("session_id", session_id)
-            .limit(1)
-            .execute()
-        )
-        data = (fields_row.data or [None])[0] or {}
-        fields = data.get("extracted_fields") if isinstance(data, dict) else {}
         rows = _stored_file_records(fields if isinstance(fields, dict) else {})
 
     updated: list[dict[str, Any]] = []

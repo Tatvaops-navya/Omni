@@ -14,6 +14,39 @@ def _session(**kwargs):
     )
 
 
+def test_all_enquiry_attachment_records_empty_when_upload_skipped():
+    session = _session(
+        extracted_fields={"attachments": "skipped", "service_q1": "Exterior"},
+        flow_state={
+            "tatva_enquiry_attachments": [
+                {"key": "enquiries/e1/ghost.jpg", "url": "https://d123.cloudfront.net/enquiries/e1/ghost.jpg"},
+            ],
+        },
+        attachments=[],
+    )
+    assert store._all_enquiry_attachment_records(session) == []
+
+
+def test_resolve_enquiry_attachments_hides_phantom_db_rows_when_skipped():
+    fields = {"attachments": "skipped"}
+    db_rows = [
+        {"file_name": "e3229e6edfec.jpg", "file_url": "https://d123.cloudfront.net/enquiries/e1/ghost.jpg"},
+    ]
+    assert store._resolve_enquiry_attachments("sess-1", fields, db_rows) == []
+
+
+def test_resolve_enquiry_attachments_shows_files_when_user_uploaded():
+    fields = {
+        "attachments": "1 file uploaded",
+        "_enquiry_attachment_urls": ["https://d123.cloudfront.net/enquiries/e1/a.jpg"],
+    }
+    db_rows = [
+        {"file_name": "photo.jpg", "file_url": "https://d123.cloudfront.net/enquiries/e1/a.jpg"},
+    ]
+    resolved = store._resolve_enquiry_attachments("sess-1", fields, db_rows)
+    assert len(resolved) == 1
+
+
 def test_all_enquiry_attachment_records_prefers_tatva_only():
     session = _session(
         flow_state={

@@ -348,10 +348,10 @@ export function EnquiryDetailPanel({
         </div>
       )}
 
-      {showFiles && (
+      {showFiles && attachments.length > 0 && (
         <div className="border-t border-slate-700/40 pt-3">
           <p className="text-xs text-slate-500 mb-2">
-            Uploaded files{attachments.length > 0 ? ` (${attachments.length})` : ''}
+            Uploaded files ({attachments.length})
           </p>
           <EnquiryFileList
             attachments={attachments}

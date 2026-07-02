@@ -480,7 +480,11 @@ async def submit_service_questionnaire(session: Session) -> Optional[dict[str, A
     if isinstance(tatva_summary, dict) and tatva_summary:
         session.flow_state["tatva_enquiry_summary"] = tatva_summary
     tatva_attachments = enquiry.get("attachments") or []
-    if isinstance(tatva_attachments, list) and tatva_attachments:
+    if (
+        isinstance(tatva_attachments, list)
+        and tatva_attachments
+        and session.attachments
+    ):
         session.flow_state["tatva_enquiry_attachments"] = tatva_attachments
     enquiry_id = enquiry.get("_id") or enquiry.get("id")
     if enquiry_id:
