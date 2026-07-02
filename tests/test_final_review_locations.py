@@ -127,8 +127,8 @@ def test_final_review_shows_actual_attachment_count():
 
     recap = format_final_review(session)
 
-    assert "- ↗ View image" in recap
-    assert recap.count("↗ View image") == 4
+    assert "4 files uploaded" in recap
+    assert "↗ View image" not in recap
     assert hybrid_flow.attachment_upload_value(session) == "4 files uploaded"
 
 

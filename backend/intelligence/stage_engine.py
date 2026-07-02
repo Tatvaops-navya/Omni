@@ -36,7 +36,7 @@ STAGE_TITLES: dict[str, str] = {
 STAGE_REQUIRED_FIELDS: dict[str, list[str]] = {
     "ava_intro": ["ava_intro_shown"],
     "client_details": [
-        "client_name", "phone_number", "city", "property_location", "preferred_contact_time",
+        "client_name", "phone_number", "city", "property_location",
         "willing_to_create_project",
     ],
     "service_selection": ["service_category"],
@@ -47,7 +47,10 @@ STAGE_REQUIRED_FIELDS: dict[str, list[str]] = {
     "final_review": [],
 }
 
-OPTIONAL_FIELDS = frozenset({"email", "req_functional_needs", "req_inspiration_notes", "special_notes_extra"})
+OPTIONAL_FIELDS = frozenset({
+    "email", "req_functional_needs", "req_inspiration_notes", "special_notes_extra",
+    "preferred_contact_time",
+})
 
 INVALID_VALUES = frozenset({"", "—", "-", "null", "none", "undefined", "n/a", "na", "skip", "skipped"})
 
@@ -395,7 +398,7 @@ def start_client_stage(session: Session) -> None:
 def reset_for_edit_details(session: Session) -> None:
     ensure_flow_state(session)
     keep_fields = {
-        "client_name", "phone_number", "city", "property_location", "preferred_contact_time",
+        "client_name", "phone_number", "city", "property_location",
         "willing_to_create_project",
         "email", "service_category",
     }

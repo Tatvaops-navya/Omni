@@ -27,10 +27,6 @@ FLOW_FILE_BY_SERVICE: dict[ServiceCategory, str] = {
 # Back-compat alias
 SECTION_TITLES = STAGE_TITLES
 
-# Dedicated contact-time list (Morning/Afternoon/Evening/Night).
-CONTACT_TIME_TWILIO_CONTENT_SID = "HX4e36328276831fc79aa5feb83f0b86a4"
-
-
 def _mcq_option_count(step: dict) -> int:
     return len([o for o in step.get("options", []) if str(o.get("value", "")).lower() != "__other__"])
 
@@ -60,15 +56,12 @@ def _resolve_mcq_twilio_sid(step: dict) -> str | None:
     """
     Twilio list template for MCQ steps.
     - Flow JSON may define a service-specific SID (home_interiors, electrical, …).
-    - Contact time uses its dedicated template.
     - Other service_q steps use variable 2/3/4/5-row MCQ templates (Choose option).
     """
     explicit = step.get("twilio_content_sid")
     if explicit:
         return str(explicit)
     field = str(step.get("field", ""))
-    if field == "preferred_contact_time":
-        return CONTACT_TIME_TWILIO_CONTENT_SID
     if field == "willing_to_create_project":
         return _variable_mcq_list_sid(2)
     if (
@@ -92,8 +85,7 @@ def _attach_mcq_list_delivery(out: dict, sid: str, step: dict) -> dict:
         out["twilio_list_prompt"] = str(step.get("prompt") or "").strip()
     count = _mcq_option_count(step)
     if (
-        sid == CONTACT_TIME_TWILIO_CONTENT_SID
-        or field.startswith("service_q")
+        field.startswith("service_q")
         or field.startswith("order_")
         or field.startswith("file_order_")
         or field.startswith("__edit_")
@@ -101,8 +93,7 @@ def _attach_mcq_list_delivery(out: dict, sid: str, step: dict) -> dict:
         or field == "willing_to_create_project"
     ):
         out["twilio_list_slots"] = count
-        if sid != CONTACT_TIME_TWILIO_CONTENT_SID:
-            out["twilio_list_use_descriptions"] = True
+        out["twilio_list_use_descriptions"] = True
     return out
 
 
@@ -214,19 +205,6 @@ def build_client_details_steps() -> list[dict]:
         {"id": "cd_city", "stage": "client_details", "type": "descriptive", "field": "city", "prompt": "Which city are you located in?"},
         {"id": "cd_property_loc", "stage": "client_details", "type": "descriptive", "field": "property_location", "prompt": "Where is your property located? (City, Locality)"},
         _enrich_mcq_step({
-            "id": "cd_contact_time",
-            "stage": "client_details",
-            "type": "mcq",
-            "field": "preferred_contact_time",
-            "prompt": "Preferred contact time? (only if Needed)",
-            "options": [
-                {"label": "Morning", "value": "morning"},
-                {"label": "Afternoon", "value": "afternoon"},
-                {"label": "Evening", "value": "evening"},
-                {"label": "Night", "value": "night"},
-            ],
-        }),
-        _enrich_mcq_step({
             "id": "cd_create_project",
             "stage": "client_details",
             "type": "mcq",
@@ -318,6 +296,7 @@ def format_final_review(session, *, include_footer: bool | None = None) -> str:
     """Structured preview before summary generation."""
     from backend.intelligence import hybrid_flow
     from backend.intelligence.stage_engine import can_enter_final_review, missing_fields_report
+
     hybrid_flow.sync_attachment_fields(session)
     if not can_enter_final_review(session):
         missing = missing_fields_report(session)
@@ -326,12 +305,27 @@ def format_final_review(session, *, include_footer: bool | None = None) -> str:
             + "\n".join(f"• {m.replace('_', ' ')}" for m in missing[:8])
             + "\n\nPlease answer the current question to continue."
         )
+    return format_enquiry_review(session, include_footer=include_footer)
 
+
+def format_submitted_enquiry_summary(session) -> str:
+    """Client-facing enquiry recap after Confirm & Submit — same layout as final review."""
+    from backend.intelligence import hybrid_flow
+
+    hybrid_flow.sync_attachment_fields(session)
+    return format_enquiry_review(session, include_footer=False)
+
+
+def format_enquiry_review(session, *, include_footer: bool | None = None) -> str:
+    """Shared WhatsApp enquiry summary layout (review + post-submit)."""
     ef = session.extracted_fields
+    from backend.integrations.tatva_user_addresses import resolved_property_location
     from backend.intelligence.consultants.registry import get_service_label
+
     svc = get_service_label(session.service_category) if session.service_category else "—"
     service_key = session.service_category.value if session.service_category else ""
     consultant = session.flow_state.get("assigned_consultant") or session.active_consultant or "—"
+    property_location = resolved_property_location(session)
 
     blocks = [
         "Here is a quick review of your enquiry:",
@@ -340,17 +334,24 @@ def format_final_review(session, *, include_footer: bool | None = None) -> str:
         f"- Name: {_humanize('client_name', ef.get('client_name'), service_category=service_key)}",
         f"- Phone: {_humanize('phone_number', ef.get('phone_number'), service_category=service_key)}",
         f"- Location: {_humanize('city', ef.get('city'), service_category=service_key)}",
-        f"- Property location: {_humanize('property_location', ef.get('property_location'), service_category=service_key)}",
-        f"- Preferred contact time: {_humanize('preferred_contact_time', ef.get('preferred_contact_time'), service_category=service_key)}",
+        f"- Property location: {_humanize('property_location', property_location, service_category=service_key)}",
         f"- Willing to create project: {_humanize('willing_to_create_project', ef.get('willing_to_create_project'), service_category=service_key)}",
         f"- Email: {_humanize('email', ef.get('email'), service_category=service_key)}",
+    ]
+    contact_time = str(ef.get("preferred_contact_time") or "").strip()
+    if contact_time:
+        blocks.insert(
+            7,
+            f"- Preferred contact time: {_humanize('preferred_contact_time', contact_time, service_category=service_key)}",
+        )
+    blocks.extend([
         "",
         "*Service Brief*",
         f"- Service: {_humanize('service_category', service_key or svc, service_category=service_key)}",
         f"- Specialist: {_humanize('assigned_consultant', consultant, service_category=service_key)}",
         "",
         "*Requirements Shared*",
-    ]
+    ])
     blocks.extend(_format_requirements_review(session, service_key=service_key))
     file_lines = _format_attachments_review_lines(session, service_key=service_key)
     blocks.append("")

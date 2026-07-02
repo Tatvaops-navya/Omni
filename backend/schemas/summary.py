@@ -157,9 +157,9 @@ class ProjectSummary(BaseModel):
                     attachments=tatva_enquiry_attachments,
                 )
             except ImportError:
-                body = self._client_confirmation_snapshot_body()
+                body = self._client_confirmation_from_project_summary()
         else:
-            body = self._client_confirmation_snapshot_body()
+            body = self._client_confirmation_from_project_summary()
 
         return (
             f"{header}{body}\n\n"
@@ -168,6 +168,28 @@ class ProjectSummary(BaseModel):
             "Thank you for choosing TatvaOps.\n\n"
             "Building Better. Together."
         )
+
+    def _client_confirmation_from_project_summary(self) -> str:
+        """Tatva-style sections from the generated ProjectSummary when API summary is absent."""
+        lines: list[str] = []
+        if (self.project_overview or "").strip():
+            lines.append(f"*Project Overview*\n{self.project_overview.strip()}")
+        scope = ", ".join(s for s in (self.scope_of_work or []) if str(s).strip())
+        if scope:
+            lines.append(f"*Scope of Work*\n{scope}")
+        if (self.client_requirements or "").strip():
+            lines.append(f"*Client Requirements*\n{self.client_requirements.strip()}")
+        if (self.technical_specs or "").strip():
+            lines.append(f"*Technical Specs*\n{self.technical_specs.strip()}")
+        if (self.timeline or "").strip():
+            lines.append(f"*Timeline*\n{self.timeline.strip()}")
+        if (self.special_considerations or "").strip():
+            lines.append(f"*Special Considerations*\n{self.special_considerations.strip()}")
+        if (self.estimated_scope or "").strip():
+            lines.append(f"*Estimated Scope*\n{self.estimated_scope.strip()}")
+        if lines:
+            return "\n\n".join(lines)
+        return self._client_confirmation_snapshot_body()
 
     def client_platform_address_cta_text(self) -> str:
         """Separate follow-up message prompting the client to add their address."""

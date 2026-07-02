@@ -856,8 +856,6 @@ async def _send_file_upload_follow_up(
         context_body = f"{file_ack}\n\n{follow_up}".strip() if follow_up else (file_ack or "").strip()
 
     await send_context_then_mcq_list(phone_number, context_body, outbound_step)
-    if is_final_review and hybrid_flow.attachment_count(session) > 0:
-        await send_session_attachment_previews(phone_number, session)
 
 
 async def _debounced_file_upload_follow_up(
@@ -1408,6 +1406,8 @@ async def _handle_whatsapp_message_impl(
         tatva_attachments = agent_response.session.flow_state.get("tatva_enquiry_attachments")
         if isinstance(tatva_attachments, list) and tatva_attachments:
             await send_whatsapp_attachment_cta_links(phone_number, tatva_attachments)
+        elif hybrid_flow.attachment_count(agent_response.session) > 0:
+            await send_session_attachment_previews(phone_number, agent_response.session)
         follow_up = (agent_response.follow_up_text or "").strip()
         if follow_up:
             await send_whatsapp_message(to=phone_number, body=follow_up)
@@ -1519,8 +1519,6 @@ async def _handle_whatsapp_message_impl(
     )
     if is_final_review_list:
         await send_context_then_mcq_list(phone_number, reply, outbound_step)
-        if hybrid_flow.attachment_count(session_out) > 0:
-            await send_session_attachment_previews(phone_number, session_out)
         return
 
     if uses_interactive_list:

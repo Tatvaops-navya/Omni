@@ -16,12 +16,40 @@ _INTERACTIVE_REPLY_FOOTERS = frozenset({
 })
 
 
+def _dedupe_consecutive_lines(lines: list[str]) -> list[str]:
+    """Collapse repeated lines (WhatsApp list replies often echo title + description)."""
+    if not lines:
+        return []
+    deduped = [lines[0]]
+    for ln in lines[1:]:
+        if ln != deduped[-1]:
+            deduped.append(ln)
+    return deduped
+
+
+def _collapse_repeated_phrase(text: str) -> str:
+    """Collapse duplicated MCQ selection text (same phrase twice on one or two lines)."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    lines = [ln.strip() for ln in raw.replace("\r", "\n").split("\n") if ln.strip()]
+    if len(lines) >= 2 and all(ln.lower() == lines[0].lower() for ln in lines):
+        return lines[0]
+    normalized = re.sub(r"\s+", " ", raw)
+    words = normalized.split(" ")
+    if len(words) >= 2 and len(words) % 2 == 0:
+        mid = len(words) // 2
+        if " ".join(words[:mid]).lower() == " ".join(words[mid:]).lower():
+            return " ".join(words[:mid])
+    return raw
+
+
 def sanitize_whatsapp_inbound_text(text: str) -> str:
     """Remove WhatsApp interactive reply footers like *Tap to select*."""
     raw = (text or "").strip()
     if not raw:
         return ""
-    lines = [ln.strip() for ln in raw.replace("\r", "\n").split("\n")]
+    lines = [ln.strip() for ln in raw.replace("\r", "\n").split("\n") if ln.strip()]
     kept: list[str] = []
     for ln in lines:
         lower = ln.lower()
@@ -30,7 +58,9 @@ def sanitize_whatsapp_inbound_text(text: str) -> str:
         if re.match(r"^tap to (select|choose)\b", lower):
             continue
         kept.append(ln)
-    return "\n".join(kept).strip() if kept else raw
+    kept = _dedupe_consecutive_lines(kept)
+    result = "\n".join(kept).strip() if kept else raw
+    return _collapse_repeated_phrase(result) if result else raw
 
 
 def build_inbound_user_message(

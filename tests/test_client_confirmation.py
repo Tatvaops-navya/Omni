@@ -4,7 +4,7 @@ from datetime import datetime
 from backend.schemas.summary import ProjectSummary
 
 
-def test_client_confirmation_excludes_internal_summary_fields():
+def test_client_confirmation_uses_project_summary_sections():
     summary = ProjectSummary(
         session_id="wa_test",
         generated_at=datetime.utcnow(),
@@ -32,32 +32,28 @@ def test_client_confirmation_excludes_internal_summary_fields():
     assert "TatvaOps" in text
     assert "Your enquiry has been successfully received" in text
     assert "Building Better. Together." in text
-    assert "Overview" not in text
-    assert "Scope" not in text
-    assert "Requirements" not in text
-    assert "Specs" not in text
-    assert "Timeline" not in text
-    assert "Budget" not in text
-    assert "Japandi" not in text
-    assert "Aadhya" in text
-    assert "Interiors" in text
-    assert "Bengaluru" in text
-    assert "Whitefield" in text
-    assert "Location:" in text
-    assert "Property location:" in text
+    assert "*Project Overview*" in text
+    assert "3BHK interior renovation" in text
+    assert "*Scope of Work*" in text
+    assert "Modular kitchen" in text
+    assert "*Client Requirements*" in text
+    assert "Japandi" in text
+    assert "*Technical Specs*" in text
+    assert "*Timeline*" in text
+    assert "*Estimated Scope*" in text
+    assert "Budget: ₹15L" in text
     assert "https://tatvaops.com/" not in text
     assert "add your address" not in text.lower()
     assert "https://withtatva.ai/my-projects" in address_cta
     assert "add your address" in address_cta.lower()
 
 
-def test_client_confirmation_separate_city_and_property_location():
-    """City (where client lives) and property location are distinct in confirmation."""
+def test_client_confirmation_falls_back_to_snapshot_when_summary_empty():
     summary = ProjectSummary(
         session_id="wa_test",
         generated_at=datetime.utcnow(),
         next_step="Follow up",
-        project_overview="Property development enquiry.",
+        project_overview="",
         scope_of_work=[],
         client_requirements="",
         technical_specs="",
@@ -76,6 +72,5 @@ def test_client_confirmation_separate_city_and_property_location():
 
     text = summary.client_confirmation_text()
 
-    assert "📍 Location: Hyderabad" in text
-    assert "📍 Property location: Bengaluru, Hsr Layout" in text
-    assert "Bengaluru" not in text.split("Property location:")[0]
+    assert "location: hyderabad" in text.lower()
+    assert "property location: bengaluru, hsr layout" in text.lower()

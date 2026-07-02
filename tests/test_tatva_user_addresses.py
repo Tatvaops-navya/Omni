@@ -44,7 +44,7 @@ def test_profile_fields_from_address_maps_location_and_property():
         "state": "Maharashtra",
     })
     assert fields["city"] == "Pune, Maharashtra"
-    assert fields["property_location"] == "Baner, Pune"
+    assert fields["property_location"] == "Baner, Pune, Maharashtra 411045"
 
 
 def test_normalize_keeps_all_formatted_addresses():
@@ -90,6 +90,86 @@ def test_saved_addresses_display_lists_all():
     assert "123 MG Road" in text
     assert "HSR Layout" in text
     assert "(Default)" in text
+
+
+def test_resolved_property_location_uses_selected_tatva_address():
+    from backend.integrations.tatva_user_addresses import resolved_property_location
+
+    session = Session(session_id="t", phone_number="+1", channel="whatsapp")
+    session.flow_state["tatva_user_addresses"] = SAMPLE_ADDRESSES
+    session.flow_state["selected_tatva_address_id"] = "69d393184d8aa84fc60b95b1"
+    session.extracted_fields["property_location"] = "Ashok Nagar, Bangalore Urban"
+    assert resolved_property_location(session) == "123 MG Road, Bangalore, Karnataka 560001"
+
+
+def test_format_submitted_enquiry_summary_matches_final_review_layout():
+    from backend.intelligence.qualification_builder import format_submitted_enquiry_summary
+    from backend.schemas.service import ServiceCategory
+    from backend.intelligence import stage_engine as se
+    from backend.schemas.session import AttachmentMeta
+
+    session = Session(
+        session_id="t",
+        phone_number="+918639097638",
+        channel="whatsapp",
+        service_category=ServiceCategory.PAINTING_WATERPROOFING,
+    )
+    session.flow_state["assigned_consultant"] = "manjunath"
+    session.attachments = [
+        AttachmentMeta(file_name="plan.png", file_url="http://x", mime_type="image/png"),
+    ]
+    session.extracted_fields.update({
+        "client_name": "Navya",
+        "phone_number": "+918639097638",
+        "city": "hsr layout, Karnataka",
+        "property_location": "727, goodlife, 4th floor, bengaluru, Karnataka, 560102",
+        "willing_to_create_project": "yes",
+        "email": "navya@example.com",
+        "service_q1": "exterior_facade_painting",
+        "service_q2": "1500_3000",
+        "service_q3": "semi_gloss",
+        "service_q4": "1200sqft with 8 rooms",
+    })
+    for field in (
+        "client_name", "phone_number", "city", "property_location",
+        "willing_to_create_project", "email", "service_category",
+        "service_q1", "service_q2", "service_q3", "service_q4", "attachments",
+    ):
+        se.mark_field_validated(session, field, session.extracted_fields.get(field, "yes"))
+
+    text = format_submitted_enquiry_summary(session)
+    assert "Here is a quick review of your enquiry:" in text
+    assert "*Client Details*" in text
+    assert "*Service Brief*" in text
+    assert "*Requirements Shared*" in text
+    assert "*Files*" in text
+    assert "1 file uploaded" in text
+    assert "727, goodlife" in text
+    assert "Does everything look correct?" not in text
+    assert "Your enquiry has been successfully received" not in text
+
+
+def test_format_final_review_shows_full_saved_address(monkeypatch):
+    from backend.intelligence.qualification_builder import format_final_review
+    from backend.intelligence import stage_engine as se
+
+    monkeypatch.setattr(se, "can_enter_final_review", lambda _session: True)
+
+    session = Session(session_id="t", phone_number="+919999999999", channel="whatsapp")
+    session.flow_state["tatva_user_addresses"] = SAMPLE_ADDRESSES
+    session.flow_state["selected_tatva_address_id"] = "69ca149a76447fb2e241a65d"
+    session.extracted_fields.update({
+        "client_name": "Navya",
+        "phone_number": "+919999999999",
+        "city": "Bengaluru Urban",
+        "property_location": "Bengaluru, Bengaluru Urban",
+        "willing_to_create_project": "yes",
+        "email": "navya@example.com",
+    })
+
+    text = format_final_review(session, include_footer=False)
+    assert "383, 9th Main Rd, HSR Layout, Bengaluru, Karnataka 560102, India" in text
+    assert "Preferred contact time:" not in text
 
 
 def test_returning_saved_location_step_uses_address_options():
@@ -156,7 +236,9 @@ def test_parse_and_apply_address_selection():
     assert choice == "69ca149a76447fb2e241a65d"
     apply_returning_location_choice(session, choice)
     assert session.extracted_fields["city"] == "Bengaluru Urban"
-    assert session.extracted_fields["property_location"] == "Bengaluru, Bengaluru Urban"
+    assert session.extracted_fields["property_location"] == (
+        "383, 9th Main Rd, HSR Layout, Bengaluru, Karnataka 560102, India"
+    )
 
 
 @pytest.mark.asyncio

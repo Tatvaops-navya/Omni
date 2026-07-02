@@ -535,6 +535,8 @@ async def _send_plain(to: str, body: str) -> bool:
 
 WHATSAPP_LIST_TITLE_MAX = 24
 WHATSAPP_LIST_DESCRIPTION_MAX = 72
+# Twilio list rows always have a description slot — use ZWSP so WhatsApp does not echo the title twice.
+WHATSAPP_LIST_HIDDEN_DESCRIPTION = "\u200b"
 # Back-compat alias
 WHATSAPP_LIST_LABEL_MAX = WHATSAPP_LIST_TITLE_MAX
 
@@ -561,12 +563,29 @@ def _template_supports_row_descriptions(step: dict[str, Any]) -> bool:
 def _twilio_list_row(text: str) -> tuple[str, str]:
     """
     WhatsApp list rows: title max 24 chars; description (max 72) carries full option text.
+    When the label fits in the title, omit description — WhatsApp echoes title+description
+    in the user's reply bubble, which looks like duplicate text (e.g. "Address 1" twice).
     """
     full = (text or "").strip() or "Option"
     description = full[:WHATSAPP_LIST_DESCRIPTION_MAX]
     if len(full) <= WHATSAPP_LIST_TITLE_MAX:
-        return full, description
-    return _compact_list_title(full), description
+        return full, ""
+    title = _compact_list_title(full)
+    if title == description:
+        return title, ""
+    return title, description
+
+
+def _finalize_list_row_description(title: str, description: str) -> str:
+    """
+    WhatsApp list pickers show title + description on two lines.
+    When description matches the title (or is empty), hide the second line.
+    """
+    tit = (title or "").strip()
+    desc = (description or "").strip()
+    if not desc or desc.lower() == tit.lower():
+        return WHATSAPP_LIST_HIDDEN_DESCRIPTION
+    return desc[:WHATSAPP_LIST_DESCRIPTION_MAX]
 
 
 def _compact_list_title(full: str) -> str:
@@ -650,9 +669,12 @@ def _build_content_variables(step: dict[str, Any], options: list[dict[str, Any]]
         opt = quick_opts[i - 1]
         label_src = str(opt.get("whatsapp_label") or opt.get("label") or "")
         title, description = _twilio_list_row(label_src)
+        override_desc = str(opt.get("whatsapp_description") or "").strip()
+        if override_desc:
+            description = override_desc[:WHATSAPP_LIST_DESCRIPTION_MAX]
         variables[f"option_{i}_label"] = title
         variables[f"option_{i}_value"] = str(opt.get("value") or opt.get("label") or f"opt_{i}").strip()
-        variables[f"option_{i}_description"] = description
+        variables[f"option_{i}_description"] = _finalize_list_row_description(title, description)
     return variables
 
 

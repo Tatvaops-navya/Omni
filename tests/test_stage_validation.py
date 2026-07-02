@@ -7,14 +7,6 @@ from backend.intelligence.input_normalizer import match_mcq_option
 from backend.intelligence.qualification_builder import build_client_details_steps
 
 
-def test_fuzzy_morning_contact_time():
-    step = next(s for s in build_client_details_steps() if s["field"] == "preferred_contact_time")
-    options = step["options"]
-    matched = match_mcq_option("morning hours", options)
-    assert matched is not None
-    assert matched["value"] == "morning"
-
-
 def test_invalid_empty_field_not_complete():
     session = Session(session_id="t", phone_number="+1", conversation_stage=ConversationStage.ROUTING)
     se.mark_field_validated(session, "client_name", "")

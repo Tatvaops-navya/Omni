@@ -67,6 +67,7 @@ def address_list_label(addr: dict[str, Any]) -> str:
 
 
 def profile_fields_from_address(addr: dict[str, Any]) -> dict[str, str]:
+    """Map a Tatva address to session city + full property location for summaries."""
     prop = formatted_address_text(addr)
     district = str(addr.get("district") or "").strip()
     locality = str(addr.get("locality") or "").strip()
@@ -75,10 +76,19 @@ def profile_fields_from_address(addr: dict[str, Any]) -> dict[str, str]:
     city_parts = [part for part in (district, state) if part]
     city = ", ".join(city_parts) if city_parts else (locality or prop.split(",")[0].strip())
 
-    property_parts = [part for part in (locality, district) if part]
-    property_location = ", ".join(property_parts) if property_parts else prop
+    return {"city": city, "property_location": prop}
 
-    return {"city": city, "property_location": property_location}
+
+def resolved_property_location(session: Session) -> str:
+    """Full Tatva address when the user picked a saved location; else session field."""
+    addr_id = str(session.flow_state.get("selected_tatva_address_id") or "").strip()
+    if addr_id:
+        for addr in get_cached_user_addresses(session):
+            if str(addr.get("_id") or "") == addr_id:
+                full = formatted_address_text(addr)
+                if full:
+                    return full
+    return str(session.extracted_fields.get("property_location") or "").strip()
 
 
 async def fetch_user_addresses(

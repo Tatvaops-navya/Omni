@@ -12,6 +12,7 @@ from backend.integrations.tatva_users import update_tatva_user_profile_for_sessi
 from backend.integrations.tatva_user_addresses import (
     NO_RESPONSE_FROM_API,
     apply_tatva_address_to_session,
+    formatted_address_text,
     get_cached_user_addresses,
     is_tatva_address_id,
     saved_addresses_display,
@@ -183,6 +184,7 @@ def returning_saved_location_step(session: Session) -> dict[str, Any] | None:
     for i, addr in enumerate(addresses[:5], start=1):
         options.append({
             "label": address_short_list_label(i),
+            "whatsapp_description": formatted_address_text(addr),
             "value": str(addr.get("_id") or ""),
         })
     options.append({"label": "Other address", "value": "add_new_location"})
@@ -390,7 +392,7 @@ def next_client_detail_step_before_project(session: Session) -> dict[str, Any] |
     for step in build_client_details_steps():
         field = str(step.get("field") or "")
         if field == "willing_to_create_project":
-            if location_fields_complete(session) and se.field_is_complete(session, "preferred_contact_time"):
+            if location_fields_complete(session):
                 return dict(step)
             return None
         if field in identity_fields and is_returning_registered_user(session):
@@ -402,7 +404,7 @@ def next_client_detail_step_before_project(session: Session) -> dict[str, Any] |
 
 
 def position_session_at_next_client_detail(session: Session) -> dict[str, Any] | None:
-    """Point the session at city, property location, contact time, or create-project."""
+    """Point the session at city, property location, or create-project."""
     ensure_returning_reenquiry_prepared(session)
     step = next_client_detail_step_before_project(session)
     if not step:
@@ -441,10 +443,6 @@ def complete_known_client_details_for_returning_user(
     if not prop:
         prop = RETURNING_MISSING_LOCATION_PLACEHOLDER
     se.mark_field_validated(session, "property_location", prop)
-    contact = preserved.get("preferred_contact_time", "")
-    if not contact:
-        contact = "morning"
-    se.mark_field_validated(session, "preferred_contact_time", contact)
 
 
 def advance_returning_user_to_service_selection(session: Session) -> None:
@@ -475,8 +473,6 @@ def position_session_for_project_decision(session: Session) -> dict[str, Any] | 
     """Prepare returning user and return the project-creation MCQ when location is complete."""
     ensure_returning_reenquiry_prepared(session)
     if not location_fields_complete(session):
-        return None
-    if not se.field_is_complete(session, "preferred_contact_time"):
         return None
     step = willing_to_create_project_step()
     if not step:

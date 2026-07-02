@@ -1,5 +1,6 @@
 """WhatsApp list-picker row title + description tests."""
 from backend.agents.chat.twilio_client import (
+    WHATSAPP_LIST_HIDDEN_DESCRIPTION,
     WHATSAPP_LIST_TITLE_MAX,
     _build_content_variables,
     _compact_list_title,
@@ -10,10 +11,10 @@ from backend.agents.chat.whatsapp_interactive import build_inbound_user_message
 from backend.utils.session_idle import is_greeting_message, is_pure_greeting_message
 
 
-def test_short_label_includes_description():
+def test_short_label_omits_duplicate_description():
     title, desc = _twilio_list_row("New Home Build")
     assert title == "New Home Build"
-    assert desc == "New Home Build"
+    assert desc == ""
 
 
 def test_long_label_puts_full_text_in_description():
@@ -69,8 +70,8 @@ def test_build_content_variables_includes_descriptions(monkeypatch):
     assert enriched.get("twilio_list_use_descriptions") is True
     variables = _build_content_variables(enriched, enriched["options"])
     assert variables["option_1_label"] == "Home Build"
-    assert variables["option_1_description"] == "Home Build"
-    assert variables["option_2_description"] == "Addition"
+    assert variables["option_1_description"] == WHATSAPP_LIST_HIDDEN_DESCRIPTION
+    assert variables["option_2_description"] == WHATSAPP_LIST_HIDDEN_DESCRIPTION
     assert len(variables["option_2_label"]) <= WHATSAPP_LIST_TITLE_MAX
 
 
@@ -122,6 +123,48 @@ def test_format_mcq_options_display_shows_all_options():
     assert "3. Structural Repair / Retrofit" in text
     assert "4. Farmhouse / Villa Construction" in text
     assert "5. Commercial" in text
+
+
+def test_build_content_variables_hides_duplicate_finish_labels(monkeypatch):
+    monkeypatch.setattr(
+        "backend.agents.chat.twilio_client.settings.twilio_whatsapp_quick_reply",
+        True,
+    )
+    monkeypatch.setattr(
+        "backend.agents.chat.twilio_client.settings.twilio_mcq_list_5_content_sid",
+        "HXtest5row",
+    )
+    step = {
+        "type": "mcq",
+        "field": "service_q3",
+        "prompt": "What finish type are you looking for?",
+        "options": [
+            {"label": "Matt / Flat", "value": "matt_flat"},
+            {"label": "Semi-Gloss / Gloss", "value": "semi_gloss"},
+            {"label": "Undecided — need guidance", "value": "undecided"},
+        ],
+    }
+    enriched = enrich_whatsapp_mcq_step(step)
+    variables = _build_content_variables(enriched, enriched["options"])
+    assert variables["option_1_label"] == "Matt / Flat"
+    assert variables["option_1_description"] == WHATSAPP_LIST_HIDDEN_DESCRIPTION
+    assert variables["option_2_label"] == "Semi-Gloss / Gloss"
+    assert variables["option_2_description"] == WHATSAPP_LIST_HIDDEN_DESCRIPTION
+    assert variables["option_3_description"] != WHATSAPP_LIST_HIDDEN_DESCRIPTION
+
+
+def test_build_inbound_user_message_dedupes_repeated_phrase_on_one_line():
+    assert build_inbound_user_message(
+        body="Not measured yet Not measured yet",
+        list_id="not_measured_yet",
+    ) == "Not measured yet"
+
+
+def test_build_inbound_user_message_dedupes_duplicate_list_reply_lines():
+    assert build_inbound_user_message(
+        body="Address 1\nAddress 1",
+        list_id="69d393184d8aa84fc60b95b1",
+    ) == "Address 1"
 
 
 def test_build_inbound_user_message_prefers_address_line_in_quoted_reply():
