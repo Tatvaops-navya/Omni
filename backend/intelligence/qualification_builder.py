@@ -9,6 +9,7 @@ from typing import Any
 from backend.schemas.service import ServiceCategory
 from backend.intelligence.stage_engine import STAGE_TITLES
 from backend.intelligence.display_labels import display_label
+from backend.utils.whatsapp_formatting import whatsapp_question_emphasis
 
 FLOW_FILE_BY_SERVICE: dict[ServiceCategory, str] = {
     ServiceCategory.RESIDENTIAL_CONSTRUCTION: "residential_construction.json",
@@ -377,10 +378,11 @@ def _question_review_label(step: dict) -> str:
 
 
 def _requirement_review_line(question: str, answer: str) -> str:
-    """Single requirement row: Question - Answer (no trailing ? or colon clutter)."""
+    """Single requirement row: styled Question - Answer (no trailing ? or colon clutter)."""
     q = (question or "").strip().rstrip("?. ").strip()
     a = (answer or "—").strip()
-    return f"- {q} - {a}"
+    styled_q = whatsapp_question_emphasis(q)
+    return f"- {styled_q} - {a}"
 
 
 def _format_requirements_review(session, *, service_key: str = "") -> list[str]:

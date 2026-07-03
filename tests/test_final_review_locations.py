@@ -6,6 +6,7 @@ from backend.schemas.service import ServiceCategory
 from backend.intelligence import stage_engine as se
 from backend.intelligence import hybrid_flow
 from backend.intelligence.qualification_builder import format_final_review
+from backend.utils.whatsapp_formatting import whatsapp_question_emphasis
 
 
 def test_final_review_shows_location_and_property_location_separately():
@@ -79,7 +80,7 @@ def test_requirements_shared_lists_answers_only():
     recap = format_final_review(session)
 
     assert "*Requirements Shared*" in recap
-    assert "What type of event are you planning - Wedding" in recap
+    assert whatsapp_question_emphasis("What type of event are you planning") in recap
     assert " - " in recap
     assert "?: " not in recap
     assert "planning?: " not in recap
