@@ -378,11 +378,11 @@ def _question_review_label(step: dict) -> str:
 
 
 def _requirement_review_line(question: str, answer: str) -> str:
-    """Single requirement row: styled Question - Answer (no trailing ? or colon clutter)."""
+    """Single requirement row: bold Question — Answer."""
     q = (question or "").strip().rstrip("?. ").strip()
     a = (answer or "—").strip()
     styled_q = whatsapp_question_emphasis(q)
-    return f"- {styled_q} - {a}"
+    return f"- {styled_q} — {a}"
 
 
 def _format_requirements_review(session, *, service_key: str = "") -> list[str]:

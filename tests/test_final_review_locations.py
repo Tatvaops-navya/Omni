@@ -81,7 +81,7 @@ def test_requirements_shared_lists_answers_only():
 
     assert "*Requirements Shared*" in recap
     assert whatsapp_question_emphasis("What type of event are you planning") in recap
-    assert " - " in recap
+    assert " — " in recap
     assert "?: " not in recap
     assert "planning?: " not in recap
 
