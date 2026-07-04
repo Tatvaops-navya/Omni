@@ -64,6 +64,52 @@ function presalesAssignee(row: PresalesItem): string {
   return direct || '—'
 }
 
+function rowAssigneeName(row: PresalesItem): string {
+  const crm = String(row.assignment?.assignee_name || '').trim()
+  if (crm) return crm
+  if (row.flag === 'high') return presalesAssignee(row)
+  return '—'
+}
+
+function AssignDropdown({
+  row,
+  employees,
+  assigningId,
+  crmConfigured,
+  onAssign,
+}: {
+  row: PresalesItem
+  employees: TatvaEmployee[]
+  assigningId: string | null
+  crmConfigured: boolean
+  onAssign: (row: PresalesItem, employeeId: string) => void
+}) {
+  const currentAssignee = assignedEmployeeId(row.assignment)
+  if (employees.length === 0) {
+    return <span className="text-xs text-slate-600">—</span>
+  }
+  return (
+    <select
+      className="input text-xs py-1.5 min-w-[160px]"
+      value={currentAssignee}
+      disabled={assigningId === row._id || !crmConfigured}
+      title={crmConfigured ? undefined : 'Configure Supabase CRM to save assignments'}
+      onChange={e => onAssign(row, e.target.value)}
+    >
+      <option value="">Assign to...</option>
+      {employees.map(emp => {
+        const id = tatvaEmployeeId(emp)
+        if (!id) return null
+        return (
+          <option key={id} value={id}>
+            {tatvaEmployeeLabel(emp)}
+          </option>
+        )
+      })}
+    </select>
+  )
+}
+
 export default function Presales() {
   const [items, setItems] = useState<PresalesItem[]>([])
   const [employees, setEmployees] = useState<TatvaEmployee[]>([])
@@ -78,7 +124,7 @@ export default function Presales() {
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [viewLead, setViewLead] = useState<{ name?: string; phone?: string } | null>(null)
   const isHighIntentView = flagFilter === 'high'
-  const columnCount = isHighIntentView ? 9 : 11
+  const columnCount = isHighIntentView ? 12 : 11
 
   const loadEmployees = useCallback(async () => {
     try {
@@ -114,6 +160,9 @@ export default function Presales() {
       setItems(data.data?.items || [])
       setTotal(data.data?.total ?? 0)
       setTotalPages(data.data?.totalPages ?? 1)
+      if (typeof data.crm_configured === 'boolean') {
+        setCrmConfigured(data.crm_configured)
+      }
     } catch {
       setError('Failed to load presales records.')
       setItems([])
@@ -123,14 +172,12 @@ export default function Presales() {
   }, [page, flagFilter])
 
   useEffect(() => {
-    if (!isHighIntentView) {
-      loadEmployees()
-      loadCrmStatus()
-    }
+    loadEmployees()
+    loadCrmStatus()
     load()
     const id = setInterval(load, 30000)
     return () => clearInterval(id)
-  }, [load, loadEmployees, loadCrmStatus, isHighIntentView])
+  }, [load, loadEmployees, loadCrmStatus])
 
   useEffect(() => {
     setPage(1)
@@ -186,8 +233,8 @@ export default function Presales() {
           <h1 className="text-xl font-semibold text-slate-200">Pre-sales</h1>
           <p className="text-sm text-slate-500 mt-1">
             {total} record{total !== 1 ? 's' : ''} from Tatva
-            {!isHighIntentView && employees.length > 0 ? ` · ${employees.length} sales team member${employees.length !== 1 ? 's' : ''}` : ''}
-            {!isHighIntentView && (crmConfigured ? ' · assignment enabled' : ' · configure Supabase to save assignments')}
+            {employees.length > 0 ? ` · ${employees.length} sales team member${employees.length !== 1 ? 's' : ''}` : ''}
+            {crmConfigured ? ' · assignment enabled' : ' · configure Supabase to save assignments'}
           </p>
         </div>
         <select
@@ -212,19 +259,13 @@ export default function Presales() {
                 <th className="px-4 py-3 font-medium">Flag</th>
                 <th className="px-4 py-3 font-medium min-w-[180px]">Location</th>
                 <th className="px-4 py-3 font-medium min-w-[280px]">Property location</th>
-                {isHighIntentView ? (
-                  <>
-                    <th className="px-4 py-3 font-medium whitespace-nowrap">Project ID</th>
-                    <th className="px-4 py-3 font-medium whitespace-nowrap">Assignee</th>
-                  </>
-                ) : (
-                  <>
-                    <th className="px-4 py-3 font-medium">Assignee</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Team comment</th>
-                    <th className="px-4 py-3 font-medium">Assign</th>
-                  </>
+                {isHighIntentView && (
+                  <th className="px-4 py-3 font-medium whitespace-nowrap">Project ID</th>
                 )}
+                <th className="px-4 py-3 font-medium whitespace-nowrap">Assignee</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Team comment</th>
+                <th className="px-4 py-3 font-medium">Assign</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
                 <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
@@ -245,7 +286,6 @@ export default function Presales() {
               ) : (
                 items.map(row => {
                   const assignment = row.assignment
-                  const currentAssignee = assignedEmployeeId(assignment)
                   const isLowIntent = row.flag === 'low'
                   return (
                     <tr
@@ -276,52 +316,29 @@ export default function Presales() {
                       <td className="px-4 py-3 text-slate-400 min-w-[280px] max-w-[360px] whitespace-normal break-words align-top">
                         {row.propertyLocation || '—'}
                       </td>
-                      {isHighIntentView ? (
-                        <>
-                          <td className="px-4 py-3 text-slate-300 whitespace-nowrap font-mono text-xs">
-                            {presalesProjectId(row)}
-                          </td>
-                          <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                            {presalesAssignee(row)}
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                            {assignment?.assignee_name || '—'}
-                          </td>
-                          <td className="px-4 py-3 text-slate-400 capitalize text-xs">
-                            {statusLabel(assignment?.status)}
-                          </td>
-                          <td className="px-4 py-3 align-top">
-                            <StaffCommentDisplay text={assignment?.notes} />
-                          </td>
-                          <td className="px-4 py-3">
-                            {employees.length > 0 ? (
-                              <select
-                                className="input text-xs py-1.5 min-w-[160px]"
-                                value={currentAssignee}
-                                disabled={assigningId === row._id || !crmConfigured}
-                                title={crmConfigured ? undefined : 'Configure Supabase CRM to save assignments'}
-                                onChange={e => handleAssign(row, e.target.value)}
-                              >
-                                <option value="">Assign to...</option>
-                                {employees.map(emp => {
-                                  const id = tatvaEmployeeId(emp)
-                                  if (!id) return null
-                                  return (
-                                    <option key={id} value={id}>
-                                      {tatvaEmployeeLabel(emp)}
-                                    </option>
-                                  )
-                                })}
-                              </select>
-                            ) : (
-                              <span className="text-xs text-slate-600">—</span>
-                            )}
-                          </td>
-                        </>
+                      {isHighIntentView && (
+                        <td className="px-4 py-3 text-slate-300 whitespace-nowrap font-mono text-xs">
+                          {presalesProjectId(row)}
+                        </td>
                       )}
+                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                        {rowAssigneeName(row)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-400 capitalize text-xs">
+                        {statusLabel(assignment?.status)}
+                      </td>
+                      <td className="px-4 py-3 align-top">
+                        <StaffCommentDisplay text={assignment?.notes} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <AssignDropdown
+                          row={row}
+                          employees={employees}
+                          assigningId={assigningId}
+                          crmConfigured={crmConfigured}
+                          onAssign={handleAssign}
+                        />
+                      </td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
                         {formatDate(row.createdAt)}
                       </td>

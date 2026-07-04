@@ -1247,7 +1247,7 @@ async def _handle_whatsapp_message_impl(
             elif chosen == "email":
                 prompt = "Please type your email address (or reply skip)."
             else:
-                prompt = "Where is your property located? (City, Locality)"
+                prompt = "Where is your property located? (Locality,City)"
             await save_session(session)
             await supabase_store.upsert_session_log(session)
             await send_whatsapp_message(to=phone_number, body=prompt)
@@ -1282,7 +1282,7 @@ async def _handle_whatsapp_message_impl(
             if not text:
                 await send_whatsapp_message(
                     to=phone_number,
-                    body="Please type your property location (City, Locality).",
+                    body="Please type your property location (Locality,City).",
                 )
                 return
             se.mark_field_validated(session, "property_location", text)

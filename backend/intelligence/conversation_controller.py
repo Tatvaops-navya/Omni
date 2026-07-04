@@ -331,8 +331,8 @@ class ConversationController:
         if session.flow_state.get("project_declined"):
             session.add_message(MessageRole.USER, user_message)
             hold = (
-                "Thank you for connecting with TatvaOps. "
-                "If you would like to start a new enquiry, please restart after 5 minutes."
+                "Thank you for considering TatvaOps. "
+                "When you're ready, simply start a new enquiry and we'll pick things up from there."
             )
             session.add_message(MessageRole.ASSISTANT, hold)
             return AgentResponse(text=hold, session=session)

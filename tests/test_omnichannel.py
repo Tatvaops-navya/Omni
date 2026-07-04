@@ -1863,8 +1863,8 @@ def test_project_declined_no_ends_chat():
 
     reply, handled = hybrid_flow.process_hybrid_turn(session, "no")
     assert handled is True
-    assert "not looking to start a project" in reply.lower()
-    assert "restart after 5 minutes" in reply.lower()
+    assert "thank you for exploring tatvaops" in reply.lower()
+    assert "simply start a new enquiry" in reply.lower()
     assert session.flow_state.get("project_declined") is True
     assert not se.needs_service_selection(session)
 
@@ -1954,7 +1954,7 @@ async def test_project_declined_follow_up_message():
     )
     controller = ConversationController()
     resp = await controller.process_message(session, "hello again", channel="whatsapp")
-    assert "restart after 5 minutes" in resp.text.lower()
+    assert "simply start a new enquiry" in resp.text.lower()
 
 
 def test_mcq_in_current_stage_only():

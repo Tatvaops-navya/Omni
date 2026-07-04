@@ -659,7 +659,7 @@ export const api = {
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.flag) qs.set('flag', params.flag)
     const query = qs.toString()
-    return fetchTatva(`/admin/api/admin/presales${query ? `?${query}` : ''}`) as Promise<PresalesResponse>
+    return fetchAdmin(`/admin/presales${query ? `?${query}` : ''}`) as Promise<PresalesResponse>
   },
   deletePresales: async (presalesId: string) => {
     const result = await fetchTatva(`/admin/api/admin/presales/${encodeURIComponent(presalesId)}`, {
