@@ -606,9 +606,6 @@ async def _try_registered_user_greeting_restart(
     if stored:
         session = stored
 
-    if session and session.flow_state.get("returning_edit_flow_complete"):
-        return False
-
     norm_msg = _normalize_inbound_text(user_message)
     dedup_key = str(message_sid or "").strip() or f"{phone_number}:{norm_msg}"
     if session and _recent_returning_greeting_duplicate(
@@ -617,6 +614,9 @@ async def _try_registered_user_greeting_restart(
         dedup_key=dedup_key,
     ):
         print(f"[WhatsApp] Skip duplicate returning greeting for {phone_number}")
+        if dedup_key and session.flow_state.get("last_returning_greeting_dedup_key") == dedup_key:
+            return True
+        await _send_returning_location_prompt(session, phone_number)
         return True
 
     if session is None:
@@ -1297,18 +1297,6 @@ async def _handle_whatsapp_message_impl(
             _returning_profile_field_step(),
             context_body="Updated successfully.",
         )
-        return
-
-    # Registered user already finished the edit prompt — do not restart it from the controller.
-    if (
-        session.flow_state.get("returning_edit_flow_complete")
-        and is_greeting_message(user_message)
-    ):
-        step = hybrid_flow.get_current_step(session)
-        hold = "Please continue with the current question below."
-        if step:
-            hold += f"\n\n{hybrid_flow.format_step_message(step, include_stage=False)}"
-        await send_whatsapp_message(to=phone_number, body=hold)
         return
 
     if session.flow_state.get("awaiting_more_upload_decision"):

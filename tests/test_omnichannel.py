@@ -901,7 +901,7 @@ async def test_greeting_during_location_prompt_restarts_returning_welcome(monkey
 
 
 @pytest.mark.asyncio
-async def test_second_greeting_after_project_prompt_does_not_welcome_back(monkeypatch):
+async def test_second_greeting_after_project_prompt_welcomes_back(monkeypatch):
     from backend.agents.chat import whatsapp_handler as wh
 
     session = Session(
@@ -919,7 +919,7 @@ async def test_second_greeting_after_project_prompt_does_not_welcome_back(monkey
     from backend.integrations.returning_user_flow import prepare_returning_user_for_project_decision
     prepare_returning_user_for_project_decision(session)
 
-    sent_messages: list[str] = []
+    welcome_calls: list[str] = []
 
     async def fake_get_session(_session_id):
         return session
@@ -930,17 +930,16 @@ async def test_second_greeting_after_project_prompt_does_not_welcome_back(monkey
     async def fake_upsert_session_log(_session):
         return None
 
-    async def fake_send_whatsapp_message(*, to, body):
-        sent_messages.append(body)
+    async def fake_ensure_registered(_session):
         return True
 
-    async def fake_send_returning_user_reentry_prompt(_session, _phone):
-        raise AssertionError("Welcome back should not fire again while project prompt is active")
+    async def fake_send_returning_user_reentry_prompt(_session, phone):
+        welcome_calls.append(phone)
 
     monkeypatch.setattr(wh, "get_session", fake_get_session)
     monkeypatch.setattr(wh, "save_session", fake_save_session)
     monkeypatch.setattr(wh.supabase_store, "upsert_session_log", fake_upsert_session_log)
-    monkeypatch.setattr(wh, "send_whatsapp_message", fake_send_whatsapp_message)
+    monkeypatch.setattr(wh, "_ensure_registered_user_from_tatva", fake_ensure_registered)
     monkeypatch.setattr(wh, "_send_returning_user_reentry_prompt", fake_send_returning_user_reentry_prompt)
 
     await wh._handle_whatsapp_message_impl(
@@ -949,8 +948,52 @@ async def test_second_greeting_after_project_prompt_does_not_welcome_back(monkey
         "hiiiii",
     )
 
-    assert sent_messages
-    assert "Please continue with the current question below." in sent_messages[0]
+    assert welcome_calls == ["whatsapp:+91999"]
+
+
+@pytest.mark.asyncio
+async def test_project_declined_greeting_restarts_returning_welcome(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+    )
+    session.extracted_fields["tatva_user_id"] = "abc123"
+    session.extracted_fields["client_name"] = "Navya"
+    session.flow_state["project_declined"] = True
+    session.flow_state["conversation_ended"] = True
+    session.flow_state["returning_edit_flow_complete"] = True
+
+    welcome_calls: list[str] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_ensure_registered(_session):
+        return True
+
+    async def fake_send_returning_user_reentry_prompt(_session, phone):
+        welcome_calls.append(phone)
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh, "_ensure_registered_user_from_tatva", fake_ensure_registered)
+    monkeypatch.setattr(wh, "_send_returning_user_reentry_prompt", fake_send_returning_user_reentry_prompt)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_test",
+        "whatsapp:+91999",
+        "Hiii",
+    )
+
+    assert welcome_calls == ["whatsapp:+91999"]
+    assert session.flow_state.get("project_declined") is None
 
 
 def test_sync_attachment_fields_can_hold_step_open():
