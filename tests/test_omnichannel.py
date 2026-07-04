@@ -1987,6 +1987,43 @@ def test_project_declined_yes_continues_flow():
 
 
 @pytest.mark.asyncio
+async def test_project_declined_gibberish_shows_say_hi_gate(monkeypatch):
+    from backend.agents.chat import whatsapp_handler as wh
+
+    session = Session(
+        session_id="wa_test",
+        phone_number="whatsapp:+91999",
+        channel="whatsapp",
+        conversation_stage=ConversationStage.DETAIL_COLLECTION,
+        flow_state={"project_declined": True, "conversation_ended": True},
+    )
+    session.extracted_fields["tatva_user_id"] = "abc123"
+
+    gate_calls: list[bool] = []
+
+    async def fake_get_session(_session_id):
+        return session
+
+    async def fake_save_session(_session):
+        return None
+
+    async def fake_send_say_hi_gate(_session, _phone, *, remind=False):
+        gate_calls.append(remind)
+
+    monkeypatch.setattr(wh, "get_session", fake_get_session)
+    monkeypatch.setattr(wh, "save_session", fake_save_session)
+    monkeypatch.setattr(wh, "_send_say_hi_gate", fake_send_say_hi_gate)
+
+    await wh._handle_whatsapp_message_impl(
+        "wa_test",
+        "whatsapp:+91999",
+        "Kxsxbjtfj",
+    )
+
+    assert gate_calls == [True]
+
+
+@pytest.mark.asyncio
 async def test_project_declined_follow_up_message():
     session = Session(
         session_id="wa_whatsapp:+91999",

@@ -288,6 +288,8 @@ async def _send_say_hi_gate(session: Session, phone_number: str, *, remind: bool
 
 async def _start_chat_after_say_hi(session: Session, phone_number: str) -> None:
     """Begin EVA flow after the user taps Say Hi."""
+    session.flow_state.pop("project_declined", None)
+    session.flow_state.pop("conversation_ended", None)
     _mark_say_hi_gate_complete(session)
     se.start_client_stage(session)
     vendor_msg = await check_tatva_phone_for_session(session)
@@ -1100,6 +1102,22 @@ async def _handle_whatsapp_message_impl(
         session, session_id, phone_number, user_message, message_sid=message_sid,
         list_id=list_id, button_payload=button_payload, button_text=button_text,
     ):
+        return
+
+    if (
+        session
+        and user_message
+        and session.flow_state.get("project_declined")
+        and not is_greeting_message(user_message)
+        and not hybrid_flow.is_say_hi_tap(
+            list_id=list_id,
+            button_payload=button_payload,
+            button_text=button_text,
+        )
+    ):
+        session.add_message(MessageRole.USER, user_message)
+        await save_session(session)
+        await _send_say_hi_gate(session, phone_number, remind=True)
         return
 
     if session and _inbound_looks_like_returning_location_reply(
