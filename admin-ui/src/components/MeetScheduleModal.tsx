@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { X, Loader2, ExternalLink } from 'lucide-react'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
-import { api, TatvaUserItem } from '../api/client'
+import { api, resolveMeetSlotId, TatvaUserItem } from '../api/client'
 import type { MeetLinkRecord, MeetSlot } from '../types/meet'
 import clsx from 'clsx'
 
@@ -41,7 +41,7 @@ function MeetSlotCard({
   const name = user.fullName || user.userName || 'Customer'
   const phone = user.phoneNumber || '—'
   const email = user.email || '—'
-  const slotId = slot.slotId || ''
+  const slotId = resolveMeetSlotId(slot)
   const meetLinkId = record._id || ''
   const busy = busySlotId === slotId
 

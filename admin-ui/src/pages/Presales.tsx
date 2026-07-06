@@ -3,14 +3,15 @@ import {
   api,
   PresalesItem,
   TatvaEmployee,
+  VendorLeadItem,
   tatvaEmployeeDepartmentName,
   tatvaEmployeeId,
   tatvaEmployeeLabel,
   tatvaEmployeeName,
   tatvaEmployeeRoleName,
 } from '../api/client'
-import { StaffCommentDisplay } from '../components/StaffCommentDisplay'
 import EnquiryViewModal from '../components/EnquiryViewModal'
+import LeadProgressButton from '../components/LeadProgressButton'
 import clsx from 'clsx'
 import { format } from 'date-fns'
 import { Eye, Trash2 } from 'lucide-react'
@@ -31,10 +32,6 @@ function formatDate(iso: string | undefined): string {
   } catch {
     return iso
   }
-}
-
-function statusLabel(status: string | undefined): string {
-  return (status || 'unassigned').replace(/_/g, ' ')
 }
 
 function assignedEmployeeId(assignment: PresalesItem['assignment']): string {
@@ -69,6 +66,38 @@ function rowAssigneeName(row: PresalesItem): string {
   if (crm) return crm
   if (row.flag === 'high') return presalesAssignee(row)
   return '—'
+}
+
+function vendorRowId(vendor: VendorLeadItem): string {
+  return String(vendor._id || vendor.id || '').trim()
+}
+
+function vendorDisplayName(vendor: VendorLeadItem): string {
+  const name = String(
+    vendor.fullName || vendor.name || vendor.contactName || vendor.vendorName || '',
+  ).trim()
+  const company = String(
+    vendor.companyName || vendor.businessName || vendor.company || '',
+  ).trim()
+  if (name && company && name.toLowerCase() !== company.toLowerCase()) {
+    return `${name} (${company})`
+  }
+  return name || company || 'Vendor'
+}
+
+function isApprovedVendor(vendor: VendorLeadItem): boolean {
+  const status = String(
+    vendor.status || vendor.leadStatus || vendor.approvalStatus || 'approved',
+  ).trim().toLowerCase()
+  return status === 'approved' || status === 'verified'
+}
+
+function rowVendorName(row: PresalesItem): string {
+  return String(row.vendor_assignment?.vendor_name || '').trim() || '—'
+}
+
+function assignedVendorId(row: PresalesItem): string {
+  return String(row.vendor_assignment?.vendor_id || '').trim()
 }
 
 function AssignDropdown({
@@ -110,9 +139,49 @@ function AssignDropdown({
   )
 }
 
+function VendorAssignDropdown({
+  row,
+  vendors,
+  assigningId,
+  crmConfigured,
+  onAssign,
+}: {
+  row: PresalesItem
+  vendors: VendorLeadItem[]
+  assigningId: string | null
+  crmConfigured: boolean
+  onAssign: (row: PresalesItem, vendorId: string) => void
+}) {
+  const currentVendor = assignedVendorId(row)
+  if (vendors.length === 0) {
+    return <span className="text-xs text-slate-600">—</span>
+  }
+  return (
+    <select
+      className="input text-xs py-1.5 min-w-[160px]"
+      value={currentVendor}
+      disabled={assigningId === row._id || !crmConfigured}
+      title={crmConfigured ? undefined : 'Configure Supabase CRM to save assignments'}
+      onChange={e => onAssign(row, e.target.value)}
+    >
+      <option value="">Assign vendor...</option>
+      {vendors.map(vendor => {
+        const id = vendorRowId(vendor)
+        if (!id) return null
+        return (
+          <option key={id} value={id}>
+            {vendorDisplayName(vendor)}
+          </option>
+        )
+      })}
+    </select>
+  )
+}
+
 export default function Presales() {
   const [items, setItems] = useState<PresalesItem[]>([])
   const [employees, setEmployees] = useState<TatvaEmployee[]>([])
+  const [vendors, setVendors] = useState<VendorLeadItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -121,10 +190,11 @@ export default function Presales() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [assigningId, setAssigningId] = useState<string | null>(null)
+  const [assigningVendorId, setAssigningVendorId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [viewLead, setViewLead] = useState<{ name?: string; phone?: string } | null>(null)
   const isHighIntentView = flagFilter === 'high'
-  const columnCount = isHighIntentView ? 12 : 11
+  const columnCount = isHighIntentView ? 13 : 12
 
   const loadEmployees = useCallback(async () => {
     try {
@@ -133,6 +203,17 @@ export default function Presales() {
     } catch (e) {
       setEmployees([])
       console.warn('Failed to load Tatva employees:', e)
+    }
+  }, [])
+
+  const loadVendors = useCallback(async () => {
+    try {
+      const data = await api.vendors({ page: 1, limit: 200 })
+      const approved = (data.data?.items || []).filter(isApprovedVendor)
+      setVendors(approved)
+    } catch (e) {
+      setVendors([])
+      console.warn('Failed to load approved vendors:', e)
     }
   }, [])
 
@@ -173,11 +254,12 @@ export default function Presales() {
 
   useEffect(() => {
     loadEmployees()
+    loadVendors()
     loadCrmStatus()
     load()
     const id = setInterval(load, 30000)
     return () => clearInterval(id)
-  }, [load, loadEmployees, loadCrmStatus])
+  }, [load, loadEmployees, loadVendors, loadCrmStatus])
 
   useEffect(() => {
     setPage(1)
@@ -209,6 +291,31 @@ export default function Presales() {
     }
   }
 
+  const handleAssignVendor = async (row: PresalesItem, vendorId: string) => {
+    if (!vendorId) return
+    if (!crmConfigured) {
+      toast.error('Configure Supabase CRM to save assignments')
+      return
+    }
+    const vendor = vendors.find(v => vendorRowId(v) === vendorId)
+    setAssigningVendorId(row._id)
+    try {
+      await api.assignPresalesVendor(row._id, {
+        vendor_id: vendorId,
+        vendor_name: vendor ? vendorDisplayName(vendor) : '',
+        vendor_company: String(vendor?.companyName || vendor?.businessName || '').trim(),
+        vendor_phone: String(vendor?.phoneNumber || vendor?.phone || '').trim(),
+        snapshot: { ...row },
+      })
+      toast.success('Vendor assigned')
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Vendor assignment failed')
+    } finally {
+      setAssigningVendorId(null)
+    }
+  }
+
   const handleDelete = async (row: PresalesItem) => {
     const label = displayName(row.name) !== '—' ? displayName(row.name) : row.phoneNumber || 'this lead'
     if (!window.confirm(`Delete presales record for ${label}? This cannot be undone.`)) {
@@ -234,6 +341,7 @@ export default function Presales() {
           <p className="text-sm text-slate-500 mt-1">
             {total} record{total !== 1 ? 's' : ''} from Tatva
             {employees.length > 0 ? ` · ${employees.length} sales team member${employees.length !== 1 ? 's' : ''}` : ''}
+            {vendors.length > 0 ? ` · ${vendors.length} approved vendor${vendors.length !== 1 ? 's' : ''}` : ''}
             {crmConfigured ? ' · assignment enabled' : ' · configure Supabase to save assignments'}
           </p>
         </div>
@@ -263,9 +371,10 @@ export default function Presales() {
                   <th className="px-4 py-3 font-medium whitespace-nowrap">Project ID</th>
                 )}
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Assignee</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Team comment</th>
+                <th className="px-4 py-3 font-medium">Track</th>
                 <th className="px-4 py-3 font-medium">Assign</th>
+                <th className="px-4 py-3 font-medium whitespace-nowrap">Vendor</th>
+                <th className="px-4 py-3 font-medium">Assign vendor</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
                 <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
@@ -324,11 +433,20 @@ export default function Presales() {
                       <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
                         {rowAssigneeName(row)}
                       </td>
-                      <td className="px-4 py-3 text-slate-400 capitalize text-xs">
-                        {statusLabel(assignment?.status)}
-                      </td>
-                      <td className="px-4 py-3 align-top">
-                        <StaffCommentDisplay text={assignment?.notes} />
+                      <td className="px-4 py-3">
+                        <LeadProgressButton
+                          leadName={displayName(row.name) !== '—' ? displayName(row.name) : row.phoneNumber || 'Lead'}
+                          status={assignment?.status}
+                          assignedAt={assignment?.assigned_at}
+                          completedAt={assignment?.presales_completed_at}
+                          createdAt={row.createdAt}
+                          assigneeName={rowAssigneeName(row)}
+                          commentLog={assignment?.notes ? [{
+                            text: assignment.notes,
+                            created_at: assignment.assigned_at || undefined,
+                          }] : []}
+                          commentCount={assignment?.notes ? 1 : 0}
+                        />
                       </td>
                       <td className="px-4 py-3">
                         <AssignDropdown
@@ -337,6 +455,18 @@ export default function Presales() {
                           assigningId={assigningId}
                           crmConfigured={crmConfigured}
                           onAssign={handleAssign}
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap max-w-[180px] truncate">
+                        {rowVendorName(row)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <VendorAssignDropdown
+                          row={row}
+                          vendors={vendors}
+                          assigningId={assigningVendorId}
+                          crmConfigured={crmConfigured}
+                          onAssign={handleAssignVendor}
                         />
                       </td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">

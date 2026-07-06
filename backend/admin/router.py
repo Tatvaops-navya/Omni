@@ -236,6 +236,10 @@ async def delete_presales_assignment(presales_id: str, auth=Depends(require_admi
 
     if crm_store.crm_available():
         crm_store.delete_assignment(external_id=presales_id)
+        crm_store.delete_assignment(
+            external_id=presales_id,
+            source=crm_store.SOURCE_TATVA_PRESALES_VENDOR,
+        )
     return {"success": True}
 
 
@@ -252,6 +256,10 @@ async def delete_presales(presales_id: str, auth=Depends(require_admin)):
         raise HTTPException(status_code=status, detail=result.get("message") or "Delete failed")
     if crm_store.crm_available():
         crm_store.delete_assignment(external_id=presales_id)
+        crm_store.delete_assignment(
+            external_id=presales_id,
+            source=crm_store.SOURCE_TATVA_PRESALES_VENDOR,
+        )
     return result
 
 

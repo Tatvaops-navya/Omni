@@ -43,6 +43,14 @@ class AssignTatvaEmployeeRequest(BaseModel):
     snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
+class AssignPresalesVendorRequest(BaseModel):
+    vendor_id: str
+    vendor_name: str = ""
+    vendor_company: str = ""
+    vendor_phone: str = ""
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
 class CompletePresalesRequest(BaseModel):
     notes: Optional[str] = None
 
@@ -178,6 +186,33 @@ async def assign_tatva_employee_lead(
     return {"assignment": row}
 
 
+@router.patch("/lead-assignments/{external_id}/assign-presales-vendor")
+async def assign_presales_vendor_lead(
+    external_id: str,
+    body: AssignPresalesVendorRequest,
+    auth=Depends(require_admin),
+):
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+
+    vendor_id = body.vendor_id.strip()
+    if not vendor_id:
+        raise HTTPException(status_code=400, detail="Vendor id required")
+
+    try:
+        row = crm_store.assign_presales_vendor(
+            external_id=external_id,
+            vendor_id=vendor_id,
+            vendor_name=body.vendor_name.strip(),
+            vendor_company=body.vendor_company.strip(),
+            vendor_phone=body.vendor_phone.strip(),
+            snapshot=body.snapshot,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"vendor_assignment": row}
+
+
 @router.patch("/lead-assignments/{external_id}/assign-user")
 async def assign_user_lead(
     external_id: str,
@@ -264,8 +299,29 @@ async def get_my_leads(
         page=page,
         limit=limit,
         status=status,
+        staff_email=str(auth.get("email") or ""),
     )
     return {"success": True, "data": data, "lead_type": lead_type}
+
+
+@router.get("/my-dashboard")
+async def get_my_dashboard(
+    period: str = Query("month"),
+    auth=Depends(require_auth),
+):
+    role = auth.get("role")
+    user_id = auth.get("user_id")
+    if role not in {"presales", "rm"} or not user_id:
+        raise HTTPException(status_code=403, detail="Team access required")
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+    data = crm_store.my_leads_dashboard(
+        staff_user_id=str(user_id),
+        staff_role=str(role),
+        staff_email=str(auth.get("email") or ""),
+        period=period,
+    )
+    return {"success": True, "data": data}
 
 
 @router.patch("/my-leads/{external_id}/complete")
@@ -345,14 +401,22 @@ async def update_my_lead_notes(
         if lead_type == "vendor"
         else crm_store.SOURCE_TATVA_PRESALES
     )
+    text = body.notes.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Comment cannot be empty")
     try:
         row = crm_store.update_lead_notes(
             external_id=external_id,
             staff_user_id=str(user_id),
             staff_role=str(role),
             source=source,
-            notes=body.notes.strip(),
+            notes=text,
+            author_id=str(user_id),
+            author_name=str(auth.get("name") or ""),
+            staff_email=str(auth.get("email") or ""),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"assignment": row}

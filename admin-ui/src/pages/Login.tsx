@@ -24,8 +24,7 @@ export default function Login() {
         : await api.crmLogin(email, password)
       if (res.token) {
         setToken(res.token, res.user)
-        const role = res.user?.role || 'admin'
-        navigate(role === 'presales' || role === 'rm' ? '/krsna/my-leads' : '/krsna/dashboard')
+        navigate('/krsna/dashboard')
       } else {
         toast.error('Login failed')
       }

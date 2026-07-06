@@ -1,4 +1,6 @@
 export type MeetSlot = {
+  _id?: string
+  id?: string
   scheduledAt?: string
   status?: string
   slotId?: string

@@ -17,11 +17,13 @@ const adminNav = [
 ]
 
 const presalesNav = [
+  { to: '/krsna/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/krsna/my-leads', icon: UserCircle, label: 'My Leads' },
   { to: '/krsna/my-projects', icon: FolderKanban, label: 'My Projects' },
 ]
 
 const rmNav = [
+  { to: '/krsna/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/krsna/my-leads', icon: UserCircle, label: 'My Leads' },
   { to: '/krsna/my-projects', icon: FolderKanban, label: 'My Projects' },
 ]

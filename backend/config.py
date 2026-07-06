@@ -5,8 +5,9 @@ Configuration via environment variables (Pydantic Settings)
 from pathlib import Path
 
 from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
 # Project root (parent of backend/) — load .env from here regardless of shell cwd

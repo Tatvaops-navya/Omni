@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api } from '../api/client'
+import { api, resolveMeetSlotId } from '../api/client'
 import type { MeetLinkRecord, MeetSlot } from '../types/meet'
 import clsx from 'clsx'
 import { format } from 'date-fns'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, MessageSquare } from 'lucide-react'
 import toast from 'react-hot-toast'
+import CommentLogModal, { type LeadCommentLogEntry } from '../components/CommentLogModal'
+import LeadProgressButton from '../components/LeadProgressButton'
 
 type LeadTab = 'user' | 'vendor' | 'meet'
 
@@ -13,57 +15,9 @@ type MyLeadRow = {
   status: string
   snapshot: Record<string, unknown>
   assigned_at?: string
+  presales_completed_at?: string
   notes?: string
-}
-
-function LeadCommentCell({
-  externalId,
-  initialNote,
-  leadType,
-}: {
-  externalId: string
-  initialNote?: string
-  leadType: 'user' | 'vendor'
-}) {
-  const [draft, setDraft] = useState(initialNote || '')
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    setDraft(initialNote || '')
-  }, [initialNote, externalId])
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      await api.saveMyLeadComment(externalId, draft, leadType)
-      toast.success('Comment saved')
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not save comment')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5 min-w-[200px] max-w-[260px]">
-      <textarea
-        className="input text-xs py-1.5 min-h-[56px] resize-y"
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        placeholder="Add a comment..."
-        rows={2}
-        maxLength={2000}
-      />
-      <button
-        type="button"
-        className="btn-ghost text-indigo-400 text-xs self-start disabled:opacity-50"
-        disabled={saving}
-        onClick={handleSave}
-      >
-        {saving ? 'Saving...' : 'Save comment'}
-      </button>
-    </div>
-  )
+  comment_log?: LeadCommentLogEntry[]
 }
 
 function snap(row: MyLeadRow, ...keys: string[]): string {
@@ -120,6 +74,32 @@ export default function MyLeads() {
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [logModal, setLogModal] = useState<{
+    externalId: string
+    leadName: string
+    leadType: 'user' | 'vendor'
+    entries: LeadCommentLogEntry[]
+  } | null>(null)
+
+  const handleCommentSaved = useCallback((externalId: string, log: LeadCommentLogEntry[]) => {
+    setItems(prev => prev.map(row => (
+      row.external_id === externalId
+        ? { ...row, comment_log: log, notes: log[log.length - 1]?.text }
+        : row
+    )))
+    setLogModal(prev => (
+      prev && prev.externalId === externalId
+        ? { ...prev, entries: log }
+        : prev
+    ))
+  }, [])
+
+  const leadDisplayName = useCallback((row: MyLeadRow) => {
+    if (tab === 'vendor') {
+      return snap(row, 'name', 'fullName', 'contactName', 'vendorName')
+    }
+    return snap(row, 'name')
+  }, [tab])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -276,7 +256,7 @@ export default function MyLeads() {
                   meetRows.map(({ record, slot }) => {
                     const user = record.userId
                     const meetLinkId = record._id || ''
-                    const slotId = slot.slotId || ''
+                    const slotId = resolveMeetSlotId(slot)
                     const busy = busySlotId === slotId
                     return (
                       <tr
@@ -352,20 +332,19 @@ export default function MyLeads() {
                   <th className="px-4 py-3 font-medium">Phone</th>
                   <th className="px-4 py-3 font-medium">Flag</th>
                   <th className="px-4 py-3 font-medium">Location</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Track</th>
                   <th className="px-4 py-3 font-medium">Assigned</th>
-                  <th className="px-4 py-3 font-medium">Comments</th>
                   <th className="px-4 py-3 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && items.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center text-slate-500">Loading...</td>
+                    <td colSpan={7} className="px-4 py-12 text-center text-slate-500">Loading...</td>
                   </tr>
                 ) : items.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                    <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
                       No user leads assigned yet.
                     </td>
                   </tr>
@@ -385,25 +364,48 @@ export default function MyLeads() {
                       <td className="px-4 py-3 text-slate-400 max-w-[160px] truncate">
                         {snap(row, 'location', 'propertyLocation')}
                       </td>
-                      <td className="px-4 py-3 capitalize text-slate-400">{row.status.replace(/_/g, ' ')}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.assigned_at)}</td>
-                      <td className="px-4 py-3 align-top">
-                        <LeadCommentCell
-                          externalId={row.external_id}
-                          initialNote={row.notes}
-                          leadType="user"
+                      <td className="px-4 py-3">
+                        <LeadProgressButton
+                          leadName={leadDisplayName(row)}
+                          status={row.status}
+                          commentCount={row.comment_log?.length ?? 0}
+                          commentLog={row.comment_log || []}
+                          assignedAt={row.assigned_at}
+                          completedAt={row.presales_completed_at}
+                          createdAt={row.assigned_at}
                         />
                       </td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.assigned_at)}</td>
                       <td className="px-4 py-3 align-top">
-                        {row.status !== 'presales_completed' && (
+                        <div className="flex flex-col gap-2">
                           <button
                             type="button"
-                            className="btn-ghost text-teal-400 text-xs"
-                            onClick={() => handleComplete(row.external_id)}
+                            className="btn-ghost text-slate-400 p-1 self-start relative"
+                            title="Comment log"
+                            onClick={() => setLogModal({
+                              externalId: row.external_id,
+                              leadName: leadDisplayName(row),
+                              leadType: 'user',
+                              entries: row.comment_log || [],
+                            })}
                           >
-                            Mark complete
+                            <MessageSquare className="w-4 h-4" />
+                            {(row.comment_log?.length ?? 0) > 0 && (
+                              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-indigo-600 text-[10px] text-white leading-4 text-center">
+                                {row.comment_log!.length}
+                              </span>
+                            )}
                           </button>
-                        )}
+                          {row.status !== 'presales_completed' && (
+                            <button
+                              type="button"
+                              className="btn-ghost text-teal-400 text-xs"
+                              onClick={() => handleComplete(row.external_id)}
+                            >
+                              Mark complete
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -420,20 +422,19 @@ export default function MyLeads() {
                   <th className="px-4 py-3 font-medium">Email</th>
                   <th className="px-4 py-3 font-medium">Location</th>
                   <th className="px-4 py-3 font-medium">Service</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
+                  <th className="px-4 py-3 font-medium">Track</th>
                   <th className="px-4 py-3 font-medium">Assigned</th>
-                  <th className="px-4 py-3 font-medium">Comments</th>
                   <th className="px-4 py-3 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && items.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-12 text-center text-slate-500">Loading...</td>
+                    <td colSpan={9} className="px-4 py-12 text-center text-slate-500">Loading...</td>
                   </tr>
                 ) : items.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-12 text-center text-slate-500">
+                    <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                       No vendor leads assigned yet.
                     </td>
                   </tr>
@@ -458,25 +459,48 @@ export default function MyLeads() {
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
                         {snap(row, 'service', 'serviceCategory', 'serviceType', 'category')}
                       </td>
-                      <td className="px-4 py-3 capitalize text-slate-400">{row.status.replace(/_/g, ' ')}</td>
-                      <td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.assigned_at)}</td>
-                      <td className="px-4 py-3 align-top">
-                        <LeadCommentCell
-                          externalId={row.external_id}
-                          initialNote={row.notes}
-                          leadType="vendor"
+                      <td className="px-4 py-3">
+                        <LeadProgressButton
+                          leadName={leadDisplayName(row)}
+                          status={row.status}
+                          commentCount={row.comment_log?.length ?? 0}
+                          commentLog={row.comment_log || []}
+                          assignedAt={row.assigned_at}
+                          completedAt={row.presales_completed_at}
+                          createdAt={row.assigned_at}
                         />
                       </td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.assigned_at)}</td>
                       <td className="px-4 py-3 align-top">
-                        {row.status !== 'presales_completed' && (
+                        <div className="flex flex-col gap-2">
                           <button
                             type="button"
-                            className="btn-ghost text-teal-400 text-xs"
-                            onClick={() => handleComplete(row.external_id)}
+                            className="btn-ghost text-slate-400 p-1 self-start relative"
+                            title="Comment log"
+                            onClick={() => setLogModal({
+                              externalId: row.external_id,
+                              leadName: leadDisplayName(row),
+                              leadType: 'vendor',
+                              entries: row.comment_log || [],
+                            })}
                           >
-                            Mark complete
+                            <MessageSquare className="w-4 h-4" />
+                            {(row.comment_log?.length ?? 0) > 0 && (
+                              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-indigo-600 text-[10px] text-white leading-4 text-center">
+                                {row.comment_log!.length}
+                              </span>
+                            )}
                           </button>
-                        )}
+                          {row.status !== 'presales_completed' && (
+                            <button
+                              type="button"
+                              className="btn-ghost text-teal-400 text-xs"
+                              onClick={() => handleComplete(row.external_id)}
+                            >
+                              Mark complete
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -494,6 +518,17 @@ export default function MyLeads() {
           </div>
         </div>
       </div>
+
+      {logModal && (
+        <CommentLogModal
+          leadName={logModal.leadName}
+          externalId={logModal.externalId}
+          leadType={logModal.leadType}
+          entries={logModal.entries}
+          onSaved={log => handleCommentSaved(logModal.externalId, log)}
+          onClose={() => setLogModal(null)}
+        />
+      )}
     </div>
   )
 }

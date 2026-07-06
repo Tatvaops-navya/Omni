@@ -1,5 +1,5 @@
 // Omnichannel backend: login, enquiries, CRM. Tatva platform: api.withtatva.ai via /tatva-api proxy.
-import type { MeetLinksResponse } from '../types/meet'
+import type { MeetLinkRecord, MeetLinksResponse, MeetSlot } from '../types/meet'
 import type { EnquiryAttachment } from '../types/enquiry'
 import { normalizePhone } from '../utils/phone'
 import { OMNICHANNEL_API_BASE, TATVA_API_BASE } from './config'
@@ -123,6 +123,31 @@ async function fetchTatva(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
+export function resolveMeetSlotId(slot: MeetSlot | Record<string, unknown>): string {
+  const s = slot as Record<string, unknown>
+  return String(s.slotId || s._id || s.id || '').trim()
+}
+
+function normalizeMeetLinkRecord(record: MeetLinkRecord): MeetLinkRecord {
+  return {
+    ...record,
+    slots: (record.slots || []).map(slot => ({
+      ...slot,
+      slotId: resolveMeetSlotId(slot),
+    })),
+  }
+}
+
+function extractMeetLinkFromPayload(payload: unknown): MeetLinkRecord | null {
+  if (!payload || typeof payload !== 'object') return null
+  const root = payload as Record<string, unknown>
+  const data = root.data
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return data as MeetLinkRecord
+  }
+  return root as MeetLinkRecord
+}
+
 function filterMeetLinksForUser(
   payload: MeetLinksResponse,
   userId?: string,
@@ -179,6 +204,15 @@ export type LeadAssignmentMeta = {
   assignee_name?: string | null
   assignee_email?: string | null
   assigned_at?: string | null
+  presales_completed_at?: string | null
+  notes?: string | null
+}
+
+export type VendorAssignmentMeta = {
+  status?: string
+  vendor_id?: string | null
+  vendor_name?: string | null
+  assigned_at?: string | null
   notes?: string | null
 }
 
@@ -198,6 +232,7 @@ export type PresalesItem = {
   createdAt?: string
   updatedAt?: string
   assignment?: LeadAssignmentMeta
+  vendor_assignment?: VendorAssignmentMeta
 }
 
 export type PresalesResponse = {
@@ -568,6 +603,21 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  assignPresalesVendor: (
+    externalId: string,
+    body: {
+      vendor_id: string
+      vendor_name?: string
+      vendor_company?: string
+      vendor_phone?: string
+      snapshot: Record<string, unknown>
+    },
+  ) =>
+    fetchAdmin(`/admin/lead-assignments/${externalId}/assign-presales-vendor`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
   assignVendorLead: (externalId: string, body: { staff_user_id: string; snapshot: Record<string, unknown> }) =>
     fetchAdmin(`/admin/lead-assignments/${externalId}/assign-vendor`, {
       method: 'PATCH',
@@ -583,6 +633,9 @@ export const api = {
     const query = qs.toString()
     return fetchAdmin(`/admin/my-leads${query ? `?${query}` : ''}`)
   },
+
+  myDashboard: (period: string = 'month') =>
+    fetchAdmin(`/admin/my-dashboard?period=${encodeURIComponent(period)}`),
 
   myProjects: async () => {
     const payload = await fetchTatva(TATVA_EMPLOYEE_PROJECTS_PATH) as Record<string, unknown>
@@ -697,18 +750,38 @@ export const api = {
     if (params?.limit) qs.set('limit', String(params?.limit ?? 20))
     const query = qs.toString()
     const payload = await fetchTatva(`/users/api/meet-links/all${query ? `?${query}` : ''}`) as MeetLinksResponse
-    if (params?.user_id || params?.phone) {
-      return filterMeetLinksForUser(payload, params.user_id, params.phone)
+    const normalized: MeetLinksResponse = {
+      ...payload,
+      data: (payload.data || []).map(normalizeMeetLinkRecord),
     }
-    return payload
+    if (params?.user_id || params?.phone) {
+      return filterMeetLinksForUser(normalized, params.user_id, params.phone)
+    }
+    return normalized
   },
-  confirmMeetSlot: (meetLinkId: string, slotId: string) =>
-    fetchTatva(`/users/api/meet-links/${encodeURIComponent(meetLinkId)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        slots: [{ slotId, status: 'scheduled' }],
-      }),
+  getMeetLink: (meetLinkId: string) =>
+    fetchTatva(`/users/api/meet-links/${encodeURIComponent(meetLinkId)}`).then(payload => {
+      const record = extractMeetLinkFromPayload(payload)
+      return record ? normalizeMeetLinkRecord(record) : null
     }),
+  confirmMeetSlot: async (meetLinkId: string, slotId?: string) => {
+    let resolvedSlotId = (slotId || '').trim()
+    if (!resolvedSlotId) {
+      const payload = await fetchTatva(`/users/api/meet-links/${encodeURIComponent(meetLinkId)}`)
+      const record = extractMeetLinkFromPayload(payload)
+      const slots = record ? normalizeMeetLinkRecord(record).slots || [] : []
+      resolvedSlotId = resolveMeetSlotId(slots[0] || {})
+    }
+    if (!resolvedSlotId) {
+      throw new Error('No slot id found for this meet link')
+    }
+    return fetchTatva(`/users/api/meet-links/${encodeURIComponent(meetLinkId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        slots: [{ slotId: resolvedSlotId, status: 'scheduled' }],
+      }),
+    })
+  },
   rescheduleMeetSlot: (slotId: string) =>
     fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/reschedule`, { method: 'PATCH' }),
   vendorLeads: async (params?: { page?: number; limit?: number; status?: string }) => {

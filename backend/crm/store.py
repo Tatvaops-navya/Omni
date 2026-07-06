@@ -9,6 +9,7 @@ from backend.config import get_settings
 from backend.storage.supabase_client import get_supabase_client, is_supabase_configured
 
 SOURCE_TATVA_PRESALES = "tatva_presales"
+SOURCE_TATVA_PRESALES_VENDOR = "tatva_presales_vendor"
 SOURCE_TATVA_VENDOR = "tatva_vendor"
 
 STATUS_UNASSIGNED = "unassigned"
@@ -154,6 +155,136 @@ def assign_presales_lead(
     )
 
 
+TEAM_COMMENT_LOG_KEY = "__team_comment_log"
+TATVA_EMPLOYEE_PREFIX = "tatva:"
+
+
+def comment_log_from_assignment(assignment: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return chronological team comment entries for a lead assignment."""
+    snap = assignment.get("snapshot") if isinstance(assignment.get("snapshot"), dict) else {}
+    stored = snap.get(TEAM_COMMENT_LOG_KEY)
+    if isinstance(stored, list):
+        entries = [
+            _normalize_comment_entry(e)
+            for e in stored
+            if isinstance(e, dict) and str(e.get("text") or "").strip()
+        ]
+        if entries:
+            return entries
+
+    notes = str(assignment.get("notes") or "").strip()
+    if notes:
+        return [{
+            "text": notes,
+            "created_at": assignment.get("updated_at") or assignment.get("assigned_at") or _now_iso(),
+            "author_id": None,
+            "author_name": None,
+        }]
+    return []
+
+
+def _normalize_comment_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "text": str(entry.get("text") or "").strip(),
+        "created_at": entry.get("created_at"),
+        "author_id": entry.get("author_id"),
+        "author_name": entry.get("author_name"),
+    }
+
+
+def _snapshot_with_comment_log(snapshot: dict[str, Any], log: list[dict[str, Any]]) -> dict[str, Any]:
+    merged = dict(snapshot)
+    merged[TEAM_COMMENT_LOG_KEY] = log
+    return merged
+
+
+def format_my_lead_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out["comment_log"] = comment_log_from_assignment(row)
+    return out
+
+
+def _tatva_employee_email_from_assignment(assignment: dict[str, Any]) -> str:
+    snap = assignment.get("snapshot") if isinstance(assignment.get("snapshot"), dict) else {}
+    te = snap.get("tatva_employee") if isinstance(snap.get("tatva_employee"), dict) else {}
+    return str(te.get("email") or "").strip().lower()
+
+
+def _is_tatva_assignee_id(value: Any) -> bool:
+    return str(value or "").startswith(TATVA_EMPLOYEE_PREFIX)
+
+
+def get_assignment_for_staff(
+    *,
+    external_id: str,
+    staff_user_id: str,
+    staff_role: str,
+    source: str,
+    staff_email: str | None = None,
+) -> dict[str, Any] | None:
+    """Find a lead assignment owned by this CRM user or linked Tatva employee."""
+    col = _staff_column_for_role(staff_role)
+    client = _client()
+    direct = (
+        client.table("lead_assignments")
+        .select("*")
+        .eq("source", source)
+        .eq("external_id", external_id)
+        .eq(col, staff_user_id)
+        .execute()
+    )
+    if direct.data:
+        return direct.data[0]
+
+    email = (staff_email or "").strip().lower()
+    if not email:
+        return None
+
+    tatva_rows = (
+        client.table("lead_assignments")
+        .select("*")
+        .eq("source", source)
+        .eq("external_id", external_id)
+        .execute()
+    )
+    for row in tatva_rows.data or []:
+        if not _is_tatva_assignee_id(row.get(col)):
+            continue
+        if _tatva_employee_email_from_assignment(row) == email:
+            return row
+    return None
+
+
+def _list_tatva_assignments_for_email(
+    *,
+    staff_email: str,
+    staff_role: str,
+    source: str,
+    status: str | None,
+) -> list[dict[str, Any]]:
+    email = staff_email.strip().lower()
+    if not email:
+        return []
+    col = _staff_column_for_role(staff_role)
+    result = (
+        _client()
+        .table("lead_assignments")
+        .select("*")
+        .eq("source", source)
+        .execute()
+    )
+    rows: list[dict[str, Any]] = []
+    for row in result.data or []:
+        if not _is_tatva_assignee_id(row.get(col)):
+            continue
+        if _tatva_employee_email_from_assignment(row) != email:
+            continue
+        if status and row.get("status") != status:
+            continue
+        rows.append(row)
+    return rows
+
+
 def assign_staff_lead(
     *,
     external_id: str,
@@ -164,15 +295,27 @@ def assign_staff_lead(
 ) -> dict[str, Any]:
     col = _staff_column_for_role(staff_role)
     now = _now_iso()
+    existing = get_assignments_by_external_ids([external_id], source=source).get(external_id) or {}
+    merged_snapshot = dict(snapshot)
+    if existing:
+        old_snap = existing.get("snapshot") if isinstance(existing.get("snapshot"), dict) else {}
+        old_log = old_snap.get(TEAM_COMMENT_LOG_KEY)
+        if isinstance(old_log, list) and old_log:
+            merged_snapshot[TEAM_COMMENT_LOG_KEY] = old_log
     row: dict[str, Any] = {
         "source": source,
         "external_id": external_id,
         "status": STATUS_ASSIGNED,
-        "snapshot": snapshot,
+        "snapshot": merged_snapshot,
         "assigned_at": now,
         "updated_at": now,
         col: staff_user_id,
     }
+    if existing.get("notes"):
+        row["notes"] = existing["notes"]
+    existing_log = comment_log_from_assignment(existing)
+    if existing_log:
+        row["snapshot"] = _snapshot_with_comment_log(merged_snapshot, existing_log)
     result = (
         _client()
         .table("lead_assignments")
@@ -211,6 +354,7 @@ def list_my_leads(
     page: int = 1,
     limit: int = 20,
     status: str | None = None,
+    staff_email: str | None = None,
 ) -> dict[str, Any]:
     if not crm_available():
         return {"items": [], "total": 0, "page": page, "limit": limit, "totalPages": 0}
@@ -232,8 +376,28 @@ def list_my_leads(
         .range(offset, offset + limit - 1)
         .execute()
     )
-    total = int(result.count or 0)
-    items = list(result.data or [])
+
+    merged_rows: dict[str, dict[str, Any]] = {
+        str(row.get("external_id")): row for row in (result.data or [])
+    }
+    for row in _list_tatva_assignments_for_email(
+        staff_email=staff_email or "",
+        staff_role=staff_role,
+        source=source,
+        status=status,
+    ):
+        ext = str(row.get("external_id") or "")
+        if ext and ext not in merged_rows:
+            merged_rows[ext] = row
+
+    all_rows = sorted(
+        merged_rows.values(),
+        key=lambda r: str(r.get("assigned_at") or ""),
+        reverse=True,
+    )
+    total = len(all_rows)
+    page_rows = all_rows[offset: offset + limit]
+    items = [format_my_lead_row(row) for row in page_rows]
     total_pages = max(1, (total + limit - 1) // limit) if total else 1
     return {
         "items": items,
@@ -241,6 +405,155 @@ def list_my_leads(
         "page": page,
         "limit": limit,
         "totalPages": total_pages,
+    }
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        raw = str(value).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def period_bounds(period: str) -> tuple[datetime | None, datetime | None]:
+    """Return UTC start/end for dashboard period filters."""
+    now = datetime.now(timezone.utc)
+    key = (period or "month").strip().lower().replace("-", "_")
+    if key == "all":
+        return None, None
+    if key == "day":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return start, now
+    if key == "month":
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return start, now
+    if key == "quarter":
+        quarter_start = ((now.month - 1) // 3) * 3 + 1
+        start = now.replace(month=quarter_start, day=1, hour=0, minute=0, second=0, microsecond=0)
+        return start, now
+    if key in {"half_year", "bi_annually", "biannually"}:
+        start_month = 1 if now.month <= 6 else 7
+        start = now.replace(month=start_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+        return start, now
+    if key == "year":
+        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        return start, now
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return start, now
+
+
+def _dt_in_range(dt: datetime | None, start: datetime | None, end: datetime | None) -> bool:
+    if dt is None:
+        return False
+    if start and dt < start:
+        return False
+    if end and dt > end:
+        return False
+    return True
+
+
+def _lead_bucket_stats(
+    rows: list[dict[str, Any]],
+    start: datetime | None,
+    end: datetime | None,
+) -> dict[str, Any]:
+    if start is None and end is None:
+        filtered = rows
+    else:
+        filtered = [
+            row for row in rows
+            if _dt_in_range(_parse_dt(str(row.get("assigned_at") or "")), start, end)
+        ]
+    total = len(filtered)
+    completed = sum(
+        1 for row in filtered
+        if str(row.get("status") or "") == STATUS_PRESALES_COMPLETED
+    )
+    pending = total - completed
+    achievement_pct = round((completed / total) * 100, 1) if total else 0.0
+    return {
+        "total": total,
+        "pending": pending,
+        "completed": completed,
+        "achievement_pct": achievement_pct,
+    }
+
+
+def _all_assignments_for_staff(
+    *,
+    staff_user_id: str,
+    staff_role: str,
+    source: str,
+    staff_email: str | None = None,
+) -> list[dict[str, Any]]:
+    col = _staff_column_for_role(staff_role)
+    result = (
+        _client()
+        .table("lead_assignments")
+        .select("*")
+        .eq("source", source)
+        .eq(col, staff_user_id)
+        .execute()
+    )
+    merged: dict[str, dict[str, Any]] = {
+        str(row.get("external_id")): row for row in (result.data or [])
+    }
+    for row in _list_tatva_assignments_for_email(
+        staff_email=staff_email or "",
+        staff_role=staff_role,
+        source=source,
+        status=None,
+    ):
+        ext = str(row.get("external_id") or "")
+        if ext and ext not in merged:
+            merged[ext] = row
+    return list(merged.values())
+
+
+def my_leads_dashboard(
+    *,
+    staff_user_id: str,
+    staff_role: str,
+    staff_email: str | None = None,
+    period: str = "month",
+) -> dict[str, Any]:
+    start, end = period_bounds(period)
+    user_rows = _all_assignments_for_staff(
+        staff_user_id=staff_user_id,
+        staff_role=staff_role,
+        source=SOURCE_TATVA_PRESALES,
+        staff_email=staff_email,
+    )
+    vendor_rows = _all_assignments_for_staff(
+        staff_user_id=staff_user_id,
+        staff_role=staff_role,
+        source=SOURCE_TATVA_VENDOR,
+        staff_email=staff_email,
+    )
+    user_stats = _lead_bucket_stats(user_rows, start, end)
+    vendor_stats = _lead_bucket_stats(vendor_rows, start, end)
+    overall_total = user_stats["total"] + vendor_stats["total"]
+    overall_completed = user_stats["completed"] + vendor_stats["completed"]
+    overall_pending = user_stats["pending"] + vendor_stats["pending"]
+    return {
+        "period": period,
+        "period_start": start.isoformat() if start else None,
+        "period_end": end.isoformat() if end else None,
+        "user_leads": user_stats,
+        "vendor_leads": vendor_stats,
+        "overall": {
+            "total": overall_total,
+            "pending": overall_pending,
+            "completed": overall_completed,
+            "achievement_pct": round((overall_completed / overall_total) * 100, 1) if overall_total else 0.0,
+        },
+        "generated_at": _now_iso(),
     }
 
 
@@ -298,22 +611,55 @@ def update_lead_notes(
     staff_role: str,
     source: str,
     notes: str,
+    author_id: str | None = None,
+    author_name: str | None = None,
+    staff_email: str | None = None,
 ) -> dict[str, Any]:
+    text = (notes or "").strip()
+    if not text:
+        raise ValueError("Comment cannot be empty")
+
     col = _staff_column_for_role(staff_role)
     now = _now_iso()
+    current = get_assignment_for_staff(
+        external_id=external_id,
+        staff_user_id=staff_user_id,
+        staff_role=staff_role,
+        source=source,
+        staff_email=staff_email,
+    )
+    if not current:
+        raise RuntimeError("Lead not found or not assigned to you")
+
+    assignee_id = current.get(col)
+    log = comment_log_from_assignment(current)
+    log.append({
+        "text": text,
+        "created_at": now,
+        "author_id": author_id,
+        "author_name": (author_name or "").strip() or None,
+    })
+
+    snap = current.get("snapshot") if isinstance(current.get("snapshot"), dict) else {}
+    update: dict[str, Any] = {
+        "notes": text,
+        "snapshot": _snapshot_with_comment_log(snap, log),
+        "updated_at": now,
+    }
     result = (
         _client()
         .table("lead_assignments")
-        .update({"notes": notes, "updated_at": now})
+        .update(update)
         .eq("source", source)
         .eq("external_id", external_id)
-        .eq(col, staff_user_id)
+        .eq(col, assignee_id)
+        .select("*")
         .execute()
     )
     data = (result.data or [None])[0]
     if not data:
-        raise RuntimeError("Lead not found or not assigned to you")
-    return data
+        data = {**current, **update}
+    return format_my_lead_row(data)
 
 
 def normalize_phone(phone: str) -> str:
@@ -379,9 +725,6 @@ def enquiry_matches_assigned_phones(
     return bool(enquiry_phone_keys(enquiry) & assigned_phones)
 
 
-TATVA_EMPLOYEE_PREFIX = "tatva:"
-
-
 def _tatva_assignee_from_snapshot(assignment: dict[str, Any]) -> tuple[str | None, str | None]:
     snap = assignment.get("snapshot") or {}
     te = snap.get("tatva_employee") if isinstance(snap, dict) else None
@@ -423,6 +766,76 @@ def assign_tatva_employee_lead(
     )
 
 
+def assign_presales_vendor(
+    *,
+    external_id: str,
+    vendor_id: str,
+    vendor_name: str = "",
+    vendor_company: str = "",
+    vendor_phone: str = "",
+    snapshot: dict[str, Any],
+    source: str = SOURCE_TATVA_PRESALES_VENDOR,
+) -> dict[str, Any]:
+    """Link an approved Tatva vendor to a presales lead."""
+    full_snapshot = {
+        **snapshot,
+        "tatva_vendor": {
+            "id": vendor_id,
+            "name": vendor_name,
+            "company": vendor_company,
+            "phone": vendor_phone,
+        },
+    }
+    now = _now_iso()
+    row: dict[str, Any] = {
+        "source": source,
+        "external_id": external_id,
+        "status": STATUS_ASSIGNED,
+        "snapshot": full_snapshot,
+        "assigned_at": now,
+        "updated_at": now,
+    }
+    result = (
+        _client()
+        .table("lead_assignments")
+        .upsert(row, on_conflict="source,external_id")
+        .execute()
+    )
+    data = (result.data or [None])[0]
+    if not data:
+        raise RuntimeError("Failed to assign vendor")
+    return data
+
+
+def _vendor_from_snapshot(assignment: dict[str, Any]) -> dict[str, str]:
+    snap = assignment.get("snapshot") or {}
+    tv = snap.get("tatva_vendor") if isinstance(snap, dict) else None
+    if not isinstance(tv, dict):
+        return {}
+    return {
+        "id": str(tv.get("id") or "").strip(),
+        "name": str(tv.get("name") or "").strip(),
+        "company": str(tv.get("company") or "").strip(),
+        "phone": str(tv.get("phone") or "").strip(),
+    }
+
+
+def _vendor_assignment_meta(assignment: dict[str, Any]) -> dict[str, Any]:
+    vendor = _vendor_from_snapshot(assignment)
+    name = vendor.get("name") or vendor.get("company") or ""
+    if vendor.get("name") and vendor.get("company") and vendor["name"] != vendor["company"]:
+        display = f"{vendor['name']} ({vendor['company']})"
+    else:
+        display = name
+    return {
+        "status": assignment.get("status") or STATUS_UNASSIGNED,
+        "vendor_id": vendor.get("id") or None,
+        "vendor_name": display or None,
+        "assigned_at": assignment.get("assigned_at"),
+        "notes": assignment.get("notes"),
+    }
+
+
 def _assignment_meta(
     assignment: dict[str, Any],
     users_by_id: dict[str, dict[str, Any]],
@@ -445,6 +858,7 @@ def _assignment_meta(
         "assignee_name": assignee_name,
         "assignee_email": assignee_email,
         "assigned_at": assignment.get("assigned_at"),
+        "presales_completed_at": assignment.get("presales_completed_at"),
         "notes": assignment.get("notes"),
     }
 
@@ -455,14 +869,20 @@ def enrich_presales_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return []
     ids = [str(i.get("_id") or "") for i in items if i.get("_id")]
     assignments = get_assignments_by_external_ids(ids)
+    vendor_assignments = get_assignments_by_external_ids(
+        ids,
+        source=SOURCE_TATVA_PRESALES_VENDOR,
+    )
     users_by_id = {u["id"]: u for u in list_crm_users(active_only=True)}
     enriched: list[dict[str, Any]] = []
     for item in items:
         ext_id = str(item.get("_id") or "")
         assignment = assignments.get(ext_id) or {}
+        vendor_assignment = vendor_assignments.get(ext_id) or {}
         enriched.append({
             **item,
             "assignment": _assignment_meta(assignment, users_by_id),
+            "vendor_assignment": _vendor_assignment_meta(vendor_assignment),
         })
     return enriched
 

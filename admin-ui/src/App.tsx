@@ -11,6 +11,7 @@ import VendorLeads from './pages/VendorLeads'
 import Vendors from './pages/Vendors'
 import MyLeads from './pages/MyLeads'
 import MyProjects from './pages/MyProjects'
+import TeamDashboard from './pages/TeamDashboard'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated() ? <>{children}</> : <Navigate to="/krsna" replace />
@@ -19,12 +20,19 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 function HomeRedirect() {
   if (isPresalesUser()) {
-    return <Navigate to="my-leads" replace />
+    return <Navigate to="dashboard" replace />
   }
   if (isRmUser()) {
-    return <Navigate to="my-leads" replace />
+    return <Navigate to="dashboard" replace />
   }
   return <Navigate to="dashboard" replace />
+}
+
+function DashboardRoute() {
+  if (isPresalesUser() || isRmUser()) {
+    return <TeamDashboard />
+  }
+  return <Dashboard />
 }
 
 function AdminOnly({ children }: { children: React.ReactNode }) {
@@ -63,7 +71,7 @@ export default function App() {
                 <Route index element={<HomeRedirect />} />
                 <Route path="my-leads" element={<MyLeads />} />
                 <Route path="my-projects" element={<MyProjects />} />
-                <Route path="dashboard" element={<AdminOnly><Dashboard /></AdminOnly>} />
+                <Route path="dashboard" element={<DashboardRoute />} />
                 <Route path="sessions" element={<Navigate to="/krsna/dashboard" replace />} />
                 <Route path="sessions/:id" element={<Navigate to="/krsna/dashboard" replace />} />
                 <Route path="enquiries" element={<EnquiriesRedirect />} />

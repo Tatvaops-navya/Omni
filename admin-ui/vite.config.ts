@@ -13,7 +13,9 @@ export default defineConfig(({ mode }) => {
   ).replace(/\/$/, '')
   const tatvaApiBase = rootEnv.VITE_TATVA_API_BASE_URL || '/tatva-api'
   const omnichannelApi = (
-    rootEnv.OMNICHANNEL_API_URL || rootEnv.VITE_API_URL || DEFAULT_OMNICHANNEL_API
+    rootEnv.OMNICHANNEL_API_URL
+    || rootEnv.VITE_API_URL
+    || (mode === 'development' ? 'http://127.0.0.1:8000' : DEFAULT_OMNICHANNEL_API)
   ).replace(/\/$/, '')
 
   return {
