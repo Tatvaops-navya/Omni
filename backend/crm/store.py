@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -156,7 +157,13 @@ def assign_presales_lead(
 
 
 TEAM_COMMENT_LOG_KEY = "__team_comment_log"
+CUSTOM_PROGRESS_STAGES_KEY = "__custom_progress_stages"
 TATVA_EMPLOYEE_PREFIX = "tatva:"
+VALID_PROGRESS_ANCHORS = frozenset({
+    STATUS_UNASSIGNED,
+    STATUS_ASSIGNED,
+    STATUS_IN_PROGRESS,
+})
 
 
 def comment_log_from_assignment(assignment: dict[str, Any]) -> list[dict[str, Any]]:
@@ -198,9 +205,259 @@ def _snapshot_with_comment_log(snapshot: dict[str, Any], log: list[dict[str, Any
     return merged
 
 
+def progress_stages_from_assignment(assignment: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return custom progress stages stored on a lead assignment."""
+    snap = assignment.get("snapshot") if isinstance(assignment.get("snapshot"), dict) else {}
+    stored = snap.get(CUSTOM_PROGRESS_STAGES_KEY)
+    if not isinstance(stored, list):
+        return []
+    raw_entries = [e for e in stored if isinstance(e, dict)]
+    known_ids = frozenset(
+        str(entry.get("id") or "").strip()
+        for entry in raw_entries
+        if str(entry.get("id") or "").strip()
+    )
+    stages: list[dict[str, Any]] = []
+    for entry in raw_entries:
+        normalized = _normalize_progress_stage(entry, known_ids)
+        if normalized["id"] and normalized["title"]:
+            stages.append(normalized)
+    stages.sort(key=lambda s: str(s.get("created_at") or ""))
+    return stages
+
+
+def _normalize_progress_stage(
+    entry: dict[str, Any],
+    known_stage_ids: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    raw_anchor = str(entry.get("insert_after") or STATUS_ASSIGNED).strip()
+    lowered = raw_anchor.lower()
+    if lowered in VALID_PROGRESS_ANCHORS:
+        insert_after = lowered
+    elif known_stage_ids and raw_anchor in known_stage_ids:
+        insert_after = raw_anchor
+    else:
+        insert_after = STATUS_ASSIGNED
+    title = str(entry.get("title") or "").strip()
+    description = str(entry.get("description") or "").strip()
+    return {
+        "id": str(entry.get("id") or "").strip(),
+        "title": title,
+        "description": description or None,
+        "insert_after": insert_after,
+        "completed_at": entry.get("completed_at"),
+        "created_at": entry.get("created_at"),
+        "created_by_name": entry.get("created_by_name"),
+    }
+
+
+def _snapshot_with_progress_stages(
+    snapshot: dict[str, Any],
+    stages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    merged = dict(snapshot)
+    merged[CUSTOM_PROGRESS_STAGES_KEY] = stages
+    return merged
+
+
+def _merge_assignment_snapshot(
+    current: dict[str, Any],
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    snap = current.get("snapshot") if isinstance(current.get("snapshot"), dict) else {}
+    merged = {**snap, **updates}
+    log = comment_log_from_assignment(current)
+    if log:
+        merged[TEAM_COMMENT_LOG_KEY] = log
+    stages = progress_stages_from_assignment(current)
+    if stages:
+        merged[CUSTOM_PROGRESS_STAGES_KEY] = stages
+    return merged
+
+
+def get_or_create_assignment_for_progress(
+    *,
+    external_id: str,
+    source: str,
+    staff_user_id: str | None = None,
+    staff_role: str | None = None,
+    staff_email: str | None = None,
+) -> dict[str, Any]:
+    """Find or create a lead assignment row used for progress tracking."""
+    ext_id = (external_id or "").strip()
+    if not ext_id:
+        raise ValueError("Missing lead id")
+
+    if staff_user_id and staff_role:
+        current = get_assignment_for_staff(
+            external_id=ext_id,
+            staff_user_id=staff_user_id,
+            staff_role=staff_role,
+            source=source,
+            staff_email=staff_email,
+        )
+        if current:
+            return current
+
+    existing = get_assignments_by_external_ids([ext_id], source=source).get(ext_id)
+    if existing:
+        return existing
+
+    if not crm_available():
+        raise RuntimeError("CRM database not configured")
+
+    now = _now_iso()
+    row: dict[str, Any] = {
+        "source": source,
+        "external_id": ext_id,
+        "status": STATUS_ASSIGNED,
+        "snapshot": {},
+        "assigned_at": now,
+        "updated_at": now,
+    }
+    if staff_user_id and staff_role:
+        row[_staff_column_for_role(staff_role)] = staff_user_id
+
+    result = (
+        _client()
+        .table("lead_assignments")
+        .upsert(row, on_conflict="source,external_id")
+        .select("*")
+        .execute()
+    )
+    data = (result.data or [None])[0]
+    if not data:
+        raise RuntimeError("Failed to initialize lead progress")
+    return data
+
+
+def _update_assignment_snapshot(
+    *,
+    external_id: str,
+    source: str,
+    snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    now = _now_iso()
+    update = {"snapshot": snapshot, "updated_at": now}
+    result = (
+        _client()
+        .table("lead_assignments")
+        .update(update)
+        .eq("source", source)
+        .eq("external_id", external_id)
+        .select("*")
+        .execute()
+    )
+    data = (result.data or [None])[0]
+    if not data:
+        raise RuntimeError("Lead assignment not found")
+    return format_my_lead_row(data)
+
+
+def add_custom_progress_stage(
+    *,
+    external_id: str,
+    source: str,
+    title: str,
+    description: str | None = None,
+    insert_after: str = STATUS_ASSIGNED,
+    author_name: str | None = None,
+    staff_user_id: str | None = None,
+    staff_role: str | None = None,
+    staff_email: str | None = None,
+) -> dict[str, Any]:
+    stage_title = (title or "").strip()
+    if not stage_title:
+        raise ValueError("Stage title is required")
+
+    anchor_raw = (insert_after or STATUS_ASSIGNED).strip()
+    anchor_lower = anchor_raw.lower()
+
+    current = get_or_create_assignment_for_progress(
+        external_id=external_id,
+        source=source,
+        staff_user_id=staff_user_id,
+        staff_role=staff_role,
+        staff_email=staff_email,
+    )
+    snap = current.get("snapshot") if isinstance(current.get("snapshot"), dict) else {}
+    stages = progress_stages_from_assignment(current)
+    known_ids = {str(s.get("id") or "") for s in stages if s.get("id")}
+
+    if anchor_lower in VALID_PROGRESS_ANCHORS:
+        anchor = anchor_lower
+    elif anchor_raw in known_ids:
+        anchor = anchor_raw
+    else:
+        raise ValueError("Invalid insert position")
+    now = _now_iso()
+    stages.append({
+        "id": str(uuid.uuid4()),
+        "title": stage_title,
+        "description": (description or "").strip() or None,
+        "insert_after": anchor,
+        "completed_at": None,
+        "created_at": now,
+        "created_by_name": (author_name or "").strip() or None,
+    })
+    next_snapshot = _snapshot_with_progress_stages(snap, stages)
+    log = comment_log_from_assignment(current)
+    if log:
+        next_snapshot = _snapshot_with_comment_log(next_snapshot, log)
+    return _update_assignment_snapshot(
+        external_id=external_id,
+        source=source,
+        snapshot=next_snapshot,
+    )
+
+
+def complete_custom_progress_stage(
+    *,
+    external_id: str,
+    source: str,
+    stage_id: str,
+    staff_user_id: str | None = None,
+    staff_role: str | None = None,
+    staff_email: str | None = None,
+) -> dict[str, Any]:
+    stage_key = (stage_id or "").strip()
+    if not stage_key:
+        raise ValueError("Missing stage id")
+
+    current = get_or_create_assignment_for_progress(
+        external_id=external_id,
+        source=source,
+        staff_user_id=staff_user_id,
+        staff_role=staff_role,
+        staff_email=staff_email,
+    )
+    snap = current.get("snapshot") if isinstance(current.get("snapshot"), dict) else {}
+    stages = progress_stages_from_assignment(current)
+    found = False
+    now = _now_iso()
+    for stage in stages:
+        if stage.get("id") == stage_key:
+            stage["completed_at"] = now
+            found = True
+            break
+    if not found:
+        raise ValueError("Stage not found")
+
+    next_snapshot = _snapshot_with_progress_stages(snap, stages)
+    log = comment_log_from_assignment(current)
+    if log:
+        next_snapshot = _snapshot_with_comment_log(next_snapshot, log)
+    return _update_assignment_snapshot(
+        external_id=external_id,
+        source=source,
+        snapshot=next_snapshot,
+    )
+
+
 def format_my_lead_row(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out["comment_log"] = comment_log_from_assignment(row)
+    out["custom_progress_stages"] = progress_stages_from_assignment(row)
     return out
 
 
@@ -833,6 +1090,8 @@ def _vendor_assignment_meta(assignment: dict[str, Any]) -> dict[str, Any]:
         "vendor_name": display or None,
         "assigned_at": assignment.get("assigned_at"),
         "notes": assignment.get("notes"),
+        "comment_log": comment_log_from_assignment(assignment),
+        "custom_progress_stages": progress_stages_from_assignment(assignment),
     }
 
 
@@ -860,6 +1119,8 @@ def _assignment_meta(
         "assigned_at": assignment.get("assigned_at"),
         "presales_completed_at": assignment.get("presales_completed_at"),
         "notes": assignment.get("notes"),
+        "comment_log": comment_log_from_assignment(assignment),
+        "custom_progress_stages": progress_stages_from_assignment(assignment),
     }
 
 

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, resolveMeetSlotId } from '../api/client'
+import {
+  api,
+  resolveMeetSlotId,
+  TATVA_MY_USER_LEADS_POC_ID,
+  TATVA_MY_VENDOR_LEADS_POC_ID,
+  type PresalesItem,
+  type VendorLeadItem,
+} from '../api/client'
 import type { MeetLinkRecord, MeetSlot } from '../types/meet'
 import clsx from 'clsx'
 import { format } from 'date-fns'
@@ -7,6 +14,9 @@ import { ExternalLink, MessageSquare } from 'lucide-react'
 import toast from 'react-hot-toast'
 import CommentLogModal, { type LeadCommentLogEntry } from '../components/CommentLogModal'
 import LeadProgressButton from '../components/LeadProgressButton'
+import { extractCommentLog } from '../utils/commentLog'
+import { extractCustomProgressStages } from '../utils/customProgressStages'
+import type { CustomProgressStage } from '../types/leadProgress'
 
 type LeadTab = 'user' | 'vendor' | 'meet'
 
@@ -18,6 +28,7 @@ type MyLeadRow = {
   presales_completed_at?: string
   notes?: string
   comment_log?: LeadCommentLogEntry[]
+  custom_progress_stages?: CustomProgressStage[]
 }
 
 function snap(row: MyLeadRow, ...keys: string[]): string {
@@ -64,11 +75,70 @@ function meetCustomerName(record: MeetLinkRecord): string {
   return user.fullName || user.userName || user.phoneNumber || '—'
 }
 
+function vendorLeadToMyLeadRow(lead: VendorLeadItem): MyLeadRow {
+  const externalId = String(lead._id || lead.id || '').trim()
+  const assignment = lead.assignment as Record<string, unknown> | undefined
+  const commentLog = extractCommentLog(assignment)
+  const notes = String(lead.assignment?.notes || '').trim()
+  return {
+    external_id: externalId,
+    status: String(lead.assignment?.status || lead.status || lead.leadStatus || 'assigned'),
+    snapshot: { ...lead },
+    assigned_at: String(
+      lead.assignment?.assigned_at || lead.createdAt || lead.created_at || lead.updatedAt || '',
+    ),
+    presales_completed_at: lead.assignment?.presales_completed_at,
+    notes: notes || undefined,
+    comment_log: commentLog,
+    custom_progress_stages: extractCustomProgressStages(assignment),
+  }
+}
+
+function presalesLeadToMyLeadRow(lead: PresalesItem): MyLeadRow {
+  const externalId = String(lead._id || '').trim()
+  const assignment = lead.assignment as Record<string, unknown> | undefined
+  const commentLog = extractCommentLog(assignment)
+  const notes = String(lead.assignment?.notes || '').trim()
+  return {
+    external_id: externalId,
+    status: String(assignment?.status || 'assigned'),
+    snapshot: { ...lead },
+    assigned_at: String(
+      assignment?.assigned_at || lead.createdAt || lead.updatedAt || '',
+    ),
+    presales_completed_at: assignment?.presales_completed_at as string | undefined,
+    notes: notes || undefined,
+    comment_log: commentLog,
+    custom_progress_stages: extractCustomProgressStages(assignment),
+  }
+}
+
+function vendorLeadApprovalStatus(row: MyLeadRow): string {
+  const snapshot = row.snapshot || {}
+  const value = String(
+    snapshot.status || snapshot.leadStatus || snapshot.approvalStatus || snapshot.vendorStatus || row.status || 'pending',
+  ).trim().toLowerCase()
+  return value || 'pending'
+}
+
+function canReviewVendorLead(status: string): boolean {
+  return status !== 'approved' && status !== 'rejected'
+}
+
+function leadActionButtonClass(tone: 'approve' | 'reject' | 'complete'): string {
+  const base = 'text-xs font-medium rounded-md px-2 py-1 transition-colors disabled:opacity-50 disabled:pointer-events-none'
+  if (tone === 'reject') {
+    return `${base} text-red-400 hover:text-red-300 hover:bg-red-500/10`
+  }
+  return `${base} text-teal-400 hover:text-teal-300 hover:bg-teal-500/10`
+}
+
 export default function MyLeads() {
   const [tab, setTab] = useState<LeadTab>('user')
   const [items, setItems] = useState<MyLeadRow[]>([])
   const [meetRecords, setMeetRecords] = useState<MeetLinkRecord[]>([])
   const [busySlotId, setBusySlotId] = useState<string | null>(null)
+  const [busyVendorLeadId, setBusyVendorLeadId] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -94,6 +164,14 @@ export default function MyLeads() {
     ))
   }, [])
 
+  const handleProgressStagesChange = useCallback((externalId: string, stages: CustomProgressStage[]) => {
+    setItems(prev => prev.map(row => (
+      row.external_id === externalId
+        ? { ...row, custom_progress_stages: stages }
+        : row
+    )))
+  }, [])
+
   const leadDisplayName = useCallback((row: MyLeadRow) => {
     if (tab === 'vendor') {
       return snap(row, 'name', 'fullName', 'contactName', 'vendorName')
@@ -114,10 +192,24 @@ export default function MyLeads() {
         setTotal(data.pagination?.total ?? (data.data || []).length)
         setTotalPages(data.pagination?.totalPages ?? 1)
         setItems([])
+      } else if (tab === 'vendor') {
+        const data = await api.vendorLeadsByPoc(TATVA_MY_VENDOR_LEADS_POC_ID, { page, limit: 20 })
+        if (!data.success && data.message) {
+          setError(data.message)
+        }
+        const rows = (data.data?.items || []).map(vendorLeadToMyLeadRow)
+        setItems(rows)
+        setTotal(data.data?.total ?? rows.length)
+        setTotalPages(data.data?.totalPages ?? 1)
+        setMeetRecords([])
       } else {
-        const data = await api.myLeads({ page, limit: 20, lead_type: tab })
-        setItems(data.data?.items || [])
-        setTotal(data.data?.total ?? 0)
+        const data = await api.presalesByPoc(TATVA_MY_USER_LEADS_POC_ID, { page, limit: 20 })
+        if (!data.success && data.message) {
+          setError(data.message)
+        }
+        const rows = (data.data?.items || []).map(presalesLeadToMyLeadRow)
+        setItems(rows)
+        setTotal(data.data?.total ?? rows.length)
         setTotalPages(data.data?.totalPages ?? 1)
         setMeetRecords([])
       }
@@ -147,6 +239,22 @@ export default function MyLeads() {
       load()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not update lead')
+    }
+  }
+
+  const handleVendorReview = async (externalId: string, action: 'approved' | 'rejected') => {
+    if (action === 'rejected' && !window.confirm('Reject this vendor lead?')) {
+      return
+    }
+    setBusyVendorLeadId(externalId)
+    try {
+      await api.updateVendorLeadStatus(externalId, action)
+      toast.success(action === 'approved' ? 'Vendor lead approved' : 'Vendor lead rejected')
+      load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update vendor lead')
+    } finally {
+      setBusyVendorLeadId(null)
     }
   }
 
@@ -367,12 +475,16 @@ export default function MyLeads() {
                       <td className="px-4 py-3">
                         <LeadProgressButton
                           leadName={leadDisplayName(row)}
+                          externalId={row.external_id}
+                          leadType="user"
                           status={row.status}
                           commentCount={row.comment_log?.length ?? 0}
                           commentLog={row.comment_log || []}
+                          customStages={row.custom_progress_stages || []}
                           assignedAt={row.assigned_at}
                           completedAt={row.presales_completed_at}
                           createdAt={row.assigned_at}
+                          onStagesChange={stages => handleProgressStagesChange(row.external_id, stages)}
                         />
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.assigned_at)}</td>
@@ -439,7 +551,11 @@ export default function MyLeads() {
                     </td>
                   </tr>
                 ) : (
-                  items.map(row => (
+                  items.map(row => {
+                    const approvalStatus = vendorLeadApprovalStatus(row)
+                    const canReview = canReviewVendorLead(approvalStatus)
+                    const busy = busyVendorLeadId === row.external_id
+                    return (
                     <tr key={row.external_id} className="border-b border-slate-700/30 hover:bg-navy-700/30">
                       <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
                         {snap(row, 'name', 'fullName', 'contactName', 'vendorName')}
@@ -462,20 +578,24 @@ export default function MyLeads() {
                       <td className="px-4 py-3">
                         <LeadProgressButton
                           leadName={leadDisplayName(row)}
+                          externalId={row.external_id}
+                          leadType="vendor"
                           status={row.status}
                           commentCount={row.comment_log?.length ?? 0}
                           commentLog={row.comment_log || []}
+                          customStages={row.custom_progress_stages || []}
                           assignedAt={row.assigned_at}
                           completedAt={row.presales_completed_at}
                           createdAt={row.assigned_at}
+                          onStagesChange={stages => handleProgressStagesChange(row.external_id, stages)}
                         />
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.assigned_at)}</td>
-                      <td className="px-4 py-3 align-top">
-                        <div className="flex flex-col gap-2">
+                      <td className="px-4 py-3 align-middle">
+                        <div className="flex items-center gap-2.5">
                           <button
                             type="button"
-                            className="btn-ghost text-slate-400 p-1 self-start relative"
+                            className="relative h-8 w-8 shrink-0 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
                             title="Comment log"
                             onClick={() => setLogModal({
                               externalId: row.external_id,
@@ -491,19 +611,43 @@ export default function MyLeads() {
                               </span>
                             )}
                           </button>
-                          {row.status !== 'presales_completed' && (
-                            <button
-                              type="button"
-                              className="btn-ghost text-teal-400 text-xs"
-                              onClick={() => handleComplete(row.external_id)}
-                            >
-                              Mark complete
-                            </button>
-                          )}
+                          <div className="flex flex-col gap-2">
+                            {canReview && (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  className={leadActionButtonClass('approve')}
+                                  disabled={busy}
+                                  onClick={() => handleVendorReview(row.external_id, 'approved')}
+                                >
+                                  Approve
+                                </button>
+                                <span className="h-3.5 w-px bg-slate-600/80 shrink-0" aria-hidden="true" />
+                                <button
+                                  type="button"
+                                  className={leadActionButtonClass('reject')}
+                                  disabled={busy}
+                                  onClick={() => handleVendorReview(row.external_id, 'rejected')}
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                            {row.status !== 'presales_completed' && (
+                              <button
+                                type="button"
+                                className={leadActionButtonClass('complete')}
+                                onClick={() => handleComplete(row.external_id)}
+                              >
+                                Mark complete
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
-                  ))
+                    )
+                  })
                 )}
               </tbody>
             </table>

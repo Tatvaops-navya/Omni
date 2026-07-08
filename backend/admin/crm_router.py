@@ -59,6 +59,12 @@ class LeadNotesRequest(BaseModel):
     notes: str = Field(default="", max_length=2000)
 
 
+class AddProgressStageRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=500)
+    insert_after: str = Field(default="assigned", min_length=1, max_length=64)
+
+
 @router.post("/crm-login")
 async def crm_login(body: CrmLoginRequest):
     from backend.admin.auth import generate_session_token
@@ -413,6 +419,81 @@ async def update_my_lead_notes(
             notes=text,
             author_id=str(user_id),
             author_name=str(auth.get("name") or ""),
+            staff_email=str(auth.get("email") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"assignment": row}
+
+
+@router.post("/my-leads/{external_id}/progress-stages")
+async def add_my_lead_progress_stage(
+    external_id: str,
+    body: AddProgressStageRequest,
+    lead_type: str = Query("user", pattern="^(user|vendor)$"),
+    auth=Depends(require_auth),
+):
+    role = auth.get("role")
+    user_id = auth.get("user_id")
+    if role not in {"presales", "rm", "admin"}:
+        raise HTTPException(status_code=403, detail="Team access required")
+    if role != "admin" and not user_id:
+        raise HTTPException(status_code=403, detail="Team access required")
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+    source = (
+        crm_store.SOURCE_TATVA_VENDOR
+        if lead_type == "vendor"
+        else crm_store.SOURCE_TATVA_PRESALES
+    )
+    try:
+        row = crm_store.add_custom_progress_stage(
+            external_id=external_id,
+            source=source,
+            title=body.title,
+            description=body.description,
+            insert_after=body.insert_after,
+            author_name=str(auth.get("name") or ""),
+            staff_user_id=str(user_id) if user_id else None,
+            staff_role=str(role) if user_id else None,
+            staff_email=str(auth.get("email") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"assignment": row}
+
+
+@router.patch("/my-leads/{external_id}/progress-stages/{stage_id}/complete")
+async def complete_my_lead_progress_stage(
+    external_id: str,
+    stage_id: str,
+    lead_type: str = Query("user", pattern="^(user|vendor)$"),
+    auth=Depends(require_auth),
+):
+    role = auth.get("role")
+    user_id = auth.get("user_id")
+    if role not in {"presales", "rm", "admin"}:
+        raise HTTPException(status_code=403, detail="Team access required")
+    if role != "admin" and not user_id:
+        raise HTTPException(status_code=403, detail="Team access required")
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+    source = (
+        crm_store.SOURCE_TATVA_VENDOR
+        if lead_type == "vendor"
+        else crm_store.SOURCE_TATVA_PRESALES
+    )
+    try:
+        row = crm_store.complete_custom_progress_stage(
+            external_id=external_id,
+            source=source,
+            stage_id=stage_id,
+            staff_user_id=str(user_id) if user_id else None,
+            staff_role=str(role) if user_id else None,
             staff_email=str(auth.get("email") or ""),
         )
     except ValueError as exc:

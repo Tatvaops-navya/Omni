@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, CrmUser, VendorLeadItem } from '../api/client'
+import {
+  api,
+  TatvaEmployee,
+  tatvaEmployeeId,
+  tatvaEmployeeLabel,
+  VendorLeadItem,
+} from '../api/client'
 import { StaffCommentDisplay } from '../components/StaffCommentDisplay'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -58,28 +64,45 @@ function formatVendorServices(row: VendorLeadItem): string {
   return pick(row, 'service', 'serviceCategory', 'serviceType', 'category')
 }
 
+function vendorLeadPocId(row: VendorLeadItem): string {
+  const poc = row.poc
+  if (typeof poc === 'string' && poc.trim()) return poc.trim()
+  if (poc && typeof poc === 'object') {
+    return String(poc._id || poc.id || '').trim()
+  }
+  const assignment = row.assignment
+  const staffId = assignment?.staff_user_id || assignment?.presales_user_id || assignment?.rm_user_id || ''
+  if (staffId.startsWith('tatva:')) return staffId.slice('tatva:'.length)
+  return staffId
+}
+
+function vendorLeadPocName(row: VendorLeadItem): string {
+  const poc = row.poc
+  if (poc && typeof poc === 'object') {
+    const name = String(poc.fullName || poc.name || '').trim()
+    if (name) return name
+  }
+  return String(row.assignment?.assignee_name || '').trim() || '—'
+}
+
 export default function VendorLeads() {
   const [items, setItems] = useState<VendorLeadItem[]>([])
-  const [team, setTeam] = useState<CrmUser[]>([])
+  const [employees, setEmployees] = useState<TatvaEmployee[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [limit] = useState(20)
   const [statusFilter, setStatusFilter] = useState('pending')
-  const [crmConfigured, setCrmConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [assigningId, setAssigningId] = useState<string | null>(null)
 
-  const loadTeam = useCallback(async () => {
+  const loadEmployees = useCallback(async () => {
     try {
-      const [presales, rm] = await Promise.all([
-        api.crmUsers('presales'),
-        api.crmUsers('rm'),
-      ])
-      setTeam([...(presales.users || []), ...(rm.users || [])])
+      const data = await api.tatvaEmployees('sales', { page: 1, limit: 50 })
+      setEmployees(data.employees || [])
     } catch {
-      setTeam([])
+      setEmployees([])
     }
   }, [])
 
@@ -98,7 +121,6 @@ export default function VendorLeads() {
       setItems(data.data?.items || [])
       setTotal(data.data?.total ?? 0)
       setTotalPages(data.data?.totalPages ?? 1)
-      setCrmConfigured(!!data.crm_configured)
     } catch {
       setError('Failed to load vendor leads.')
       setItems([])
@@ -108,8 +130,8 @@ export default function VendorLeads() {
   }, [page, limit, statusFilter])
 
   useEffect(() => {
-    loadTeam()
-  }, [loadTeam])
+    loadEmployees()
+  }, [loadEmployees])
 
   useEffect(() => {
     setPage(1)
@@ -123,16 +145,13 @@ export default function VendorLeads() {
 
   const rowId = (row: VendorLeadItem) => String(row._id || row.id || '')
 
-  const handleAssign = async (row: VendorLeadItem, staffUserId: string) => {
-    const externalId = rowId(row)
-    if (!staffUserId || !externalId) return
-    setAssigningId(externalId)
+  const handleAssign = async (row: VendorLeadItem, pocId: string) => {
+    const vendorLeadId = rowId(row)
+    if (!pocId || !vendorLeadId) return
+    setAssigningId(vendorLeadId)
     try {
-      await api.assignVendorLead(externalId, {
-        staff_user_id: staffUserId,
-        snapshot: { ...row },
-      })
-      toast.success('Vendor lead assigned')
+      await api.assignVendorLeadPoc(vendorLeadId, pocId)
+      toast.success('Sales POC assigned')
       load()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Assignment failed')
@@ -147,8 +166,7 @@ export default function VendorLeads() {
         <div>
           <h1 className="text-xl font-semibold text-slate-200">Vendor Leads</h1>
           <p className="text-sm text-slate-500 mt-1">
-            {total} record{total !== 1 ? 's' : ''} from Tatva
-            {crmConfigured ? ' · assignment enabled' : ' · configure Supabase for assignment'}
+            {total} record{total !== 1 ? 's' : ''} from Tatva · sales assignment via Tatva POC
           </p>
         </div>
         <select
@@ -208,7 +226,7 @@ export default function VendorLeads() {
                   const created = pick(row, 'createdAt', 'created_at')
                   const rowKey = rowId(row) || `${phone}-${created}`
                   const assignment = row.assignment
-                  const currentAssignee = assignment?.staff_user_id || assignment?.presales_user_id || assignment?.rm_user_id || ''
+                  const currentPoc = vendorLeadPocId(row)
 
                   return (
                     <tr
@@ -227,25 +245,29 @@ export default function VendorLeads() {
                         <span className={vendorStatusBadge(leadStatus)}>{leadStatus}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                        {assignment?.assignee_name || '—'}
+                        {vendorLeadPocName(row)}
                       </td>
                       <td className="px-4 py-3 align-top">
                         <StaffCommentDisplay text={assignment?.notes} />
                       </td>
                       <td className="px-4 py-3">
-                        {crmConfigured && team.length > 0 ? (
+                        {employees.length > 0 ? (
                           <select
-                            className="input text-xs py-1.5 min-w-[120px]"
-                            value={currentAssignee}
+                            className="input text-xs py-1.5 min-w-[160px]"
+                            value={currentPoc}
                             disabled={assigningId === rowKey}
                             onChange={e => handleAssign(row, e.target.value)}
                           >
                             <option value="">Assign to...</option>
-                            {team.map(u => (
-                              <option key={u.id || ''} value={u.id || ''}>
-                                {u.name} ({u.role})
-                              </option>
-                            ))}
+                            {employees.map(emp => {
+                              const id = tatvaEmployeeId(emp)
+                              if (!id) return null
+                              return (
+                                <option key={id} value={id}>
+                                  {tatvaEmployeeLabel(emp)}
+                                </option>
+                              )
+                            })}
                           </select>
                         ) : (
                           <span className="text-xs text-slate-600">—</span>

@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/tatva-api/:path*",
-      "destination": "https://api.withtatva.ai/:path*"
+      "destination": "https://devopsapi.withtatva.ai/:path*"
     },
     {
       "source": "/admin/:path*",

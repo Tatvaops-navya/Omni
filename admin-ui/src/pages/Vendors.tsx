@@ -3,7 +3,7 @@ import { api, VendorLeadItem } from '../api/client'
 import { format } from 'date-fns'
 import { ExternalLink } from 'lucide-react'
 
-const TATVA_VENDOR_PROFILE_BASE = 'https://withtatva.ai/vendor'
+const TATVA_VENDOR_PROFILE_BASE = 'https://devops.withtatva.ai/vendor'
 
 function vendorProfileUrl(vendorId: string): string {
   return `${TATVA_VENDOR_PROFILE_BASE}/${encodeURIComponent(vendorId)}`
@@ -148,10 +148,10 @@ export default function Vendors() {
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{company}</td>
                       <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{phone}</td>
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{email}</td>
-                      <td className="px-4 py-3 text-slate-400 max-w-[160px] truncate" title={location}>
+                      <td className="px-4 py-3 text-slate-400 align-top min-w-[220px] whitespace-normal break-words">
                         {location}
                       </td>
-                      <td className="px-4 py-3 text-slate-400 max-w-[200px] truncate" title={service}>
+                      <td className="px-4 py-3 text-slate-400 align-top min-w-[200px] whitespace-normal break-words">
                         {service}
                       </td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">

@@ -5,6 +5,8 @@ import clsx from 'clsx'
 import { format } from 'date-fns'
 import { Video } from 'lucide-react'
 
+const COLUMN_COUNT = 13
+
 function formatDate(iso: string | undefined): string {
   if (!iso) return '—'
   try {
@@ -18,12 +20,19 @@ function displayName(user: TatvaUserItem): string {
   return user.fullName || user.userName || '—'
 }
 
+function UtmCell({ value }: { value: string | null | undefined }) {
+  if (value === null || value === undefined) {
+    return <span className="text-slate-500">null</span>
+  }
+  return <span className="text-slate-400">{value}</span>
+}
+
 export default function Users() {
   const [users, setUsers] = useState<TatvaUserItem[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
-  const [limit] = useState(10)
+  const [limit] = useState(20)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [meetUser, setMeetUser] = useState<TatvaUserItem | null>(null)
@@ -75,6 +84,9 @@ export default function Users() {
                 <th className="px-4 py-3 font-medium">Username</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
                 <th className="px-4 py-3 font-medium">Email</th>
+                <th className="px-4 py-3 font-medium">Source</th>
+                <th className="px-4 py-3 font-medium">Medium</th>
+                <th className="px-4 py-3 font-medium">Campaign</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Role</th>
                 <th className="px-4 py-3 font-medium">Flag</th>
@@ -86,13 +98,13 @@ export default function Users() {
             <tbody>
               {loading && users.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={COLUMN_COUNT} className="px-4 py-12 text-center text-slate-500">
                     Loading users...
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={COLUMN_COUNT} className="px-4 py-12 text-center text-slate-500">
                     No users found.
                   </td>
                 </tr>
@@ -113,6 +125,15 @@ export default function Users() {
                     </td>
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
                       {row.email || '—'}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <UtmCell value={row.utm_source} />
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <UtmCell value={row.utm_medium} />
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <UtmCell value={row.utm_campaign} />
                     </td>
                     <td className="px-4 py-3">
                       <span

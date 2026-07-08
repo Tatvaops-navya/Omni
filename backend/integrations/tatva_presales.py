@@ -169,6 +169,8 @@ async def fetch_presales_records(
     page: int = 1,
     limit: int = 20,
     flag: str | None = None,
+    utm_source: str | None = None,
+    utm_medium: str | None = None,
 ) -> dict[str, Any]:
     """GET presales list from Tatva admin API for Krsna admin panel."""
     settings = get_settings()
@@ -183,6 +185,10 @@ async def fetch_presales_records(
     params: dict[str, str | int] = {"page": max(1, page), "limit": max(1, min(limit, 100))}
     if flag and flag.strip().lower() in (PRESALES_FLAG_HIGH, PRESALES_FLAG_LOW):
         params["flag"] = flag.strip().lower()
+    if utm_source and utm_source.strip():
+        params["utm_source"] = utm_source.strip()
+    if utm_medium and utm_medium.strip():
+        params["utm_medium"] = utm_medium.strip()
 
     url = f"{base_url}{PRESALES_PATH}"
     try:

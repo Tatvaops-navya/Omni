@@ -186,12 +186,20 @@ async def get_presales(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     flag: Optional[str] = Query(None),
+    utm_source: Optional[str] = Query(None),
+    utm_medium: Optional[str] = Query(None),
     auth=Depends(require_admin),
 ):
     from backend.integrations.tatva_presales import fetch_presales_records
     from backend.crm import store as crm_store
 
-    result = await fetch_presales_records(page=page, limit=limit, flag=flag)
+    result = await fetch_presales_records(
+        page=page,
+        limit=limit,
+        flag=flag,
+        utm_source=utm_source,
+        utm_medium=utm_medium,
+    )
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     items = data.get("items") if isinstance(data.get("items"), list) else []
     if crm_store.crm_available() and items:
@@ -267,11 +275,18 @@ async def delete_presales(presales_id: str, auth=Depends(require_admin)):
 async def get_tatva_users(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
+    utm_source: Optional[str] = Query(None),
+    utm_medium: Optional[str] = Query(None),
     auth=Depends(require_admin),
 ):
     from backend.integrations.tatva_users import fetch_tatva_users
 
-    return await fetch_tatva_users(page=page, limit=limit)
+    return await fetch_tatva_users(
+        page=page,
+        limit=limit,
+        utm_source=utm_source,
+        utm_medium=utm_medium,
+    )
 
 
 @router.get("/meet-links")
@@ -296,9 +311,9 @@ async def confirm_meet_slot(slot_id: str, auth=Depends(require_admin)):
     )
 
 
-@router.patch("/meet-links/slots/{slot_id}/reschedule")
+@router.put("/meet-links/slots/{slot_id}/reschedule")
 async def reschedule_meet_slot(slot_id: str, auth=Depends(require_admin)):
-    """Placeholder until Tatva reschedule PUT/PATCH API is wired."""
+    """Placeholder until Tatva reschedule PUT API is wired."""
     raise HTTPException(
         status_code=501,
         detail="Reschedule meet slot API is not configured yet. Wire Tatva PUT endpoint when available.",

@@ -4,15 +4,18 @@ Create Twilio WhatsApp call-to-action templates for enquiry attachment links.
 
 Each template shows a short label in the body and a tappable button (no raw URL text).
 
+Each template shows a short label in the body and a tappable green button (no inline image preview).
+
   python scripts/create_attachment_cta_content.py
-  python scripts/create_attachment_cta_content.py --cdn-base https://d187u6mpwmtl08.cloudfront.net/
 
 Add the printed SIDs to .env / Render:
-  TATVA_ATTACHMENT_CDN_BASE_URL=https://d187u6mpwmtl08.cloudfront.net/
   TWILIO_CTA_VIEW_IMAGE_CONTENT_SID=HX...
   TWILIO_CTA_VIEW_PDF_CONTENT_SID=HX...
   TWILIO_CTA_VIEW_VIDEO_CONTENT_SID=HX...
   TWILIO_CTA_VIEW_FILE_CONTENT_SID=HX...
+
+Optional (Tatva CDN attachments only):
+  TATVA_ATTACHMENT_CDN_BASE_URL=https://d187u6mpwmtl08.cloudfront.net/
 """
 from __future__ import annotations
 
@@ -36,14 +39,14 @@ _KINDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def _create_template(*, cfg, cdn_base: str, kind: str, button_title: str) -> str:
-    base = cdn_base.rstrip("/") + "/"
+def _create_template(*, cfg, kind: str, button_title: str) -> str:
+    sample_url = "https://d187u6mpwmtl08.cloudfront.net/enquiries/sample/path/file.png"
     payload = {
         "friendly_name": f"tatvaops_attachment_{kind}_cta",
         "language": "en",
         "variables": {
             "1": "View image",
-            "2": "enquiries/sample/path/file.png",
+            "2": sample_url,
         },
         "types": {
             "twilio/call-to-action": {
@@ -52,7 +55,7 @@ def _create_template(*, cfg, cdn_base: str, kind: str, button_title: str) -> str
                     {
                         "type": "URL",
                         "title": button_title[:20],
-                        "url": base + "{{2}}",
+                        "url": "{{2}}",
                     }
                 ],
             }
@@ -87,7 +90,7 @@ def main() -> None:
     print(f"Using CDN base: {args.cdn_base.rstrip('/')}/")
     print()
     for kind, title, env_key in _KINDS:
-        sid = _create_template(cfg=cfg, cdn_base=args.cdn_base, kind=kind, button_title=title)
+        sid = _create_template(cfg=cfg, kind=kind, button_title=title)
         print(f"{env_key}={sid}")
     print()
     print(f"TATVA_ATTACHMENT_CDN_BASE_URL={args.cdn_base.rstrip('/')}/")

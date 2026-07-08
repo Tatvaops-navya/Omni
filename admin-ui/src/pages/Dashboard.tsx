@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import LeadAcquisitionDashboard from '../components/LeadAcquisitionDashboard'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import { MessageSquare, Mic, FileText, CheckCircle, Activity } from 'lucide-react'
 
@@ -73,6 +74,8 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+
+      <LeadAcquisitionDashboard />
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-const DEFAULT_TATVA_API = 'https://api.withtatva.ai'
+const DEFAULT_TATVA_API = 'https://devopsapi.withtatva.ai'
 const DEFAULT_OMNICHANNEL_API = 'https://omni-1-iltl.onrender.com'
 
 export default defineConfig(({ mode }) => {

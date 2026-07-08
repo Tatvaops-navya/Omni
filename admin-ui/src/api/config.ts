@@ -1,6 +1,6 @@
-/** Canonical Tatva API base — https://api.withtatva.ai */
+/** Canonical Tatva API base — https://devopsapi.withtatva.ai */
 export const TATVA_API_ORIGIN = (
-  import.meta.env.VITE_TATVA_API_ORIGIN || 'https://api.withtatva.ai'
+  import.meta.env.VITE_TATVA_API_ORIGIN || 'https://devopsapi.withtatva.ai'
 ).replace(/\/$/, '')
 
 /**

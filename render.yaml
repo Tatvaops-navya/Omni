@@ -69,7 +69,7 @@ services:
       - key: LOG_LEVEL
         value: INFO
       - key: TATVA_USERS_API_BASE_URL
-        value: https://api.withtatva.ai
+        value: https://devopsapi.withtatva.ai
       # Set to your Render URL after first deploy, e.g. https://aadhya-backend.onrender.com (no trailing slash)
       - key: BASE_URL
         sync: false

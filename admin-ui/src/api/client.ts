@@ -8,12 +8,18 @@ const BASE_URL = OMNICHANNEL_API_BASE
 
 export { OMNICHANNEL_API_BASE, TATVA_API_BASE, TATVA_API_ORIGIN } from './config'
 
+/** Tatva users list — https://api.withtatva.ai/users/api/users */
+export const TATVA_USERS_PATH = '/users/api/users'
 /** Tatva approved vendors — https://api.withtatva.ai/vendor/api/vendors */
 export const TATVA_VENDORS_PATH = '/vendor/api/vendors'
 /** Tatva employee projects — https://api.withtatva.ai/admin/api/admin/employees/{id}/projects */
 export const TATVA_MY_PROJECTS_EMPLOYEE_ID = '69ef0a0a11db8baeba77b711'
 export const TATVA_EMPLOYEE_PROJECTS_PATH =
   `/admin/api/admin/employees/${TATVA_MY_PROJECTS_EMPLOYEE_ID}/projects`
+/** My Leads vendor tab — GET /admin/api/admin/vendor-leads/poc/{pocId} */
+export const TATVA_MY_VENDOR_LEADS_POC_ID = '69e06fca730c39ce2e45a266'
+/** My Leads user tab — GET /admin/api/admin/presales/poc/{pocId} */
+export const TATVA_MY_USER_LEADS_POC_ID = '69ef09be11db8baeba77b6cc'
 
 let authToken: string | null = sessionStorage.getItem('aadhya_admin_token')
 
@@ -94,7 +100,28 @@ async function fetchAdmin(path: string, options: RequestInit = {}) {
     window.location.href = '/krsna'
     throw new Error('Unauthorized')
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({} as Record<string, unknown>))
+    let detail = ''
+    if (typeof body.detail === 'string') {
+      detail = body.detail
+    } else if (Array.isArray(body.detail) && body.detail[0] && typeof body.detail[0] === 'object') {
+      const first = body.detail[0] as { msg?: string }
+      detail = first.msg || ''
+    } else if (typeof body.message === 'string') {
+      detail = body.message
+    }
+    if (res.status === 404 && path.includes('/progress-stages')) {
+      throw new Error(
+        detail
+        || 'Progress stages API not found. Restart the backend (python -m backend) so the new route is loaded.',
+      )
+    }
+    if (res.status === 503) {
+      throw new Error(detail || 'CRM database not configured on the backend.')
+    }
+    throw new Error(detail || `HTTP ${res.status}`)
+  }
   return res.json()
 }
 
@@ -206,6 +233,21 @@ export type LeadAssignmentMeta = {
   assigned_at?: string | null
   presales_completed_at?: string | null
   notes?: string | null
+  comment_log?: Array<{
+    text: string
+    created_at?: string
+    author_name?: string | null
+    author_id?: string | null
+  }>
+  custom_progress_stages?: Array<{
+    id: string
+    title: string
+    description?: string | null
+    insert_after: string
+    completed_at?: string | null
+    created_at?: string
+    created_by_name?: string | null
+  }>
 }
 
 export type VendorAssignmentMeta = {
@@ -229,10 +271,16 @@ export type PresalesItem = {
   assignee?: string
   assigneeName?: string
   assignedTo?: string | { fullName?: string; name?: string; email?: string }
+  utm_source?: string
+  utm_medium?: string
+  utmSource?: string
+  utmMedium?: string
   createdAt?: string
   updatedAt?: string
   assignment?: LeadAssignmentMeta
   vendor_assignment?: VendorAssignmentMeta
+  poc?: string | { _id?: string; id?: string; fullName?: string; name?: string }
+  [key: string]: unknown
 }
 
 export type PresalesResponse = {
@@ -258,8 +306,19 @@ export type TatvaUserItem = {
   role?: string
   flag?: string
   isEmailVerified?: boolean
+  utm_source?: string | null
+  utm_medium?: string | null
+  utm_campaign?: string | null
+  utmSource?: string
+  utmMedium?: string
+  utmCampaign?: string
   createdAt?: string
   updatedAt?: string
+  [key: string]: unknown
+}
+
+function normalizeTatvaUser(user: Record<string, unknown>): TatvaUserItem {
+  return user as TatvaUserItem
 }
 
 export type TatvaUsersResponse = {
@@ -382,6 +441,7 @@ export type VendorLeadItem = {
   leadStatus?: string
   createdAt?: string
   created_at?: string
+  poc?: string | { _id?: string; id?: string; fullName?: string; name?: string }
   assignment?: LeadAssignmentMeta
   [key: string]: unknown
 }
@@ -691,6 +751,26 @@ export const api = {
       body: JSON.stringify({ notes }),
     }),
 
+  addProgressStage: (
+    externalId: string,
+    body: { title: string; description?: string; insert_after?: string },
+    leadType: 'user' | 'vendor' = 'user',
+  ) =>
+    fetchAdmin(`/admin/my-leads/${encodeURIComponent(externalId)}/progress-stages?lead_type=${leadType}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  completeProgressStage: (
+    externalId: string,
+    stageId: string,
+    leadType: 'user' | 'vendor' = 'user',
+  ) =>
+    fetchAdmin(
+      `/admin/my-leads/${encodeURIComponent(externalId)}/progress-stages/${encodeURIComponent(stageId)}/complete?lead_type=${leadType}`,
+      { method: 'PATCH' },
+    ),
+
   dashboard: () => fetchAdmin('/admin/dashboard'),
   sessions: () => fetchAdmin('/admin/sessions'),
   session: (id: string) => fetchAdmin(`/admin/session/${id}`),
@@ -706,11 +786,19 @@ export const api = {
       attachments?: EnquiryAttachment[]
       count?: number
     }>,
-  presales: async (params?: { page?: number; limit?: number; flag?: string }) => {
+  presales: async (params?: {
+    page?: number
+    limit?: number
+    flag?: string
+    utm_source?: string
+    utm_medium?: string
+  }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))
     if (params?.limit) qs.set('limit', String(params.limit))
     if (params?.flag) qs.set('flag', params.flag)
+    if (params?.utm_source) qs.set('utm_source', params.utm_source)
+    if (params?.utm_medium) qs.set('utm_medium', params.utm_medium)
     const query = qs.toString()
     return fetchAdmin(`/admin/presales${query ? `?${query}` : ''}`) as Promise<PresalesResponse>
   },
@@ -725,18 +813,43 @@ export const api = {
     }
     return result
   },
-  users: async (params?: { page?: number; limit?: number }) => {
+  assignPresalesPoc: (presalesId: string, pocId: string) =>
+    fetchTatva(`/admin/api/admin/presales/${encodeURIComponent(presalesId)}/poc`, {
+      method: 'PUT',
+      body: JSON.stringify({ poc: pocId }),
+    }),
+  assignVendorLeadPoc: (vendorLeadId: string, pocId: string) =>
+    fetchTatva(`/admin/api/admin/vendor-leads/${encodeURIComponent(vendorLeadId)}/poc`, {
+      method: 'PUT',
+      body: JSON.stringify({ poc: pocId }),
+    }),
+  updateVendorLeadStatus: (vendorLeadId: string, status: 'approved' | 'rejected') =>
+    fetchTatva(`/admin/api/admin/vendor-leads/${encodeURIComponent(vendorLeadId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    }),
+  users: async (params?: {
+    page?: number
+    limit?: number
+    utm_source?: string
+    utm_medium?: string
+  }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))
     if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.utm_source) qs.set('utm_source', params.utm_source)
+    if (params?.utm_medium) qs.set('utm_medium', params.utm_medium)
     const query = qs.toString()
-    const tatva = await fetchTatva(`/users/api/users${query ? `?${query}` : ''}`) as TatvaUsersResponse
+    const tatva = await fetchTatva(`${TATVA_USERS_PATH}${query ? `?${query}` : ''}`) as TatvaUsersResponse
     const paged = normalizeTatvaPagedItems(tatva as unknown as Record<string, unknown>, ['users', 'items'])
+    const users = paged.items
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map(normalizeTatvaUser)
     return {
       success: tatva.success,
       message: tatva.message,
       data: {
-        users: paged.items as TatvaUserItem[],
+        users,
         total: paged.total,
         page: paged.page,
         limit: paged.limit,
@@ -783,7 +896,90 @@ export const api = {
     })
   },
   rescheduleMeetSlot: (slotId: string) =>
-    fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/reschedule`, { method: 'PATCH' }),
+    fetchAdmin(`/admin/meet-links/slots/${encodeURIComponent(slotId)}/reschedule`, { method: 'PUT' }),
+  presalesByPoc: async (pocId: string, params?: { page?: number; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.page) qs.set('page', String(params.page))
+    if (params?.limit) qs.set('limit', String(params.limit ?? 20))
+    const query = qs.toString()
+    const path = `/admin/api/admin/presales/poc/${encodeURIComponent(pocId)}`
+    const tatva = await fetchTatva(`${path}${query ? `?${query}` : ''}`) as Record<string, unknown>
+    const paged = normalizeTatvaPagedItems(tatva, ['items', 'presales', 'leads'])
+    const items = paged.items as PresalesItem[]
+    try {
+      const enrich = await fetchAdmin('/admin/presales/enrich', {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      }) as { items?: PresalesItem[]; crm_configured?: boolean }
+      return {
+        success: Boolean(tatva.success ?? true),
+        message: typeof tatva.message === 'string' ? tatva.message : undefined,
+        crm_configured: !!enrich.crm_configured,
+        data: {
+          items: enrich.items || items,
+          total: paged.total,
+          page: paged.page,
+          limit: paged.limit,
+          totalPages: paged.totalPages,
+        },
+      } satisfies PresalesResponse
+    } catch {
+      return {
+        success: Boolean(tatva.success ?? true),
+        message: typeof tatva.message === 'string' ? tatva.message : undefined,
+        crm_configured: false,
+        data: {
+          items,
+          total: paged.total,
+          page: paged.page,
+          limit: paged.limit,
+          totalPages: paged.totalPages,
+        },
+      } satisfies PresalesResponse
+    }
+  },
+  vendorLeadsByPoc: async (pocId: string, params?: { page?: number; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.page) qs.set('page', String(params.page))
+    if (params?.limit) qs.set('limit', String(params.limit ?? 20))
+    const query = qs.toString()
+    const path = `/admin/api/admin/vendor-leads/poc/${encodeURIComponent(pocId)}`
+    const tatva = await fetchTatva(`${path}${query ? `?${query}` : ''}`) as Record<string, unknown>
+    const paged = normalizeTatvaPagedItems(tatva, ['leads', 'items', 'vendorLeads', 'vendor_leads'])
+    const items = paged.items as VendorLeadItem[]
+    try {
+      const enrich = await fetchAdmin('/admin/vendor-leads/enrich', {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      }) as { items?: VendorLeadItem[]; crm_configured?: boolean }
+      return {
+        success: Boolean(tatva.success ?? true),
+        message: typeof tatva.message === 'string' ? tatva.message : undefined,
+        crm_configured: !!enrich.crm_configured,
+        data: {
+          items: enrich.items || items,
+          total: paged.total,
+          page: paged.page,
+          limit: paged.limit,
+          totalPages: paged.totalPages,
+        },
+      } satisfies VendorLeadsResponse
+    } catch {
+      return {
+        success: Boolean(tatva.success ?? true),
+        message: typeof tatva.message === 'string' ? tatva.message : undefined,
+        crm_configured: false,
+        data: {
+          items,
+          total: paged.total,
+          page: paged.page,
+          limit: paged.limit,
+          totalPages: paged.totalPages,
+        },
+      } satisfies VendorLeadsResponse
+    }
+  },
+
   vendorLeads: async (params?: { page?: number; limit?: number; status?: string }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))

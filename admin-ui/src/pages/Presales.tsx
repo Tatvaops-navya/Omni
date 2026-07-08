@@ -4,18 +4,21 @@ import {
   PresalesItem,
   TatvaEmployee,
   VendorLeadItem,
-  tatvaEmployeeDepartmentName,
   tatvaEmployeeId,
   tatvaEmployeeLabel,
   tatvaEmployeeName,
+  tatvaEmployeeDepartmentName,
   tatvaEmployeeRoleName,
 } from '../api/client'
 import EnquiryViewModal from '../components/EnquiryViewModal'
 import LeadProgressButton from '../components/LeadProgressButton'
 import clsx from 'clsx'
 import { format } from 'date-fns'
-import { Eye, Trash2 } from 'lucide-react'
+import { Eye } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { extractCommentLog } from '../utils/commentLog'
+import { extractCustomProgressStages } from '../utils/customProgressStages'
+import type { CustomProgressStage } from '../types/leadProgress'
 
 const PLACEHOLDER_NAMES = new Set(['__returning_user__', 'registered user'])
 
@@ -34,18 +37,53 @@ function formatDate(iso: string | undefined): string {
   }
 }
 
-function assignedEmployeeId(assignment: PresalesItem['assignment']): string {
+function assignedEmployeeId(row: PresalesItem): string {
+  const poc = row.poc
+  if (typeof poc === 'string' && poc.trim()) return poc.trim()
+  if (poc && typeof poc === 'object') {
+    const id = String(poc._id || poc.id || '').trim()
+    if (id) return id
+  }
+  const assigned = row.assignedTo
+  if (assigned && typeof assigned === 'object') {
+    const id = String(assigned._id || assigned.id || '').trim()
+    if (id) return id
+  }
+  const assignment = row.assignment
   const staffId = assignment?.staff_user_id || assignment?.presales_user_id || assignment?.rm_user_id || ''
   if (staffId.startsWith('tatva:')) return staffId.slice('tatva:'.length)
   return staffId
 }
 
-function presalesProjectId(row: PresalesItem): string {
-  const value = String(row.projectId || row.project_id || '').trim()
-  return value || '—'
+function RmAssignPlaceholder() {
+  return (
+    <select
+      className="input text-xs py-1.5 min-w-[160px] opacity-60 cursor-not-allowed"
+      disabled
+      title="RM assignment API coming soon"
+    >
+      <option value="">Assign RM...</option>
+    </select>
+  )
 }
 
-function presalesAssignee(row: PresalesItem): string {
+function employeeNameById(employeeId: string, employees: TatvaEmployee[]): string {
+  if (!employeeId) return ''
+  const emp = employees.find(e => tatvaEmployeeId(e) === employeeId)
+  return emp ? tatvaEmployeeName(emp) : ''
+}
+
+function presalesAssignee(row: PresalesItem, employees: TatvaEmployee[] = []): string {
+  const poc = row.poc
+  if (poc && typeof poc === 'object') {
+    const name = String(poc.fullName || poc.name || '').trim()
+    if (name) return name
+  }
+
+  const empId = assignedEmployeeId(row)
+  const fromEmployees = employeeNameById(empId, employees)
+  if (fromEmployees) return fromEmployees
+
   const assigned = row.assignedTo
   if (assigned && typeof assigned === 'object') {
     const name = String(assigned.fullName || assigned.name || '').trim()
@@ -61,11 +99,10 @@ function presalesAssignee(row: PresalesItem): string {
   return direct || '—'
 }
 
-function rowAssigneeName(row: PresalesItem): string {
+function rowAssigneeName(row: PresalesItem, employees: TatvaEmployee[] = []): string {
   const crm = String(row.assignment?.assignee_name || '').trim()
   if (crm) return crm
-  if (row.flag === 'high') return presalesAssignee(row)
-  return '—'
+  return presalesAssignee(row, employees)
 }
 
 function vendorRowId(vendor: VendorLeadItem): string {
@@ -104,16 +141,14 @@ function AssignDropdown({
   row,
   employees,
   assigningId,
-  crmConfigured,
   onAssign,
 }: {
   row: PresalesItem
   employees: TatvaEmployee[]
   assigningId: string | null
-  crmConfigured: boolean
   onAssign: (row: PresalesItem, employeeId: string) => void
 }) {
-  const currentAssignee = assignedEmployeeId(row.assignment)
+  const currentAssignee = assignedEmployeeId(row)
   if (employees.length === 0) {
     return <span className="text-xs text-slate-600">—</span>
   }
@@ -121,11 +156,10 @@ function AssignDropdown({
     <select
       className="input text-xs py-1.5 min-w-[160px]"
       value={currentAssignee}
-      disabled={assigningId === row._id || !crmConfigured}
-      title={crmConfigured ? undefined : 'Configure Supabase CRM to save assignments'}
+      disabled={assigningId === row._id}
       onChange={e => onAssign(row, e.target.value)}
     >
-      <option value="">Assign to...</option>
+      <option value="">Assign sales...</option>
       {employees.map(emp => {
         const id = tatvaEmployeeId(emp)
         if (!id) return null
@@ -191,10 +225,22 @@ export default function Presales() {
   const [error, setError] = useState('')
   const [assigningId, setAssigningId] = useState<string | null>(null)
   const [assigningVendorId, setAssigningVendorId] = useState<string | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [viewLead, setViewLead] = useState<{ name?: string; phone?: string } | null>(null)
-  const isHighIntentView = flagFilter === 'high'
-  const columnCount = isHighIntentView ? 13 : 12
+  const columnCount = 13
+
+  const handleProgressStagesChange = useCallback((externalId: string, stages: CustomProgressStage[]) => {
+    setItems(prev => prev.map(row => (
+      row._id === externalId
+        ? {
+          ...row,
+          assignment: {
+            ...(row.assignment || {}),
+            custom_progress_stages: stages,
+          },
+        }
+        : row
+    )))
+  }, [])
 
   const loadEmployees = useCallback(async () => {
     try {
@@ -267,22 +313,39 @@ export default function Presales() {
 
   const handleAssign = async (row: PresalesItem, employeeId: string) => {
     if (!employeeId) return
-    if (!crmConfigured) {
-      toast.error('Configure Supabase CRM to save assignments')
-      return
-    }
-    const employee = employees.find(emp => tatvaEmployeeId(emp) === employeeId)
+    const emp = employees.find(e => tatvaEmployeeId(e) === employeeId)
+    const empName = emp ? tatvaEmployeeName(emp) : ''
     setAssigningId(row._id)
     try {
-      await api.assignEmployeeLead(row._id, {
-        employee_id: employeeId,
-        employee_name: employee ? tatvaEmployeeName(employee) : '',
-        employee_email: String(employee?.email || ''),
-        employee_department: employee ? tatvaEmployeeDepartmentName(employee) : '',
-        employee_role: employee ? tatvaEmployeeRoleName(employee) : '',
-        snapshot: { ...row },
-      })
-      toast.success('Lead assigned')
+      await api.assignPresalesPoc(row._id, employeeId)
+      if (crmConfigured && emp) {
+        try {
+          await api.assignEmployeeLead(row._id, {
+            employee_id: employeeId,
+            employee_name: empName,
+            employee_email: String(emp.email || '').trim(),
+            employee_department: tatvaEmployeeDepartmentName(emp),
+            employee_role: tatvaEmployeeRoleName(emp),
+            snapshot: { ...row },
+          })
+        } catch {
+          // Tatva POC is saved; CRM mirror is best-effort
+        }
+      }
+      setItems(prev => prev.map(item => {
+        if (item._id !== row._id) return item
+        return {
+          ...item,
+          poc: emp
+            ? { _id: employeeId, id: employeeId, fullName: empName, name: empName }
+            : employeeId,
+          assignment: {
+            ...(item.assignment || {}),
+            assignee_name: empName || item.assignment?.assignee_name,
+          },
+        }
+      }))
+      toast.success('Sales POC assigned')
       load()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Assignment failed')
@@ -313,23 +376,6 @@ export default function Presales() {
       toast.error(e instanceof Error ? e.message : 'Vendor assignment failed')
     } finally {
       setAssigningVendorId(null)
-    }
-  }
-
-  const handleDelete = async (row: PresalesItem) => {
-    const label = displayName(row.name) !== '—' ? displayName(row.name) : row.phoneNumber || 'this lead'
-    if (!window.confirm(`Delete presales record for ${label}? This cannot be undone.`)) {
-      return
-    }
-    setDeletingId(row._id)
-    try {
-      await api.deletePresales(row._id)
-      toast.success('Presales record deleted')
-      load()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Delete failed')
-    } finally {
-      setDeletingId(null)
     }
   }
 
@@ -367,12 +413,10 @@ export default function Presales() {
                 <th className="px-4 py-3 font-medium">Flag</th>
                 <th className="px-4 py-3 font-medium min-w-[180px]">Location</th>
                 <th className="px-4 py-3 font-medium min-w-[280px]">Property location</th>
-                {isHighIntentView && (
-                  <th className="px-4 py-3 font-medium whitespace-nowrap">Project ID</th>
-                )}
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Assignee</th>
                 <th className="px-4 py-3 font-medium">Track</th>
-                <th className="px-4 py-3 font-medium">Assign</th>
+                <th className="px-4 py-3 font-medium">Assign sales</th>
+                <th className="px-4 py-3 font-medium">Assign RM</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Vendor</th>
                 <th className="px-4 py-3 font-medium">Assign vendor</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
@@ -425,27 +469,23 @@ export default function Presales() {
                       <td className="px-4 py-3 text-slate-400 min-w-[280px] max-w-[360px] whitespace-normal break-words align-top">
                         {row.propertyLocation || '—'}
                       </td>
-                      {isHighIntentView && (
-                        <td className="px-4 py-3 text-slate-300 whitespace-nowrap font-mono text-xs">
-                          {presalesProjectId(row)}
-                        </td>
-                      )}
                       <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                        {rowAssigneeName(row)}
+                        {rowAssigneeName(row, employees)}
                       </td>
                       <td className="px-4 py-3">
                         <LeadProgressButton
                           leadName={displayName(row.name) !== '—' ? displayName(row.name) : row.phoneNumber || 'Lead'}
+                          externalId={row._id}
+                          leadType="user"
                           status={assignment?.status}
                           assignedAt={assignment?.assigned_at}
                           completedAt={assignment?.presales_completed_at}
                           createdAt={row.createdAt}
-                          assigneeName={rowAssigneeName(row)}
-                          commentLog={assignment?.notes ? [{
-                            text: assignment.notes,
-                            created_at: assignment.assigned_at || undefined,
-                          }] : []}
-                          commentCount={assignment?.notes ? 1 : 0}
+                          assigneeName={rowAssigneeName(row, employees)}
+                          commentLog={extractCommentLog(assignment as Record<string, unknown> | undefined)}
+                          commentCount={extractCommentLog(assignment as Record<string, unknown> | undefined).length}
+                          customStages={extractCustomProgressStages(assignment as Record<string, unknown> | undefined)}
+                          onStagesChange={stages => handleProgressStagesChange(row._id, stages)}
                         />
                       </td>
                       <td className="px-4 py-3">
@@ -453,9 +493,11 @@ export default function Presales() {
                           row={row}
                           employees={employees}
                           assigningId={assigningId}
-                          crmConfigured={crmConfigured}
                           onAssign={handleAssign}
                         />
+                      </td>
+                      <td className="px-4 py-3">
+                        <RmAssignPlaceholder />
                       </td>
                       <td className="px-4 py-3 text-slate-300 whitespace-nowrap max-w-[180px] truncate">
                         {rowVendorName(row)}
@@ -473,30 +515,19 @@ export default function Presales() {
                         {formatDate(row.createdAt)}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          {!isLowIntent && (
-                            <button
-                              type="button"
-                              className="p-1.5 rounded-md text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-colors"
-                              title="View enquiry"
-                              onClick={() => setViewLead({
-                                name: row.name,
-                                phone: row.phoneNumber,
-                              })}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                          )}
+                        {!isLowIntent && (
                           <button
                             type="button"
-                            className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
-                            title="Delete presales record"
-                            disabled={deletingId === row._id}
-                            onClick={() => handleDelete(row)}
+                            className="p-1.5 rounded-md text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/10 transition-colors"
+                            title="View enquiry"
+                            onClick={() => setViewLead({
+                              name: row.name,
+                              phone: row.phoneNumber,
+                            })}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Eye className="w-4 h-4" />
                           </button>
-                        </div>
+                        )}
                       </td>
                     </tr>
                   )

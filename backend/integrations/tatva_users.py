@@ -608,6 +608,8 @@ async def fetch_tatva_users(
     *,
     page: int = 1,
     limit: int = 10,
+    utm_source: str | None = None,
+    utm_medium: str | None = None,
 ) -> dict[str, Any]:
     """GET registered Tatva users for Krsna admin panel."""
     settings = get_settings()
@@ -619,7 +621,11 @@ async def fetch_tatva_users(
             "data": {"users": [], "total": 0, "page": page, "limit": limit, "totalPages": 0},
         }
 
-    params = {"page": max(1, page), "limit": max(1, min(limit, 100))}
+    params: dict[str, str | int] = {"page": max(1, page), "limit": max(1, min(limit, 100))}
+    if utm_source and utm_source.strip():
+        params["utm_source"] = utm_source.strip()
+    if utm_medium and utm_medium.strip():
+        params["utm_medium"] = utm_medium.strip()
     url = f"{base_url}{LIST_USERS_PATH}"
     try:
         async with httpx.AsyncClient(timeout=30.0, headers=_tatva_admin_headers()) as client:

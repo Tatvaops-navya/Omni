@@ -168,46 +168,49 @@ async def send_whatsapp_content_cta(
         return False
 
 
-async def send_whatsapp_attachment_cta_links(to: str, attachments: list | None) -> None:
+async def send_whatsapp_link_ctas(to: str, links: list[dict[str, str]] | None) -> None:
     """
-    Send one CTA button message per attachment so users can open files without seeing raw URLs.
-    Requires TWILIO_CTA_VIEW_* content templates — see scripts/create_attachment_cta_content.py
+    Send one Twilio call-to-action card per attachment link (gray label + green button).
+    Template URL must be {{2}} with the full attachment URL — see create_attachment_cta_content.py
     """
-    if not attachments:
-        return
-    try:
-        from backend.integrations.tatva_enquiry_submit import (
-            list_tatva_attachment_links,
-            url_suffix_for_cta,
-        )
-    except ImportError:
-        return
-
-    cdn_base = str(getattr(settings, "tatva_attachment_cdn_base_url", "") or "").strip()
-    if not cdn_base:
-        print("[Twilio] Attachment CTA skipped: TATVA_ATTACHMENT_CDN_BASE_URL not set")
+    if not links:
         return
 
     import asyncio
 
-    for link in list_tatva_attachment_links(attachments):
+    for link in links:
         kind = link.get("kind") or "file"
         content_sid = _cta_content_sid_for_kind(kind)
         if not content_sid:
             print(f"[Twilio] Attachment CTA skipped: no content SID for kind={kind!r}")
             continue
-        suffix = url_suffix_for_cta(link["url"], cdn_base=cdn_base)
-        if not suffix:
-            print(f"[Twilio] Attachment CTA skipped: URL host mismatch for {link['url'][:80]!r}")
+        url = str(link.get("url") or "").strip()
+        if not url:
             continue
-        label = link["label"].removeprefix("↗ ").strip()
+        label = str(link.get("label") or "View file").removeprefix("↗ ").strip()
         sent = await send_whatsapp_content_cta(
             to,
             content_sid,
-            content_variables={"1": label, "2": suffix},
+            content_variables={"1": label, "2": url},
         )
         if sent:
             await asyncio.sleep(0.35)
+
+
+async def send_whatsapp_attachment_cta_links(to: str, attachments: list | None) -> None:
+    """
+    Send one CTA button message per Tatva enquiry attachment so users can open files
+    without inline media previews or raw URL text.
+    Requires TWILIO_CTA_VIEW_* content templates — see scripts/create_attachment_cta_content.py
+    """
+    if not attachments:
+        return
+    try:
+        from backend.integrations.tatva_enquiry_submit import list_tatva_attachment_links
+    except ImportError:
+        return
+
+    await send_whatsapp_link_ctas(to, list_tatva_attachment_links(attachments))
 
 
 async def send_whatsapp_media_message(to: str, media_url: str, *, body: str = "") -> bool:
@@ -241,8 +244,7 @@ async def send_whatsapp_media_message(to: str, media_url: str, *, body: str = ""
 
 async def send_session_attachment_previews(to: str, session) -> None:
     """
-    Let users open files they uploaded during final review (before Tatva CDN URLs exist).
-    Images/videos are sent inline; other types use a tappable preview link.
+    Send session uploads as Twilio CTA cards (same style as post-enquiry Tatva attachments).
     """
     if not session:
         return
@@ -255,19 +257,7 @@ async def send_session_attachment_previews(to: str, session) -> None:
     if not links:
         return
 
-    import asyncio
-
-    for link in links:
-        kind = link.get("kind") or "file"
-        url = link["url"]
-        label = link["label"]
-        if kind in ("image", "video"):
-            sent = await send_whatsapp_media_message(to, url, body=label.removeprefix("↗ ").strip())
-            if not sent:
-                await send_whatsapp_message(to, f"{label}\n{url}")
-        else:
-            await send_whatsapp_message(to, f"{label}\n{url}")
-        await asyncio.sleep(0.35)
+    await send_whatsapp_link_ctas(to, links)
 
 
 async def send_context_then_mcq_list(
