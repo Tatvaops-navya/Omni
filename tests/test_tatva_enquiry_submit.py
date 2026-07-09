@@ -10,6 +10,7 @@ from backend.integrations.tatva_enquiry_submit import (
     format_attachments_section_whatsapp,
     format_tatva_enquiry_summary_whatsapp,
     list_tatva_attachment_links,
+    normalize_attachment_url,
     submit_service_questionnaire,
     url_suffix_for_cta,
 )
@@ -133,6 +134,16 @@ def test_url_suffix_for_cta_matches_cdn_host():
     url = "https://d187u6mpwmtl08.cloudfront.net/enquiries/user/file.png"
     assert url_suffix_for_cta(url, cdn_base=base) == "enquiries/user/file.png"
     assert url_suffix_for_cta("https://other.example.com/x.png", cdn_base=base) is None
+
+
+def test_normalize_attachment_url_collapses_duplicated_cdn_origin():
+    bad = (
+        "https://d187u6mpwmtl08.cloudfront.net/"
+        "https://d187u6mpwmtl08.cloudfront.net/enquiries/u/file.jpg"
+    )
+    good = "https://d187u6mpwmtl08.cloudfront.net/enquiries/u/file.jpg"
+    assert normalize_attachment_url(bad) == good
+    assert normalize_attachment_url(good) == good
 
 
 def test_format_attachments_section_whatsapp_labels_and_urls():

@@ -171,11 +171,22 @@ async def send_whatsapp_content_cta(
 async def send_whatsapp_link_ctas(to: str, links: list[dict[str, str]] | None) -> None:
     """
     Send one Twilio call-to-action card per attachment link (gray label + green button).
-    Template URL must be {{2}} with the full attachment URL — see create_attachment_cta_content.py
+    CDN URLs use path suffix {{2}} (template URL = CDN base + {{2}}).
+    Other URLs use the full URL in {{2}} when templates are full-URL style.
     """
     if not links:
         return
 
+    try:
+        from backend.integrations.tatva_enquiry_submit import (
+            normalize_attachment_url,
+            url_suffix_for_cta,
+        )
+    except ImportError:
+        normalize_attachment_url = lambda u: u  # type: ignore[misc, assignment]
+        url_suffix_for_cta = None  # type: ignore[assignment]
+
+    cdn_base = str(getattr(settings, "tatva_attachment_cdn_base_url", "") or "").strip()
     import asyncio
 
     for link in links:
@@ -184,14 +195,16 @@ async def send_whatsapp_link_ctas(to: str, links: list[dict[str, str]] | None) -
         if not content_sid:
             print(f"[Twilio] Attachment CTA skipped: no content SID for kind={kind!r}")
             continue
-        url = str(link.get("url") or "").strip()
+        url = normalize_attachment_url(str(link.get("url") or "").strip())
         if not url:
             continue
         label = str(link.get("label") or "View file").removeprefix("↗ ").strip()
+        suffix = url_suffix_for_cta(url, cdn_base=cdn_base) if cdn_base and url_suffix_for_cta else None
+        cta_url_var = suffix if suffix else url
         sent = await send_whatsapp_content_cta(
             to,
             content_sid,
-            content_variables={"1": label, "2": url},
+            content_variables={"1": label, "2": cta_url_var},
         )
         if sent:
             await asyncio.sleep(0.35)

@@ -44,7 +44,7 @@ def test_client_confirmation_uses_project_summary_sections():
     assert "Budget: ₹15L" in text
     assert "https://tatvaops.com/" not in text
     assert "add your address" not in text.lower()
-    assert "https://withtatva.ai/my-projects" in address_cta
+    assert "https://devops.withtatva.ai/my-projects" in address_cta
     assert "add your address" in address_cta.lower()
 
 

@@ -52,13 +52,24 @@ _ATTACHMENT_KIND_LABELS: dict[str, str] = {
 }
 
 
+def normalize_attachment_url(url: str) -> str:
+    """Collapse duplicated CDN origin (e.g. cloudfront.net/https://cloudfront.net/...)."""
+    u = (url or "").strip()
+    if not u or u.count("cloudfront.net") < 2:
+        return u
+    second = u.find("https://", u.find("https://") + 1)
+    if second > 0:
+        return u[second:]
+    return u
+
+
 def _normalize_attachments(attachments: list[Any] | None) -> list[dict[str, str]]:
     if not attachments:
         return []
     items: list[dict[str, str]] = []
     for item in attachments:
         if isinstance(item, dict):
-            url = str(item.get("url") or "").strip()
+            url = normalize_attachment_url(str(item.get("url") or "").strip())
             if not url:
                 continue
             items.append({
@@ -67,7 +78,7 @@ def _normalize_attachments(attachments: list[Any] | None) -> list[dict[str, str]
                 "mime": str(item.get("mimeType") or item.get("mime_type") or "").strip(),
             })
         elif isinstance(item, str) and item.strip():
-            items.append({"url": item.strip(), "key": "", "mime": ""})
+            items.append({"url": normalize_attachment_url(item.strip()), "key": "", "mime": ""})
     return items
 
 
