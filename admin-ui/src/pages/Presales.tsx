@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   api,
   PresalesItem,
   TatvaEmployee,
-  VendorLeadItem,
   tatvaEmployeeId,
   tatvaEmployeeLabel,
   tatvaEmployeeName,
@@ -20,6 +19,7 @@ import { extractCommentLog } from '../utils/commentLog'
 import { extractCustomProgressStages } from '../utils/customProgressStages'
 import type { CustomProgressStage } from '../types/leadProgress'
 
+const PAGE_SIZE = 20
 const PLACEHOLDER_NAMES = new Set(['__returning_user__', 'registered user'])
 
 function displayName(name: string | undefined): string {
@@ -50,19 +50,59 @@ function assignedEmployeeId(row: PresalesItem): string {
     if (id) return id
   }
   const assignment = row.assignment
-  const staffId = assignment?.staff_user_id || assignment?.presales_user_id || assignment?.rm_user_id || ''
+  const staffId = assignment?.presales_user_id || ''
   if (staffId.startsWith('tatva:')) return staffId.slice('tatva:'.length)
   return staffId
 }
 
-function RmAssignPlaceholder() {
+function assignedRmId(row: PresalesItem): string {
+  const record = row as PresalesItem & Record<string, unknown>
+  for (const key of ['rm', 'rmId', 'rm_id', 'relationshipManager']) {
+    const raw = record[key]
+    if (raw && typeof raw === 'object') {
+      const obj = raw as Record<string, unknown>
+      const id = String(obj._id || obj.id || '').trim()
+      if (id) return id
+    }
+    if (typeof raw === 'string' && raw.trim()) return raw.trim()
+  }
+  const rid = String(row.assignment?.rm_user_id || '').trim()
+  if (rid.startsWith('tatva:')) return rid.slice('tatva:'.length)
+  return rid
+}
+
+function RmAssignDropdown({
+  row,
+  employees,
+  assigningId,
+  onAssign,
+}: {
+  row: PresalesItem
+  employees: TatvaEmployee[]
+  assigningId: string | null
+  onAssign: (row: PresalesItem, employeeId: string) => void
+}) {
+  const currentRm = assignedRmId(row)
+  if (employees.length === 0) {
+    return <span className="text-xs text-slate-600">—</span>
+  }
   return (
     <select
-      className="input text-xs py-1.5 min-w-[160px] opacity-60 cursor-not-allowed"
-      disabled
-      title="RM assignment API coming soon"
+      className="input text-xs py-1.5 min-w-[160px]"
+      value={currentRm}
+      disabled={assigningId === row._id}
+      onChange={e => onAssign(row, e.target.value)}
     >
       <option value="">Assign RM...</option>
+      {employees.map(emp => {
+        const id = tatvaEmployeeId(emp)
+        if (!id) return null
+        return (
+          <option key={id} value={id}>
+            {tatvaEmployeeLabel(emp)}
+          </option>
+        )
+      })}
     </select>
   )
 }
@@ -105,36 +145,8 @@ function rowAssigneeName(row: PresalesItem, employees: TatvaEmployee[] = []): st
   return presalesAssignee(row, employees)
 }
 
-function vendorRowId(vendor: VendorLeadItem): string {
-  return String(vendor._id || vendor.id || '').trim()
-}
-
-function vendorDisplayName(vendor: VendorLeadItem): string {
-  const name = String(
-    vendor.fullName || vendor.name || vendor.contactName || vendor.vendorName || '',
-  ).trim()
-  const company = String(
-    vendor.companyName || vendor.businessName || vendor.company || '',
-  ).trim()
-  if (name && company && name.toLowerCase() !== company.toLowerCase()) {
-    return `${name} (${company})`
-  }
-  return name || company || 'Vendor'
-}
-
-function isApprovedVendor(vendor: VendorLeadItem): boolean {
-  const status = String(
-    vendor.status || vendor.leadStatus || vendor.approvalStatus || 'approved',
-  ).trim().toLowerCase()
-  return status === 'approved' || status === 'verified'
-}
-
 function rowVendorName(row: PresalesItem): string {
   return String(row.vendor_assignment?.vendor_name || '').trim() || '—'
-}
-
-function assignedVendorId(row: PresalesItem): string {
-  return String(row.vendor_assignment?.vendor_id || '').trim()
 }
 
 function AssignDropdown({
@@ -173,60 +185,26 @@ function AssignDropdown({
   )
 }
 
-function VendorAssignDropdown({
-  row,
-  vendors,
-  assigningId,
-  crmConfigured,
-  onAssign,
-}: {
-  row: PresalesItem
-  vendors: VendorLeadItem[]
-  assigningId: string | null
-  crmConfigured: boolean
-  onAssign: (row: PresalesItem, vendorId: string) => void
-}) {
-  const currentVendor = assignedVendorId(row)
-  if (vendors.length === 0) {
-    return <span className="text-xs text-slate-600">—</span>
-  }
-  return (
-    <select
-      className="input text-xs py-1.5 min-w-[160px]"
-      value={currentVendor}
-      disabled={assigningId === row._id || !crmConfigured}
-      title={crmConfigured ? undefined : 'Configure Supabase CRM to save assignments'}
-      onChange={e => onAssign(row, e.target.value)}
-    >
-      <option value="">Assign vendor...</option>
-      {vendors.map(vendor => {
-        const id = vendorRowId(vendor)
-        if (!id) return null
-        return (
-          <option key={id} value={id}>
-            {vendorDisplayName(vendor)}
-          </option>
-        )
-      })}
-    </select>
-  )
-}
-
 export default function Presales() {
   const [items, setItems] = useState<PresalesItem[]>([])
   const [employees, setEmployees] = useState<TatvaEmployee[]>([])
-  const [vendors, setVendors] = useState<VendorLeadItem[]>([])
+  const [rmEmployees, setRmEmployees] = useState<TatvaEmployee[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
+  const [hasMore, setHasMore] = useState(true)
   const [flagFilter, setFlagFilter] = useState('high')
   const [crmConfigured, setCrmConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [assigningId, setAssigningId] = useState<string | null>(null)
-  const [assigningVendorId, setAssigningVendorId] = useState<string | null>(null)
+  const [assigningRmId, setAssigningRmId] = useState<string | null>(null)
   const [viewLead, setViewLead] = useState<{ name?: string; phone?: string } | null>(null)
-  const columnCount = 13
+  const columnCount = 12
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const loadingRef = useRef(false)
+  const pageRef = useRef(1)
+  const hasMoreRef = useRef(true)
 
   const handleProgressStagesChange = useCallback((externalId: string, stages: CustomProgressStage[]) => {
     setItems(prev => prev.map(row => (
@@ -244,22 +222,16 @@ export default function Presales() {
 
   const loadEmployees = useCallback(async () => {
     try {
-      const data = await api.tatvaEmployees('sales', { page: 1, limit: 50 })
-      setEmployees(data.employees || [])
+      const [salesRes, rmRes] = await Promise.all([
+        api.tatvaEmployees('sales', { page: 1, limit: 50 }),
+        api.tatvaEmployees('rm', { page: 1, limit: 50 }),
+      ])
+      setEmployees(salesRes.employees || [])
+      setRmEmployees(rmRes.employees || [])
     } catch (e) {
       setEmployees([])
+      setRmEmployees([])
       console.warn('Failed to load Tatva employees:', e)
-    }
-  }, [])
-
-  const loadVendors = useCallback(async () => {
-    try {
-      const data = await api.vendors({ page: 1, limit: 200 })
-      const approved = (data.data?.items || []).filter(isApprovedVendor)
-      setVendors(approved)
-    } catch (e) {
-      setVendors([])
-      console.warn('Failed to load approved vendors:', e)
     }
   }, [])
 
@@ -272,44 +244,96 @@ export default function Presales() {
     }
   }, [])
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
+  const loadPage = useCallback(async (pageNum: number, mode: 'replace' | 'append') => {
+    if (loadingRef.current) return
+    loadingRef.current = true
+    if (mode === 'replace') {
+      setLoading(true)
+      setError('')
+    } else {
+      setLoadingMore(true)
+    }
     try {
       const data = await api.presales({
-        page,
-        limit: 20,
+        page: pageNum,
+        limit: PAGE_SIZE,
         flag: flagFilter || undefined,
       })
-      if (!data.success && data.message) {
+      if (!data.success && data.message && mode === 'replace') {
         setError(data.message)
       }
-      setItems(data.data?.items || [])
-      setTotal(data.data?.total ?? 0)
-      setTotalPages(data.data?.totalPages ?? 1)
+      const nextItems = data.data?.items || []
+      const nextTotal = data.data?.total ?? 0
+      const nextTotalPages = data.data?.totalPages ?? 1
+      const more = pageNum < nextTotalPages && nextItems.length > 0
+      setTotal(nextTotal)
+      setPage(pageNum)
+      setHasMore(more)
+      pageRef.current = pageNum
+      hasMoreRef.current = more
       if (typeof data.crm_configured === 'boolean') {
         setCrmConfigured(data.crm_configured)
       }
+      if (mode === 'append') {
+        setItems(prev => {
+          const seen = new Set(prev.map(row => row._id))
+          return [...prev, ...nextItems.filter(row => !seen.has(row._id))]
+        })
+      } else {
+        setItems(nextItems)
+      }
     } catch {
-      setError('Failed to load presales records.')
-      setItems([])
+      if (mode === 'replace') {
+        setError('Failed to load presales records.')
+        setItems([])
+        setHasMore(false)
+        hasMoreRef.current = false
+      }
     } finally {
+      loadingRef.current = false
       setLoading(false)
+      setLoadingMore(false)
     }
-  }, [page, flagFilter])
+  }, [flagFilter])
 
   useEffect(() => {
     loadEmployees()
-    loadVendors()
     loadCrmStatus()
-    load()
-    const id = setInterval(load, 30000)
-    return () => clearInterval(id)
-  }, [load, loadEmployees, loadVendors, loadCrmStatus])
+  }, [loadEmployees, loadCrmStatus])
 
   useEffect(() => {
+    pageRef.current = 1
+    hasMoreRef.current = true
     setPage(1)
-  }, [flagFilter])
+    setHasMore(true)
+    loadPage(1, 'replace')
+  }, [flagFilter, loadPage])
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      // Soft refresh first page only when user hasn't scrolled further.
+      if (pageRef.current === 1 && !loadingRef.current) {
+        loadPage(1, 'replace')
+      }
+    }, 30000)
+    return () => window.clearInterval(id)
+  }, [loadPage])
+
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node) return undefined
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[0]
+        if (!entry?.isIntersecting) return
+        if (!hasMoreRef.current || loadingRef.current) return
+        loadPage(pageRef.current + 1, 'append')
+      },
+      { root: null, rootMargin: '200px', threshold: 0 },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [loadPage, items.length, hasMore])
 
   const handleAssign = async (row: PresalesItem, employeeId: string) => {
     if (!employeeId) return
@@ -346,7 +370,6 @@ export default function Presales() {
         }
       }))
       toast.success('Sales POC assigned')
-      load()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Assignment failed')
     } finally {
@@ -354,28 +377,32 @@ export default function Presales() {
     }
   }
 
-  const handleAssignVendor = async (row: PresalesItem, vendorId: string) => {
-    if (!vendorId) return
-    if (!crmConfigured) {
-      toast.error('Configure Supabase CRM to save assignments')
-      return
-    }
-    const vendor = vendors.find(v => vendorRowId(v) === vendorId)
-    setAssigningVendorId(row._id)
+  const handleAssignRm = async (row: PresalesItem, employeeId: string) => {
+    if (!employeeId) return
+    const emp = rmEmployees.find(e => tatvaEmployeeId(e) === employeeId)
+    const empName = emp ? tatvaEmployeeName(emp) : ''
+    setAssigningRmId(row._id)
     try {
-      await api.assignPresalesVendor(row._id, {
-        vendor_id: vendorId,
-        vendor_name: vendor ? vendorDisplayName(vendor) : '',
-        vendor_company: String(vendor?.companyName || vendor?.businessName || '').trim(),
-        vendor_phone: String(vendor?.phoneNumber || vendor?.phone || '').trim(),
-        snapshot: { ...row },
-      })
-      toast.success('Vendor assigned')
-      load()
+      await api.assignPresalesRm(row._id, employeeId)
+      setItems(prev => prev.map(item => {
+        if (item._id !== row._id) return item
+        return {
+          ...item,
+          rm: emp
+            ? { _id: employeeId, id: employeeId, fullName: empName, name: empName }
+            : employeeId,
+          assignment: {
+            ...(item.assignment || {}),
+            rm_user_id: `tatva:${employeeId}`,
+            rm_name: empName || item.assignment?.rm_name,
+          },
+        }
+      }))
+      toast.success('RM assigned')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Vendor assignment failed')
+      toast.error(e instanceof Error ? e.message : 'RM assignment failed')
     } finally {
-      setAssigningVendorId(null)
+      setAssigningRmId(null)
     }
   }
 
@@ -387,7 +414,7 @@ export default function Presales() {
           <p className="text-sm text-slate-500 mt-1">
             {total} record{total !== 1 ? 's' : ''} from Tatva
             {employees.length > 0 ? ` · ${employees.length} sales team member${employees.length !== 1 ? 's' : ''}` : ''}
-            {vendors.length > 0 ? ` · ${vendors.length} approved vendor${vendors.length !== 1 ? 's' : ''}` : ''}
+            {rmEmployees.length > 0 ? ` · ${rmEmployees.length} RM${rmEmployees.length !== 1 ? 's' : ''}` : ''}
             {crmConfigured ? ' · assignment enabled' : ' · configure Supabase to save assignments'}
           </p>
         </div>
@@ -418,7 +445,6 @@ export default function Presales() {
                 <th className="px-4 py-3 font-medium">Assign sales</th>
                 <th className="px-4 py-3 font-medium">Assign RM</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Vendor</th>
-                <th className="px-4 py-3 font-medium">Assign vendor</th>
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
                 <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
@@ -497,19 +523,15 @@ export default function Presales() {
                         />
                       </td>
                       <td className="px-4 py-3">
-                        <RmAssignPlaceholder />
+                        <RmAssignDropdown
+                          row={row}
+                          employees={rmEmployees}
+                          assigningId={assigningRmId}
+                          onAssign={handleAssignRm}
+                        />
                       </td>
                       <td className="px-4 py-3 text-slate-300 whitespace-nowrap max-w-[180px] truncate">
                         {rowVendorName(row)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <VendorAssignDropdown
-                          row={row}
-                          vendors={vendors}
-                          assigningId={assigningVendorId}
-                          crmConfigured={crmConfigured}
-                          onAssign={handleAssignVendor}
-                        />
                       </td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
                         {formatDate(row.createdAt)}
@@ -537,15 +559,17 @@ export default function Presales() {
           </table>
         </div>
 
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
-            <span className="text-xs text-slate-500">Page {page} of {totalPages}</span>
-            <div className="flex gap-2">
-              <button type="button" className="btn-ghost disabled:opacity-40" disabled={page <= 1 || loading} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</button>
-              <button type="button" className="btn-ghost disabled:opacity-40" disabled={page >= totalPages || loading} onClick={() => setPage(p => p + 1)}>Next</button>
-            </div>
-          </div>
-        )}
+        <div ref={sentinelRef} className="px-4 py-3 border-t border-slate-700/50 text-center">
+          {loadingMore ? (
+            <span className="text-xs text-slate-500">Loading more...</span>
+          ) : hasMore ? (
+            <span className="text-xs text-slate-600">Scroll for more</span>
+          ) : items.length > 0 ? (
+            <span className="text-xs text-slate-600">
+              Showing {items.length} of {total}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {viewLead && (

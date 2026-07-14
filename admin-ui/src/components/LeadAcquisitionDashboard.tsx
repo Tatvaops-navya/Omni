@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { Filter, X } from 'lucide-react'
+import { Filter, X, ArrowUpRight } from 'lucide-react'
 import {
   DASHBOARD_MEDIUM_COUNTS,
   DASHBOARD_MEDIUM_KEYS,
@@ -28,18 +28,23 @@ function MetricRow({ label, count, dot, selected, onClick }: MetricRowProps) {
       type="button"
       onClick={onClick}
       className={clsx(
-        'w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-left transition-colors',
-        'hover:bg-navy-700/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
-        selected ? 'bg-indigo-600/15 ring-1 ring-indigo-500/40' : 'bg-transparent',
+        'w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl text-left transition-all duration-200',
+        'hover:bg-navy-700/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50',
+        selected
+          ? 'bg-indigo-600/15 ring-1 ring-indigo-500/40 shadow-[inset_0_1px_0_rgba(99,102,241,0.1)]'
+          : 'bg-navy-900/30 border border-transparent hover:border-slate-700/40',
       )}
     >
       <span className="flex items-center gap-2.5 min-w-0">
-        {dot && <span className={clsx('w-2.5 h-2.5 rounded-full shrink-0', dot)} />}
+        {dot && <span className={clsx('w-2 h-2 rounded-full shrink-0 ring-2 ring-white/5', dot)} />}
         <span className={clsx('text-sm truncate', selected ? 'text-indigo-200 font-medium' : 'text-slate-300')}>
           {label}
         </span>
       </span>
-      <span className={clsx('text-lg font-bold tabular-nums shrink-0', selected ? 'text-slate-100' : 'text-slate-200')}>
+      <span className={clsx(
+        'text-base font-bold tabular-nums shrink-0 min-w-[2rem] text-right',
+        selected ? 'text-slate-100' : 'text-slate-300',
+      )}>
         {count}
       </span>
     </button>
@@ -76,22 +81,28 @@ export default function LeadAcquisitionDashboard() {
     selectedMedium ? mediumLabel || selectedMedium : null,
   ].filter(Boolean).join(' · ')
 
+  const totalSources = DASHBOARD_SOURCE_KEYS.reduce((s, k) => s + DASHBOARD_SOURCE_COUNTS[k], 0)
+  const totalMediums = DASHBOARD_MEDIUM_KEYS.reduce((s, k) => s + DASHBOARD_MEDIUM_COUNTS[k], 0)
+
   return (
-    <section className="space-y-4">
+    <section className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-            <Filter className="w-4 h-4 text-indigo-400" />
+          <p className="section-label mb-2">Acquisition</p>
+          <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2.5">
+            <span className="p-1.5 rounded-lg bg-teal-500/15 border border-teal-500/20">
+              <Filter className="w-4 h-4 text-teal-400" />
+            </span>
             Lead Acquisition
           </h2>
-          <p className="text-xs text-slate-500 mt-1">
+          <p className="text-xs text-slate-500 mt-1.5">
             Analyze and filter incoming leads by Source and Medium.
           </p>
         </div>
         {hasFilters && (
           <button
             type="button"
-            className="btn-ghost text-xs inline-flex items-center gap-1"
+            className="btn-ghost text-xs inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-700/40 hover:border-slate-600/60"
             onClick={() => {
               setSelectedSource(null)
               setSelectedMedium(null)
@@ -104,11 +115,12 @@ export default function LeadAcquisitionDashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="card">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500 mb-3 pb-2 border-b border-slate-700/50">
-            Sources
-          </h3>
-          <div className="space-y-1">
+        <div className="glass-card">
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-700/40">
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-400">Sources</h3>
+            <span className="text-xs text-slate-500 tabular-nums">{totalSources} leads</span>
+          </div>
+          <div className="space-y-1.5">
             {DASHBOARD_SOURCE_KEYS.map(key => {
               const item = UTM_SOURCES.find(s => s.key === key)!
               return (
@@ -125,11 +137,12 @@ export default function LeadAcquisitionDashboard() {
           </div>
         </div>
 
-        <div className="card">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-slate-500 mb-3 pb-2 border-b border-slate-700/50">
-            Mediums
-          </h3>
-          <div className="space-y-1">
+        <div className="glass-card">
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-700/40">
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-400">Mediums</h3>
+            <span className="text-xs text-slate-500 tabular-nums">{totalMediums} leads</span>
+          </div>
+          <div className="space-y-1.5">
             {DASHBOARD_MEDIUM_KEYS.map(key => {
               const item = UTM_MEDIUMS.find(m => m.key === key)!
               return (
@@ -147,7 +160,7 @@ export default function LeadAcquisitionDashboard() {
       </div>
 
       {hasFilters && (
-        <div className="card flex flex-wrap items-center justify-between gap-4">
+        <div className="glass-card flex flex-wrap items-center justify-between gap-4 border-indigo-500/20 bg-indigo-950/10">
           <div className="min-w-0">
             <div className="flex flex-wrap gap-2 mb-2">
               {selectedSource && (
@@ -171,9 +184,10 @@ export default function LeadAcquisitionDashboard() {
           </div>
           <Link
             to={`/krsna/presales${presalesQuery}`}
-            className="text-xs font-medium text-indigo-400 hover:text-indigo-300 w-full sm:w-auto text-right"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors w-full sm:w-auto justify-end group"
           >
-            Open in Pre-sales →
+            Open in Pre-sales
+            <ArrowUpRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
           </Link>
         </div>
       )}

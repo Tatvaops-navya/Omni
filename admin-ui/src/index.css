@@ -15,6 +15,46 @@
   .card {
     @apply bg-navy-800 border border-slate-700/50 rounded-xl p-5;
   }
+  .glass-card {
+    @apply bg-navy-800/70 backdrop-blur-sm border border-slate-700/40 rounded-2xl p-5
+           shadow-[0_4px_24px_-4px_rgba(0,0,0,0.4)];
+  }
+  .dashboard-hero {
+    @apply relative overflow-hidden rounded-2xl border border-slate-700/40 p-6
+           bg-gradient-to-br from-navy-800 via-navy-800 to-indigo-950/40;
+  }
+  .stat-card {
+    @apply relative overflow-hidden rounded-2xl border border-slate-700/40 p-5
+           bg-gradient-to-br from-navy-800/90 to-navy-900/90
+           transition-all duration-300 hover:border-indigo-500/30 hover:shadow-[0_8px_32px_-8px_rgba(99,102,241,0.25)]
+           hover:-translate-y-0.5;
+  }
+  .stat-card-accent {
+    @apply absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-indigo-500/50 to-transparent;
+  }
+  .chart-card {
+    @apply glass-card hover:border-slate-600/50 transition-colors duration-300;
+  }
+  .section-label {
+    @apply text-[11px] font-semibold uppercase tracking-widest text-slate-500;
+  }
+  .live-pulse {
+    @apply relative flex h-2 w-2;
+  }
+  .live-pulse::before {
+    content: '';
+    @apply absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75 animate-ping;
+  }
+  .live-pulse::after {
+    content: '';
+    @apply relative inline-flex h-2 w-2 rounded-full bg-teal-400;
+  }
+  .filter-bar {
+    @apply flex flex-wrap items-end gap-3 p-4 rounded-xl bg-navy-900/50 border border-slate-700/30;
+  }
+  .skeleton {
+    @apply animate-pulse bg-slate-700/40 rounded-lg;
+  }
   .badge {
     @apply px-2.5 py-0.5 rounded-full text-xs font-semibold;
   }

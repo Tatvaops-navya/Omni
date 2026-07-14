@@ -82,7 +82,42 @@ function vendorLeadPocName(row: VendorLeadItem): string {
     const name = String(poc.fullName || poc.name || '').trim()
     if (name) return name
   }
-  return String(row.assignment?.assignee_name || '').trim() || '—'
+  const fromAssignment = String(row.assignment?.assignee_name || '').trim()
+  if (fromAssignment) return fromAssignment
+  return pick(row, 'assigneeName', 'assignee', 'assignedToName', 'assignedTo', 'rejectedByName', 'rejectedBy')
+}
+
+function vendorLeadTeamComment(row: VendorLeadItem): string {
+  const assignment = row.assignment
+  const fromNotes = String(assignment?.notes || '').trim()
+  if (fromNotes) return fromNotes
+
+  const log = assignment?.comment_log
+  if (Array.isArray(log) && log.length > 0) {
+    return log
+      .map(entry => {
+        const text = String(entry?.text || '').trim()
+        if (!text) return ''
+        const author = String(entry?.author_name || '').trim()
+        return author ? `${author}: ${text}` : text
+      })
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  const fromRow = pick(
+    row,
+    'rejectionReason',
+    'rejection_reason',
+    'rejectReason',
+    'reject_reason',
+    'teamComment',
+    'team_comment',
+    'notes',
+    'comment',
+    'adminNotes',
+  )
+  return fromRow === '—' ? '' : fromRow
 }
 
 export default function VendorLeads() {
@@ -160,13 +195,19 @@ export default function VendorLeads() {
     }
   }
 
+  const isRejectedView = statusFilter === 'rejected'
+  const columnCount = isRejectedView ? 10 : 11
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-200">Vendor Leads</h1>
           <p className="text-sm text-slate-500 mt-1">
-            {total} record{total !== 1 ? 's' : ''} from Tatva · sales assignment via Tatva POC
+            {total} record{total !== 1 ? 's' : ''} from Tatva
+            {isRejectedView
+              ? ' · read-only assignee and rejection notes'
+              : ' · sales assignment via Tatva POC'}
           </p>
         </div>
         <select
@@ -196,21 +237,25 @@ export default function VendorLeads() {
                 <th className="px-4 py-3 font-medium">Service</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium">Assignee</th>
-                <th className="px-4 py-3 font-medium">Team comment</th>
-                <th className="px-4 py-3 font-medium">Assign</th>
+                <th className="px-4 py-3 font-medium">
+                  {isRejectedView ? 'Rejection reason' : 'Team comment'}
+                </th>
+                {!isRejectedView && (
+                  <th className="px-4 py-3 font-medium">Assign</th>
+                )}
                 <th className="px-4 py-3 font-medium whitespace-nowrap">Created</th>
               </tr>
             </thead>
             <tbody>
               {loading && items.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={columnCount} className="px-4 py-12 text-center text-slate-500">
                     Loading vendor leads...
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={columnCount} className="px-4 py-12 text-center text-slate-500">
                     No vendor leads found.
                   </td>
                 </tr>
@@ -226,6 +271,8 @@ export default function VendorLeads() {
                   const created = pick(row, 'createdAt', 'created_at')
                   const rowKey = rowId(row) || `${phone}-${created}`
                   const assignment = row.assignment
+                  const assignee = vendorLeadPocName(row)
+                  const teamComment = vendorLeadTeamComment(row)
                   const currentPoc = vendorLeadPocId(row)
 
                   return (
@@ -245,34 +292,36 @@ export default function VendorLeads() {
                         <span className={vendorStatusBadge(leadStatus)}>{leadStatus}</span>
                       </td>
                       <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                        {vendorLeadPocName(row)}
+                        {assignee}
                       </td>
-                      <td className="px-4 py-3 align-top">
-                        <StaffCommentDisplay text={assignment?.notes} />
+                      <td className="px-4 py-3 align-top min-w-[200px]">
+                        <StaffCommentDisplay text={teamComment} />
                       </td>
-                      <td className="px-4 py-3">
-                        {employees.length > 0 ? (
-                          <select
-                            className="input text-xs py-1.5 min-w-[160px]"
-                            value={currentPoc}
-                            disabled={assigningId === rowKey}
-                            onChange={e => handleAssign(row, e.target.value)}
-                          >
-                            <option value="">Assign to...</option>
-                            {employees.map(emp => {
-                              const id = tatvaEmployeeId(emp)
-                              if (!id) return null
-                              return (
-                                <option key={id} value={id}>
-                                  {tatvaEmployeeLabel(emp)}
-                                </option>
-                              )
-                            })}
-                          </select>
-                        ) : (
-                          <span className="text-xs text-slate-600">—</span>
-                        )}
-                      </td>
+                      {!isRejectedView && (
+                        <td className="px-4 py-3">
+                          {employees.length > 0 ? (
+                            <select
+                              className="input text-xs py-1.5 min-w-[160px]"
+                              value={currentPoc}
+                              disabled={assigningId === rowKey}
+                              onChange={e => handleAssign(row, e.target.value)}
+                            >
+                              <option value="">Assign to...</option>
+                              {employees.map(emp => {
+                                const id = tatvaEmployeeId(emp)
+                                if (!id) return null
+                                return (
+                                  <option key={id} value={id}>
+                                    {tatvaEmployeeLabel(emp)}
+                                  </option>
+                                )
+                              })}
+                            </select>
+                          ) : (
+                            <span className="text-xs text-slate-600">—</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
                         {formatDate(created !== '—' ? created : undefined)}
                       </td>

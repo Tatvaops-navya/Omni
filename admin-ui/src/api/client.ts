@@ -22,6 +22,8 @@ export const TATVA_MY_VENDOR_LEADS_POC_ID = '69e06fca730c39ce2e45a266'
 export const TATVA_MY_USER_LEADS_POC_ID = '69ef09be11db8baeba77b6cc'
 
 let authToken: string | null = sessionStorage.getItem('aadhya_admin_token')
+/** Tatva JWT (`data.accessToken`) — Bearer for all `/tatva-api` calls */
+let tatvaAccessToken: string | null = sessionStorage.getItem('aadhya_tatva_access_token')
 
 export type CrmUser = {
   id?: string | null
@@ -41,20 +43,61 @@ function loadStoredUser(): CrmUser | null {
 
 let crmUser: CrmUser | null = loadStoredUser()
 
-export function setToken(token: string, user?: CrmUser | null) {
+function extractTatvaAccessToken(payload: Record<string, unknown> | null | undefined): string | null {
+  if (!payload || typeof payload !== 'object') return null
+  const data = payload.data
+  const candidates: unknown[] = [
+    payload.accessToken,
+    payload.access_token,
+    payload.token,
+  ]
+  if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>
+    candidates.push(d.accessToken, d.access_token, d.token)
+  }
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
+
+export function setTatvaAccessToken(token: string | null | undefined) {
+  const value = typeof token === 'string' ? token.trim() : ''
+  tatvaAccessToken = value || null
+  if (tatvaAccessToken) {
+    sessionStorage.setItem('aadhya_tatva_access_token', tatvaAccessToken)
+  } else {
+    sessionStorage.removeItem('aadhya_tatva_access_token')
+  }
+}
+
+export function getTatvaAccessToken(): string | null {
+  return tatvaAccessToken || sessionStorage.getItem('aadhya_tatva_access_token')
+}
+
+export function setToken(
+  token: string,
+  user?: CrmUser | null,
+  options?: { tatvaAccessToken?: string | null },
+) {
   authToken = token
   sessionStorage.setItem('aadhya_admin_token', token)
   if (user) {
     crmUser = user
     sessionStorage.setItem('aadhya_crm_user', JSON.stringify(user))
   }
+  if (options && 'tatvaAccessToken' in options) {
+    setTatvaAccessToken(options.tatvaAccessToken)
+  }
 }
 
 export function clearToken() {
   authToken = null
   crmUser = null
+  tatvaAccessToken = null
   sessionStorage.removeItem('aadhya_admin_token')
   sessionStorage.removeItem('aadhya_crm_user')
+  sessionStorage.removeItem('aadhya_tatva_access_token')
 }
 
 export function getUser(): CrmUser | null {
@@ -131,8 +174,10 @@ async function fetchTatva(path: string, options: RequestInit = {}) {
     Accept: 'application/json',
     ...(options.headers as Record<string, string> || {}),
   }
-  if (authToken) {
-    headers.Authorization = `Bearer ${authToken}`
+  // Always authorize Tatva with login accessToken — never the local panel token
+  const bearer = getTatvaAccessToken()
+  if (bearer) {
+    headers.Authorization = `Bearer ${bearer}`
   }
   if (method !== 'GET' && method !== 'HEAD') {
     headers['Content-Type'] = headers['Content-Type'] || 'application/json'
@@ -230,6 +275,7 @@ export type LeadAssignmentMeta = {
   staff_user_id?: string | null
   assignee_name?: string | null
   assignee_email?: string | null
+  rm_name?: string | null
   assigned_at?: string | null
   presales_completed_at?: string | null
   notes?: string | null
@@ -563,6 +609,9 @@ export type EmployeeProjectsResponse = {
     employee_id?: string | null
     employee_name?: string
     total?: number
+    page?: number
+    limit?: number
+    totalPages?: number
   }
 }
 
@@ -585,18 +634,51 @@ function normalizeEmployeeProjects(payload: Record<string, unknown>): EmployeePr
 }
 
 export const api = {
-  login: async (password: string) => {
-    const res = await fetch(`${BASE_URL}/admin/login`, {
+  /**
+   * Admin password login — browser calls Tatva employees auth, then mints a
+   * local panel session (CRM/dashboard still need our Bearer token).
+   */
+  login: async (email: string, password: string) => {
+    const normalizedEmail = email.trim().toLowerCase()
+    const tatvaRes = await fetch(`${TATVA_API_BASE}/admin/api/admin/employees/auth/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email: normalizedEmail, password }),
     })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const detail = typeof data.detail === 'string' ? data.detail : 'Invalid password'
+    const tatvaPayload = await tatvaRes.json().catch(() => ({} as Record<string, unknown>))
+    if (!tatvaRes.ok || tatvaPayload.success === false) {
+      const detail =
+        (typeof tatvaPayload.message === 'string' && tatvaPayload.message) ||
+        (typeof tatvaPayload.detail === 'string' && tatvaPayload.detail) ||
+        (typeof tatvaPayload.error === 'string' && tatvaPayload.error) ||
+        'Invalid credentials'
       throw new Error(detail)
     }
-    return data
+
+    const accessToken = extractTatvaAccessToken(tatvaPayload)
+    if (!accessToken) {
+      throw new Error('Tatva login did not return an accessToken')
+    }
+
+    // Local session for /admin/* panel APIs (not /admin/login)
+    const sessionRes = await fetch(`${BASE_URL}/admin/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: normalizedEmail, password }),
+    })
+    const data = await sessionRes.json().catch(() => ({} as Record<string, unknown>))
+    if (!sessionRes.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : 'Session setup failed'
+      throw new Error(detail)
+    }
+    return {
+      ...data,
+      tatvaAccessToken: accessToken,
+      accessToken,
+    }
   },
 
   crmLogin: async (email: string, password: string) => {
@@ -608,6 +690,51 @@ export const api = {
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       const detail = typeof data.detail === 'string' ? data.detail : 'Invalid credentials'
+      throw new Error(detail)
+    }
+    return data
+  },
+
+  /** Team OTP — POST /admin/api/admin/employees/auth/otp/send */
+  sendTeamOtp: async (phoneNumber: string) => {
+    const digits = normalizePhone(phoneNumber)
+    if (digits.length !== 10) {
+      throw new Error('Enter a valid 10-digit mobile number')
+    }
+    const payload = await fetchTatva('/admin/api/admin/employees/auth/otp/send', {
+      method: 'POST',
+      body: JSON.stringify({ phoneNumber: digits }),
+    }) as Record<string, unknown>
+
+    if (payload.success === false) {
+      const message = typeof payload.message === 'string' && payload.message.trim()
+        ? payload.message
+        : typeof payload.detail === 'string' && payload.detail.trim()
+          ? payload.detail
+          : 'Failed to send OTP'
+      throw new Error(message)
+    }
+    return payload
+  },
+
+  /** Team OTP verify — Tatva verify + local session token via omnichannel backend */
+  verifyTeamOtp: async (phoneNumber: string, otp: string) => {
+    const digits = normalizePhone(phoneNumber)
+    const code = String(otp || '').trim()
+    if (digits.length !== 10) {
+      throw new Error('Enter a valid 10-digit mobile number')
+    }
+    if (!code) {
+      throw new Error('Enter the OTP')
+    }
+    const res = await fetch(`${BASE_URL}/admin/team-otp/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber: digits, otp: code }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : 'Invalid OTP'
       throw new Error(detail)
     }
     return data
@@ -626,9 +753,13 @@ export const api = {
   ) => {
     const page = params?.page ?? 1
     const limit = params?.limit ?? 50
-    const payload = await fetchTatva(
-      `/admin/api/admin/employees/by-department/${encodeURIComponent(department)}?page=${page}&limit=${limit}`,
-    ) as Record<string, unknown>
+    const dept = (department || 'sales').trim() || 'sales'
+    // RM list uses /employees?department=rm (Tatva query API).
+    // Sales and other depts keep the by-department path.
+    const path = dept.toLowerCase() === 'rm'
+      ? `/admin/api/admin/employees?department=${encodeURIComponent(dept)}&page=${page}&limit=${limit}`
+      : `/admin/api/admin/employees/by-department/${encodeURIComponent(dept)}?page=${page}&limit=${limit}`
+    const payload = await fetchTatva(path) as Record<string, unknown>
     return { employees: normalizeTatvaEmployees(payload) }
   },
 
@@ -655,6 +786,7 @@ export const api = {
       employee_email?: string
       employee_department?: string
       employee_role?: string
+      staff_role?: 'presales' | 'rm'
       snapshot: Record<string, unknown>
     },
   ) =>
@@ -697,12 +829,66 @@ export const api = {
   myDashboard: (period: string = 'month') =>
     fetchAdmin(`/admin/my-dashboard?period=${encodeURIComponent(period)}`),
 
-  myProjects: async () => {
-    const payload = await fetchTatva(TATVA_EMPLOYEE_PROJECTS_PATH) as Record<string, unknown>
-    const items = normalizeEmployeeProjects(payload)
+  teamPerformance: (params: {
+    staff_type: 'sales' | 'rm'
+    staff_id: string
+    period?: string
+    staff_email?: string
+    staff_name?: string
+  }) => {
+    const qs = new URLSearchParams({
+      staff_type: params.staff_type,
+      staff_id: params.staff_id,
+      period: params.period || 'month',
+    })
+    if (params.staff_email) qs.set('staff_email', params.staff_email)
+    if (params.staff_name) qs.set('staff_name', params.staff_name)
+    return fetchAdmin(`/admin/team-performance?${qs.toString()}`)
+  },
+
+  upsertSalesTarget: (body: {
+    staff_type: 'sales' | 'rm'
+    staff_id: string
+    period: string
+    target_leads: number
+  }) =>
+    fetchAdmin('/admin/sales-targets', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  myProjects: async (params?: { page?: number; limit?: number }) => {
+    const page = Math.max(1, params?.page ?? 1)
+    const limit = Math.max(1, Math.min(params?.limit ?? 10, 100))
+    const qs = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+    })
+    const payload = await fetchTatva(`${TATVA_EMPLOYEE_PROJECTS_PATH}?${qs}`) as Record<string, unknown>
+    const paged = normalizeTatvaPagedItems(payload, ['projects', 'items', 'assignments'])
+    let items = (paged.items.length
+      ? paged.items
+      : normalizeEmployeeProjects(payload)) as EmployeeProjectItem[]
+
     const dataObj = (
       payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
     ) ? payload.data as Record<string, unknown> : {}
+    const pagination = (
+      dataObj.pagination && typeof dataObj.pagination === 'object'
+    ) ? dataObj.pagination as Record<string, unknown> : {}
+
+    const total = Number(pagination.total ?? paged.total ?? items.length)
+    // If API returns the full list ignoring page/limit, paginate client-side.
+    if (items.length > limit) {
+      const start = (page - 1) * limit
+      items = items.slice(start, start + limit)
+    }
+    const apiPages = Number(pagination.pages ?? pagination.totalPages)
+    const totalPages = Math.max(
+      1,
+      (Number.isFinite(apiPages) && apiPages > 1 ? apiPages : 0) || Math.ceil(total / limit) || 1,
+    )
+
     const employee = dataObj.employee
     const employeeName = employee && typeof employee === 'object'
       ? String(
@@ -718,7 +904,10 @@ export const api = {
         items,
         employee_id: TATVA_MY_PROJECTS_EMPLOYEE_ID,
         employee_name: employeeName || undefined,
-        total: items.length,
+        total,
+        page,
+        limit,
+        totalPages,
       },
     } satisfies EmployeeProjectsResponse
   },
@@ -818,6 +1007,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ poc: pocId }),
     }),
+  /** PUT /admin/api/admin/presales/{id}/rm — body: { "rm": "<employeeId>" } */
+  assignPresalesRm: (presalesId: string, rmId: string) =>
+    fetchTatva(`/admin/api/admin/presales/${encodeURIComponent(presalesId)}/rm`, {
+      method: 'PUT',
+      body: JSON.stringify({ rm: rmId }),
+    }),
   assignVendorLeadPoc: (vendorLeadId: string, pocId: string) =>
     fetchTatva(`/admin/api/admin/vendor-leads/${encodeURIComponent(vendorLeadId)}/poc`, {
       method: 'PUT',
@@ -906,37 +1101,18 @@ export const api = {
     const tatva = await fetchTatva(`${path}${query ? `?${query}` : ''}`) as Record<string, unknown>
     const paged = normalizeTatvaPagedItems(tatva, ['items', 'presales', 'leads'])
     const items = paged.items as PresalesItem[]
-    try {
-      const enrich = await fetchAdmin('/admin/presales/enrich', {
-        method: 'POST',
-        body: JSON.stringify({ items }),
-      }) as { items?: PresalesItem[]; crm_configured?: boolean }
-      return {
-        success: Boolean(tatva.success ?? true),
-        message: typeof tatva.message === 'string' ? tatva.message : undefined,
-        crm_configured: !!enrich.crm_configured,
-        data: {
-          items: enrich.items || items,
-          total: paged.total,
-          page: paged.page,
-          limit: paged.limit,
-          totalPages: paged.totalPages,
-        },
-      } satisfies PresalesResponse
-    } catch {
-      return {
-        success: Boolean(tatva.success ?? true),
-        message: typeof tatva.message === 'string' ? tatva.message : undefined,
-        crm_configured: false,
-        data: {
-          items,
-          total: paged.total,
-          page: paged.page,
-          limit: paged.limit,
-          totalPages: paged.totalPages,
-        },
-      } satisfies PresalesResponse
-    }
+    return {
+      success: Boolean(tatva.success ?? true),
+      message: typeof tatva.message === 'string' ? tatva.message : undefined,
+      crm_configured: false,
+      data: {
+        items,
+        total: paged.total,
+        page: paged.page,
+        limit: paged.limit,
+        totalPages: paged.totalPages,
+      },
+    } satisfies PresalesResponse
   },
   vendorLeadsByPoc: async (pocId: string, params?: { page?: number; limit?: number }) => {
     const qs = new URLSearchParams()

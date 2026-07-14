@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type EmployeeProjectItem } from '../api/client'
 import clsx from 'clsx'
 import { format } from 'date-fns'
+
+const PAGE_SIZE = 10
 
 function formatDate(iso: string | undefined): string {
   if (!iso) return '—'
@@ -18,6 +20,16 @@ function projectField(row: EmployeeProjectItem, ...keys: string[]): string {
     if (v != null && String(v).trim()) return String(v)
   }
   return '—'
+}
+
+function projectKey(row: EmployeeProjectItem): string {
+  return String(
+    row._id
+    || row.id
+    || row.projectId
+    || row.project_id
+    || projectField(row, 'name', 'projectName', 'title'),
+  )
 }
 
 function projectCustomer(row: EmployeeProjectItem): string {
@@ -55,34 +67,92 @@ export default function MyProjects() {
   const [projects, setProjects] = useState<EmployeeProjectItem[]>([])
   const [employeeName, setEmployeeName] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
+  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const loadingRef = useRef(false)
+  const pageRef = useRef(1)
+  const hasMoreRef = useRef(true)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
+  const loadPage = useCallback(async (pageNum: number, mode: 'replace' | 'append') => {
+    if (loadingRef.current) return
+    loadingRef.current = true
+    if (mode === 'replace') {
+      setLoading(true)
+      setError('')
+    } else {
+      setLoadingMore(true)
+    }
     try {
-      const data = await api.myProjects()
-      if (!data.success && data.message) {
+      const data = await api.myProjects({ page: pageNum, limit: PAGE_SIZE })
+      if (!data.success && data.message && mode === 'replace') {
         setError(data.message)
       }
-      setProjects(data.data?.items || [])
-      setEmployeeName(data.data?.employee_name || '')
+      const nextItems = data.data?.items || []
+      const nextTotal = data.data?.total ?? nextItems.length
+      const nextTotalPages = data.data?.totalPages ?? 1
+      const more = pageNum < nextTotalPages && nextItems.length > 0
+      setTotal(nextTotal)
+      setHasMore(more)
+      pageRef.current = pageNum
+      hasMoreRef.current = more
+      if (data.data?.employee_name) {
+        setEmployeeName(data.data.employee_name)
+      }
+      if (mode === 'append') {
+        setProjects(prev => {
+          const seen = new Set(prev.map(projectKey))
+          return [...prev, ...nextItems.filter(row => !seen.has(projectKey(row)))]
+        })
+      } else {
+        setProjects(nextItems)
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load projects')
-      setProjects([])
-      setEmployeeName('')
+      if (mode === 'replace') {
+        setError(e instanceof Error ? e.message : 'Failed to load projects')
+        setProjects([])
+        setEmployeeName('')
+        setTotal(0)
+        setHasMore(false)
+        hasMoreRef.current = false
+      }
     } finally {
+      loadingRef.current = false
       setLoading(false)
+      setLoadingMore(false)
     }
   }, [])
 
   useEffect(() => {
-    load()
-    const id = setInterval(load, 60000)
-    return () => clearInterval(id)
-  }, [load])
+    loadPage(1, 'replace')
+  }, [loadPage])
 
-  const total = projects.length
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (pageRef.current === 1 && !loadingRef.current) {
+        loadPage(1, 'replace')
+      }
+    }, 60000)
+    return () => window.clearInterval(id)
+  }, [loadPage])
+
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node) return undefined
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[0]
+        if (!entry?.isIntersecting) return
+        if (!hasMoreRef.current || loadingRef.current) return
+        loadPage(pageRef.current + 1, 'append')
+      },
+      { root: null, rootMargin: '200px', threshold: 0 },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [loadPage, projects.length, hasMore])
 
   return (
     <div className="p-6 space-y-4">
@@ -120,10 +190,9 @@ export default function MyProjects() {
                 </tr>
               ) : (
                 projects.map(row => {
-                  const key = String(row._id || row.id || row.projectId || row.project_id || projectField(row, 'name', 'projectName', 'title'))
                   const status = projectField(row, 'status', 'stage')
                   return (
-                    <tr key={key} className="border-b border-slate-700/30 hover:bg-navy-700/30">
+                    <tr key={projectKey(row)} className="border-b border-slate-700/30 hover:bg-navy-700/30">
                       <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
                         {projectField(row, 'projectName', 'name', 'title', 'projectId', 'project_id')}
                       </td>
@@ -147,6 +216,18 @@ export default function MyProjects() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div ref={sentinelRef} className="px-4 py-3 border-t border-slate-700/50 text-center">
+          {loadingMore ? (
+            <span className="text-xs text-slate-500">Loading more...</span>
+          ) : hasMore ? (
+            <span className="text-xs text-slate-600">Scroll for more</span>
+          ) : projects.length > 0 ? (
+            <span className="text-xs text-slate-600">
+              Showing {projects.length} of {total}
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

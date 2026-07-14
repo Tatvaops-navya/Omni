@@ -6,6 +6,7 @@ Protected by require_admin dependency.
 from __future__ import annotations
 import asyncio
 import json
+import re
 from datetime import datetime
 from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -25,19 +26,132 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 # ΓöÇΓöÇΓöÇ Auth endpoint (no protection ΓÇö it IS the login) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 class LoginRequest(BaseModel):
+    email: str
     password: str
 
 
+class TeamOtpVerifyRequest(BaseModel):
+    phoneNumber: str
+    otp: str
+
+
+def _team_role_from_tatva_user(user: dict[str, Any]) -> str:
+    """Map Tatva employee metadata to CRM team role (presales | rm)."""
+    blob = " ".join(
+        str(user.get(key) or "").lower()
+        for key in ("role_name", "department", "name")
+    )
+    if "relationship" in blob or re.search(r"\brm\b", blob):
+        return "rm"
+    return "presales"
+
+
 @router.post("/login")
+@router.post("/session")
 async def admin_login(body: LoginRequest):
-    """Exchange admin password for a session token."""
-    if body.password != settings.admin_password:
-        raise HTTPException(status_code=401, detail="Invalid password")
-    token = generate_session_token(role="admin", name="Admin")
+    """Authenticate admin via Tatva employees auth login, then issue a local session token."""
+    from backend.integrations.tatva_employees import login_tatva_employee
+
+    email = (body.email or "").strip()
+    password = body.password or ""
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+
+    result = await login_tatva_employee(email=email, password=password)
+    if not result.get("success"):
+        status = int(result.get("error_status") or 401)
+        if status < 400 or status > 599:
+            status = 401
+        raise HTTPException(
+            status_code=status if status != 502 else 502,
+            detail=str(result.get("message") or "Invalid credentials"),
+        )
+
+    user = result.get("user") if isinstance(result.get("user"), dict) else {}
+    name = str(user.get("name") or "Admin")
+    user_email = str(user.get("email") or email).strip().lower()
+    user_id = user.get("id")
+    token = generate_session_token(
+        role="admin",
+        user_id=str(user_id) if user_id else None,
+        name=name,
+        email=user_email,
+    )
+    access_token = result.get("access_token")
     return {
         "token": token,
         "expires_in_hours": 8,
-        "user": {"role": "admin", "name": "Admin", "email": None, "id": None},
+        "user": {
+            "role": "admin",
+            "name": name,
+            "email": user_email,
+            "id": str(user_id) if user_id else None,
+        },
+        "tatvaAccessToken": access_token,
+        "accessToken": access_token,
+    }
+
+
+@router.post("/team-otp/verify")
+async def team_otp_verify(body: TeamOtpVerifyRequest):
+    """Verify Tatva employee OTP, then issue a local team session token."""
+    from backend.crm import store as crm_store
+    from backend.integrations.tatva_employees import verify_tatva_employee_otp
+
+    result = await verify_tatva_employee_otp(
+        phone_number=body.phoneNumber,
+        otp=body.otp,
+    )
+    if not result.get("success"):
+        status = int(result.get("error_status") or 401)
+        if status < 400 or status > 599:
+            status = 401
+        raise HTTPException(
+            status_code=status if status != 502 else 502,
+            detail=str(result.get("message") or "Invalid OTP"),
+        )
+
+    user = result.get("user") if isinstance(result.get("user"), dict) else {}
+    name = str(user.get("name") or "Team")
+    user_email = str(user.get("email") or "").strip().lower() or None
+    tatva_id = str(user.get("id") or "").strip() or None
+
+    role = _team_role_from_tatva_user(user)
+    session_user_id = (
+        f"{crm_store.TATVA_EMPLOYEE_PREFIX}{tatva_id}" if tatva_id else None
+    )
+    if user_email and crm_store.crm_available():
+        crm_user = crm_store.get_crm_user_by_email(user_email)
+        if crm_user and crm_user.get("active"):
+            crm_role = str(crm_user.get("role") or "").strip().lower()
+            if crm_role in {"presales", "rm"}:
+                role = crm_role
+            session_user_id = str(crm_user.get("id") or session_user_id)
+            name = str(crm_user.get("name") or name)
+            user_email = str(crm_user.get("email") or user_email).strip().lower()
+
+    if not session_user_id:
+        raise HTTPException(status_code=401, detail="Employee profile not found for this number")
+
+    token = generate_session_token(
+        role=role,
+        user_id=session_user_id,
+        name=name,
+        email=user_email,
+    )
+    access_token = result.get("access_token")
+    return {
+        "token": token,
+        "expires_in_hours": 8,
+        "user": {
+            "role": role,
+            "name": name,
+            "email": user_email,
+            "id": session_user_id,
+            "phone": user.get("phone"),
+        },
+        "tatvaAccessToken": access_token,
+        "accessToken": access_token,
     }
 
 

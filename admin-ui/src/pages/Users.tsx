@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, TatvaUserItem } from '../api/client'
 import MeetScheduleModal from '../components/MeetScheduleModal'
 import clsx from 'clsx'
@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { Video } from 'lucide-react'
 
 const COLUMN_COUNT = 13
+const PAGE_SIZE = 20
 
 function formatDate(iso: string | undefined): string {
   if (!iso) return '—'
@@ -30,37 +31,88 @@ function UtmCell({ value }: { value: string | null | undefined }) {
 export default function Users() {
   const [users, setUsers] = useState<TatvaUserItem[]>([])
   const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  const [limit] = useState(20)
+  const [hasMore, setHasMore] = useState(true)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState('')
   const [meetUser, setMeetUser] = useState<TatvaUserItem | null>(null)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const loadingRef = useRef(false)
+  const pageRef = useRef(1)
+  const hasMoreRef = useRef(true)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError('')
+  const loadPage = useCallback(async (pageNum: number, mode: 'replace' | 'append') => {
+    if (loadingRef.current) return
+    loadingRef.current = true
+    if (mode === 'replace') {
+      setLoading(true)
+      setError('')
+    } else {
+      setLoadingMore(true)
+    }
     try {
-      const data = await api.users({ page, limit })
-      if (!data.success && data.message) {
+      const data = await api.users({ page: pageNum, limit: PAGE_SIZE })
+      if (!data.success && data.message && mode === 'replace') {
         setError(data.message)
       }
-      setUsers(data.data?.users || [])
-      setTotal(data.data?.total ?? 0)
-      setTotalPages(data.data?.totalPages ?? 1)
+      const nextUsers = data.data?.users || []
+      const nextTotal = data.data?.total ?? 0
+      const nextTotalPages = data.data?.totalPages ?? 1
+      const more = pageNum < nextTotalPages && nextUsers.length > 0
+      setTotal(nextTotal)
+      setHasMore(more)
+      pageRef.current = pageNum
+      hasMoreRef.current = more
+      if (mode === 'append') {
+        setUsers(prev => {
+          const seen = new Set(prev.map(row => row._id))
+          return [...prev, ...nextUsers.filter(row => !seen.has(row._id))]
+        })
+      } else {
+        setUsers(nextUsers)
+      }
     } catch {
-      setError('Failed to load users.')
-      setUsers([])
+      if (mode === 'replace') {
+        setError('Failed to load users.')
+        setUsers([])
+        setHasMore(false)
+        hasMoreRef.current = false
+      }
     } finally {
+      loadingRef.current = false
       setLoading(false)
+      setLoadingMore(false)
     }
-  }, [page, limit])
+  }, [])
 
   useEffect(() => {
-    load()
-    const id = setInterval(load, 30000)
-    return () => clearInterval(id)
-  }, [load])
+    loadPage(1, 'replace')
+  }, [loadPage])
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (pageRef.current === 1 && !loadingRef.current) {
+        loadPage(1, 'replace')
+      }
+    }, 30000)
+    return () => window.clearInterval(id)
+  }, [loadPage])
+
+  useEffect(() => {
+    const node = sentinelRef.current
+    if (!node) return undefined
+    const observer = new IntersectionObserver(
+      entries => {
+        const entry = entries[0]
+        if (!entry?.isIntersecting) return
+        if (!hasMoreRef.current || loadingRef.current) return
+        loadPage(pageRef.current + 1, 'append')
+      },
+      { root: null, rootMargin: '200px', threshold: 0 },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [loadPage, users.length, hasMore])
 
   return (
     <div className="p-6 space-y-4">
@@ -186,28 +238,16 @@ export default function Users() {
           </table>
         </div>
 
-        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
-          <span className="text-xs text-slate-500">
-            Page {page} of {totalPages} · {total} total
-          </span>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="btn-ghost disabled:opacity-40"
-              disabled={page <= 1 || loading}
-              onClick={() => setPage(p => Math.max(1, p - 1))}
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              className="btn-ghost disabled:opacity-40"
-              disabled={page >= totalPages || loading}
-              onClick={() => setPage(p => p + 1)}
-            >
-              Next
-            </button>
-          </div>
+        <div ref={sentinelRef} className="px-4 py-3 border-t border-slate-700/50 text-center">
+          {loadingMore ? (
+            <span className="text-xs text-slate-500">Loading more...</span>
+          ) : hasMore ? (
+            <span className="text-xs text-slate-600">Scroll for more</span>
+          ) : users.length > 0 ? (
+            <span className="text-xs text-slate-600">
+              Showing {users.length} of {total}
+            </span>
+          ) : null}
         </div>
       </div>
 

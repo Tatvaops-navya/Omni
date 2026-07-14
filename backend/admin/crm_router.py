@@ -40,6 +40,7 @@ class AssignTatvaEmployeeRequest(BaseModel):
     employee_email: str = ""
     employee_department: str = ""
     employee_role: str = ""
+    staff_role: str = Field(default="presales", pattern="^(presales|rm)$")
     snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -63,6 +64,13 @@ class AddProgressStageRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     description: Optional[str] = Field(default=None, max_length=500)
     insert_after: str = Field(default="assigned", min_length=1, max_length=64)
+
+
+class UpsertSalesTargetRequest(BaseModel):
+    staff_type: str = Field(pattern="^(sales|rm)$")
+    staff_id: str = Field(min_length=1)
+    period: str = Field(pattern="^(day|month|quarter|half_year|year|all)$")
+    target_leads: int = Field(ge=0, le=100000)
 
 
 @router.post("/crm-login")
@@ -185,6 +193,7 @@ async def assign_tatva_employee_lead(
             employee_email=body.employee_email.strip(),
             employee_department=body.employee_department.strip(),
             employee_role=body.employee_role.strip(),
+            staff_role=body.staff_role,
             snapshot=body.snapshot,
         )
     except Exception as exc:
@@ -330,6 +339,83 @@ async def get_my_dashboard(
     return {"success": True, "data": data}
 
 
+@router.get("/team-performance")
+async def get_team_performance(
+    staff_type: str = Query(..., pattern="^(sales|rm)$"),
+    staff_id: str = Query(..., min_length=1),
+    period: str = Query("month"),
+    staff_email: Optional[str] = Query(None),
+    staff_name: Optional[str] = Query(None),
+    auth=Depends(require_admin),
+):
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+    try:
+        data = crm_store.admin_staff_dashboard(
+            staff_type=staff_type,
+            staff_id=staff_id,
+            staff_email=staff_email,
+            staff_name=staff_name,
+            period=period,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "data": data}
+
+
+@router.get("/sales-targets")
+async def get_sales_target(
+    staff_type: str = Query(..., pattern="^(sales|rm)$"),
+    staff_id: str = Query(..., min_length=1),
+    period: str = Query("month"),
+    auth=Depends(require_admin),
+):
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+    row = crm_store.get_sales_target(
+        staff_type=staff_type,
+        staff_id=staff_id,
+        period=period,
+    )
+    return {
+        "success": True,
+        "data": {
+            "staff_type": staff_type,
+            "staff_id": staff_id,
+            "period": period,
+            "target_leads": int((row or {}).get("target_leads") or 0),
+            "configured": bool(row),
+        },
+    }
+
+
+@router.put("/sales-targets")
+async def upsert_sales_target(body: UpsertSalesTargetRequest, auth=Depends(require_admin)):
+    if not crm_store.crm_available():
+        raise HTTPException(status_code=503, detail="CRM database not configured")
+    try:
+        row = crm_store.upsert_sales_target(
+            staff_type=body.staff_type,
+            staff_id=body.staff_id,
+            period=body.period,
+            target_leads=body.target_leads,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "success": True,
+        "data": {
+            "staff_type": body.staff_type,
+            "staff_id": body.staff_id,
+            "period": body.period,
+            "target_leads": int(row.get("target_leads") or body.target_leads),
+            "configured": True,
+        },
+    }
+
+
 @router.patch("/my-leads/{external_id}/complete")
 async def complete_my_lead(
     external_id: str,
@@ -355,6 +441,7 @@ async def complete_my_lead(
             staff_role=str(role),
             source=source,
             notes=body.notes,
+            staff_email=str(auth.get("email") or ""),
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
