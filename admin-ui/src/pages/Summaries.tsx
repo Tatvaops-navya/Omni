@@ -17,7 +17,7 @@ export default function Summaries() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-200">Project Summaries</h1>
+        <h1 className="page-title">Project Summaries</h1>
         <p className="text-sm text-slate-500 mt-1">{summaries.length} generated</p>
       </div>
 
@@ -51,7 +51,7 @@ export default function Summaries() {
                   ['🎨 Design Direction', s.design_direction],
                   ['✅ Execution Readiness', s.execution_readiness],
                 ].map(([label, value]) => value && (
-                  <div key={label as string} className="bg-navy-900 rounded-lg p-3">
+                  <div key={label as string} className="bg-slate-100 dark:bg-navy-900 rounded-lg p-3">
                     <p className="text-slate-500 mb-1">{label}</p>
                     <p className="text-slate-300">{value}</p>
                   </div>
@@ -59,7 +59,7 @@ export default function Summaries() {
               </div>
 
               {s.scope_of_work?.length > 0 && (
-                <div className="bg-navy-900 rounded-lg p-3 text-xs">
+                <div className="bg-slate-100 dark:bg-navy-900 rounded-lg p-3 text-xs">
                   <p className="text-slate-500 mb-2">🏗️ Scope of Work</p>
                   <div className="flex flex-wrap gap-1.5">
                     {s.scope_of_work.map((item: string, j: number) => (
@@ -70,7 +70,7 @@ export default function Summaries() {
               )}
 
               {s.special_considerations && (
-                <div className="bg-navy-900 rounded-lg p-3 text-xs">
+                <div className="bg-slate-100 dark:bg-navy-900 rounded-lg p-3 text-xs">
                   <p className="text-slate-500 mb-1">⭐ Special Considerations</p>
                   <p className="text-slate-300">{s.special_considerations}</p>
                 </div>

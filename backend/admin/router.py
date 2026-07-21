@@ -27,7 +27,11 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 class LoginRequest(BaseModel):
     email: str
-    password: str
+    password: str = ""
+    accessToken: Optional[str] = None
+    tatvaPayload: Optional[dict[str, Any]] = None
+    name: Optional[str] = None
+    userId: Optional[str] = None
 
 
 class TeamOtpVerifyRequest(BaseModel):
@@ -35,25 +39,141 @@ class TeamOtpVerifyRequest(BaseModel):
     otp: str
 
 
+class TeamSessionRequest(BaseModel):
+    """Mint a local team session after browser-side Tatva OTP verify."""
+    phoneNumber: str
+    accessToken: str
+    tatvaPayload: Optional[dict[str, Any]] = None
+
+
 def _team_role_from_tatva_user(user: dict[str, Any]) -> str:
-    """Map Tatva employee metadata to CRM team role (presales | rm)."""
+    """Map Tatva employee metadata to a CRM team role."""
     blob = " ".join(
         str(user.get(key) or "").lower()
         for key in ("role_name", "department", "name")
     )
+    normalized = re.sub(r"[\s-]+", "_", blob)
+    if "campaign_owner" in normalized or re.search(r"\bcampaign\b", blob):
+        return "campaign_owner"
     if "relationship" in blob or re.search(r"\brm\b", blob):
         return "rm"
     return "presales"
 
 
+def _issue_admin_session(
+    *,
+    user: dict[str, Any],
+    email: str,
+    access_token: str | None,
+) -> dict[str, Any]:
+    name = str(user.get("name") or "Admin")
+    user_email = str(user.get("email") or email).strip().lower()
+    user_id = user.get("id")
+    token = generate_session_token(
+        role="admin",
+        user_id=str(user_id) if user_id else None,
+        name=name,
+        email=user_email,
+    )
+    return {
+        "token": token,
+        "expires_in_hours": 8,
+        "user": {
+            "role": "admin",
+            "name": name,
+            "email": user_email,
+            "id": str(user_id) if user_id else None,
+            "tatvaRole": user.get("role_name"),
+            "department": user.get("department"),
+        },
+        "tatvaAccessToken": access_token,
+        "accessToken": access_token,
+    }
+
+
+def _issue_team_session(
+    *,
+    user: dict[str, Any],
+    phone: str,
+    access_token: str | None,
+) -> dict[str, Any]:
+    from backend.crm import store as crm_store
+
+    name = str(user.get("name") or "Team")
+    user_email = str(user.get("email") or "").strip().lower() or None
+    tatva_id = str(user.get("id") or "").strip() or None
+
+    role = _team_role_from_tatva_user(user)
+    session_user_id = (
+        f"{crm_store.TATVA_EMPLOYEE_PREFIX}{tatva_id}" if tatva_id else None
+    )
+    if user_email and crm_store.crm_available():
+        crm_user = crm_store.get_crm_user_by_email(user_email)
+        if crm_user and crm_user.get("active"):
+            crm_role = str(crm_user.get("role") or "").strip().lower()
+            if crm_role in {"presales", "rm", "campaign_owner"}:
+                role = crm_role
+            session_user_id = str(crm_user.get("id") or session_user_id)
+            name = str(crm_user.get("name") or name)
+            user_email = str(crm_user.get("email") or user_email).strip().lower()
+
+    if not session_user_id:
+        raise HTTPException(status_code=401, detail="Employee profile not found for this number")
+
+    token = generate_session_token(
+        role=role,
+        user_id=session_user_id,
+        name=name,
+        email=user_email,
+    )
+    return {
+        "token": token,
+        "expires_in_hours": 8,
+        "user": {
+            "role": role,
+            "name": name,
+            "email": user_email,
+            "id": session_user_id,
+            "phone": user.get("phone") or phone,
+            "tatvaRole": user.get("role_name"),
+            "department": user.get("department"),
+        },
+        "tatvaAccessToken": access_token,
+        "accessToken": access_token,
+    }
+
+
 @router.post("/login")
 @router.post("/session")
 async def admin_login(body: LoginRequest):
-    """Authenticate admin via Tatva employees auth login, then issue a local session token."""
-    from backend.integrations.tatva_employees import login_tatva_employee
+    """
+    Issue a local admin session.
+    Prefer browser Tatva login + accessToken (no second Tatva password call).
+    Fallback: email/password re-verify via Tatva.
+    """
+    from backend.integrations.tatva_employees import (
+        extract_employee_user_from_payload,
+        login_tatva_employee,
+        user_from_tatva_access_token,
+    )
 
-    email = (body.email or "").strip()
+    email = (body.email or "").strip().lower()
+    access_token = (body.accessToken or "").strip() or None
     password = body.password or ""
+
+    if access_token:
+        if isinstance(body.tatvaPayload, dict) and body.tatvaPayload:
+            user = extract_employee_user_from_payload(body.tatvaPayload)
+        else:
+            user = user_from_tatva_access_token(access_token, fallback_email=email)
+        if body.name:
+            user["name"] = str(body.name).strip()
+        if body.userId:
+            user["id"] = str(body.userId).strip()
+        if not user.get("email"):
+            user["email"] = email
+        return _issue_admin_session(user=user, email=email, access_token=access_token)
+
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email and password are required")
 
@@ -68,34 +188,16 @@ async def admin_login(body: LoginRequest):
         )
 
     user = result.get("user") if isinstance(result.get("user"), dict) else {}
-    name = str(user.get("name") or "Admin")
-    user_email = str(user.get("email") or email).strip().lower()
-    user_id = user.get("id")
-    token = generate_session_token(
-        role="admin",
-        user_id=str(user_id) if user_id else None,
-        name=name,
-        email=user_email,
+    return _issue_admin_session(
+        user=user,
+        email=email,
+        access_token=result.get("access_token") if isinstance(result.get("access_token"), str) else None,
     )
-    access_token = result.get("access_token")
-    return {
-        "token": token,
-        "expires_in_hours": 8,
-        "user": {
-            "role": "admin",
-            "name": name,
-            "email": user_email,
-            "id": str(user_id) if user_id else None,
-        },
-        "tatvaAccessToken": access_token,
-        "accessToken": access_token,
-    }
 
 
 @router.post("/team-otp/verify")
 async def team_otp_verify(body: TeamOtpVerifyRequest):
-    """Verify Tatva employee OTP, then issue a local team session token."""
-    from backend.crm import store as crm_store
+    """Verify Tatva employee OTP (server-side), then issue a local team session token."""
     from backend.integrations.tatva_employees import verify_tatva_employee_otp
 
     result = await verify_tatva_employee_otp(
@@ -112,47 +214,41 @@ async def team_otp_verify(body: TeamOtpVerifyRequest):
         )
 
     user = result.get("user") if isinstance(result.get("user"), dict) else {}
-    name = str(user.get("name") or "Team")
-    user_email = str(user.get("email") or "").strip().lower() or None
-    tatva_id = str(user.get("id") or "").strip() or None
-
-    role = _team_role_from_tatva_user(user)
-    session_user_id = (
-        f"{crm_store.TATVA_EMPLOYEE_PREFIX}{tatva_id}" if tatva_id else None
+    phone = str(user.get("phone") or body.phoneNumber or "").strip()
+    return _issue_team_session(
+        user=user,
+        phone=phone,
+        access_token=result.get("access_token") if isinstance(result.get("access_token"), str) else None,
     )
-    if user_email and crm_store.crm_available():
-        crm_user = crm_store.get_crm_user_by_email(user_email)
-        if crm_user and crm_user.get("active"):
-            crm_role = str(crm_user.get("role") or "").strip().lower()
-            if crm_role in {"presales", "rm"}:
-                role = crm_role
-            session_user_id = str(crm_user.get("id") or session_user_id)
-            name = str(crm_user.get("name") or name)
-            user_email = str(crm_user.get("email") or user_email).strip().lower()
 
-    if not session_user_id:
-        raise HTTPException(status_code=401, detail="Employee profile not found for this number")
 
-    token = generate_session_token(
-        role=role,
-        user_id=session_user_id,
-        name=name,
-        email=user_email,
+@router.post("/team-session")
+async def team_session_from_tatva(body: TeamSessionRequest):
+    """
+    Mint a local team session after the browser verified OTP on Tatva
+    POST /admin/api/admin/employees/auth/otp/verify (no second OTP verify).
+    """
+    from backend.integrations.tatva_employees import (
+        extract_employee_user_from_payload,
+        user_from_tatva_access_token,
     )
-    access_token = result.get("access_token")
-    return {
-        "token": token,
-        "expires_in_hours": 8,
-        "user": {
-            "role": role,
-            "name": name,
-            "email": user_email,
-            "id": session_user_id,
-            "phone": user.get("phone"),
-        },
-        "tatvaAccessToken": access_token,
-        "accessToken": access_token,
-    }
+
+    access_token = (body.accessToken or "").strip()
+    phone = (body.phoneNumber or "").strip()
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Tatva accessToken is required")
+    if not phone:
+        raise HTTPException(status_code=400, detail="Phone number is required")
+
+    payload = body.tatvaPayload if isinstance(body.tatvaPayload, dict) else {}
+    user = extract_employee_user_from_payload(payload)
+    token_user = user_from_tatva_access_token(access_token)
+    for key in ("id", "name", "email", "role_name", "department"):
+        if not user.get(key) and token_user.get(key):
+            user[key] = token_user[key]
+    if not user.get("phone"):
+        user["phone"] = phone
+    return _issue_team_session(user=user, phone=phone, access_token=access_token)
 
 
 # ΓöÇΓöÇΓöÇ Dashboard ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ

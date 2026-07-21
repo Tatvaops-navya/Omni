@@ -151,14 +151,14 @@ function AttachmentPreviewModal({
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-3">
-          <p className="text-sm text-slate-200 truncate pr-4">
+          <p className="text-sm text-theme-primary truncate pr-4">
             {attachment.file_name || 'Uploaded file'}
           </p>
           <button type="button" className="btn-ghost p-1" onClick={onClose} aria-label="Close">
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="bg-navy-900 rounded-lg overflow-hidden flex items-center justify-center min-h-[200px] max-h-[75vh]">
+        <div className="bg-slate-100 dark:bg-navy-900 rounded-lg overflow-hidden flex items-center justify-center min-h-[200px] max-h-[75vh]">
           {isImage && url ? (
             <img
               src={url}
@@ -253,7 +253,7 @@ export function EnquiryFileList({
             <li key={`${a.file_name}-${url}-${i}`} className="flex items-center justify-between gap-2 text-sm">
               <button
                 type="button"
-                className="text-slate-300 truncate flex items-center gap-1.5 min-w-0 text-left hover:text-indigo-300 disabled:cursor-default disabled:hover:text-slate-300"
+                className="text-theme-secondary truncate flex items-center gap-1.5 min-w-0 text-left hover:text-indigo-300 disabled:cursor-default disabled:hover:text-slate-700 dark:hover:text-slate-300"
                 disabled={!url}
                 onClick={() => url && setPreview(a)}
               >
@@ -312,7 +312,7 @@ export function EnquiryDetailPanel({
   const locationLine = [city, location].filter(Boolean).join(', ')
 
   return (
-    <div className="bg-navy-900/60 rounded-lg p-4 space-y-3 text-sm">
+    <div className="bg-slate-100 dark:bg-navy-900/60 rounded-lg p-4 space-y-3 text-sm">
       <div className="space-y-1 text-slate-300">
         <p>
           <span className="text-slate-500">Lead:</span>{' '}
@@ -335,11 +335,11 @@ export function EnquiryDetailPanel({
       </div>
 
       {requirements.length > 0 && (
-        <div className="border-t border-slate-700/40 pt-3">
+        <div className="border-t border-slate-200/80 dark:border-slate-700/40 pt-3">
           <p className="text-xs text-slate-500 mb-2">Requirements</p>
           <ul className="space-y-1.5">
             {requirements.map((item, idx) => (
-              <li key={`${item.label}-${idx}`} className="text-slate-300 leading-snug">
+              <li key={`${item.label}-${idx}`} className="text-theme-secondary leading-snug">
                 <span className="text-slate-400">{shortLabel(item.label)}:</span>{' '}
                 {item.value}
               </li>
@@ -349,7 +349,7 @@ export function EnquiryDetailPanel({
       )}
 
       {showFiles && attachments.length > 0 && (
-        <div className="border-t border-slate-700/40 pt-3">
+        <div className="border-t border-slate-200/80 dark:border-slate-700/40 pt-3">
           <p className="text-xs text-slate-500 mb-2">
             Uploaded files ({attachments.length})
           </p>
@@ -360,7 +360,7 @@ export function EnquiryDetailPanel({
         </div>
       )}
 
-      <p className="text-[10px] text-slate-600 pt-1 border-t border-slate-700/40">
+      <p className="text-[10px] text-slate-600 pt-1 border-t border-slate-200/80 dark:border-slate-700/40">
         {[enquiry.channel, formatWhen(enquiry.last_active)].filter(Boolean).join(' · ')}
       </p>
     </div>

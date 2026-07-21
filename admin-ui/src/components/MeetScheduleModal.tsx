@@ -46,11 +46,11 @@ function MeetSlotCard({
   const busy = busySlotId === slotId
 
   return (
-    <div className="rounded-lg border border-slate-700/50 bg-navy-800/50 p-4 space-y-4">
+    <div className="rounded-lg border border-slate-200/80 bg-white dark:border-slate-700/50 dark:bg-navy-800/50 p-4 space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="text-xs text-slate-500 uppercase tracking-wide">Customer</p>
-          <p className="text-slate-200 font-medium">{name}</p>
+          <p className="text-theme-primary font-medium">{name}</p>
           <p className="text-xs text-slate-400 mt-1">{phone}</p>
           <p className="text-xs text-slate-500">{email}</p>
         </div>
@@ -72,7 +72,7 @@ function MeetSlotCard({
       {record.description && (
         <div>
           <p className="text-xs text-slate-500 uppercase tracking-wide">Description</p>
-          <p className="text-slate-300 text-sm">{record.description}</p>
+          <p className="text-theme-secondary text-sm">{record.description}</p>
         </div>
       )}
 
@@ -198,7 +198,7 @@ export default function MeetScheduleModal({
       >
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <h2 className="text-lg font-semibold text-slate-200">Meet schedules</h2>
+            <h2 className="text-lg font-semibold text-theme-primary">Meet schedules</h2>
             <p className="text-sm text-slate-500 mt-1">{displayName}</p>
           </div>
           <button type="button" className="btn-ghost p-1 shrink-0" onClick={onClose} aria-label="Close">

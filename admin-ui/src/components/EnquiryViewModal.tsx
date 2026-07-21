@@ -101,7 +101,7 @@ export default function EnquiryViewModal({
         <div className="flex items-start justify-between gap-3 mb-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold text-slate-200">{displayName}</h2>
+              <h2 className="text-lg font-semibold text-theme-primary">{displayName}</h2>
               {badge && (
                 <span className={`text-[10px] uppercase px-2 py-0.5 rounded-full border ${badge.className}`}>
                   {badge.label}

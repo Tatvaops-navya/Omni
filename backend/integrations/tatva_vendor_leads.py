@@ -1,5 +1,5 @@
 """
-Fetch vendor leads from Tatva admin API for Krsna admin panel.
+Fetch vendor leads from Tatva admin API for CRM admin panel.
 GET /admin/api/admin/vendor-leads
 """
 from __future__ import annotations

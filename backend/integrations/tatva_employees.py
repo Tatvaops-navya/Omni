@@ -122,6 +122,41 @@ def _pick_str(*values: Any) -> str:
     return ""
 
 
+def decode_jwt_claims(token: str) -> dict[str, Any]:
+    """Decode Tatva JWT payload (no signature verify — used after Tatva login)."""
+    import base64
+    import json
+
+    try:
+        part = (token or "").split(".")[1]
+        if not part:
+            return {}
+        padding = "=" * (-len(part) % 4)
+        raw = base64.urlsafe_b64decode(part + padding)
+        data = json.loads(raw.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def user_from_tatva_access_token(token: str, *, fallback_email: str = "") -> dict[str, Any]:
+    """Build normalized user dict from Tatva accessToken claims."""
+    claims = decode_jwt_claims(token)
+    email = _pick_str(claims.get("email"), fallback_email)
+    user_id = _pick_str(claims.get("_id"), claims.get("id"), claims.get("sub"))
+    role_name = _pick_str(claims.get("role"), claims.get("roleName"))
+    display = role_name.replace("_", " ").title() if role_name else ""
+    if not display and email:
+        display = email.split("@")[0].replace(".", " ").title()
+    return {
+        "id": user_id or None,
+        "name": display or "Admin",
+        "email": email or None,
+        "role_name": role_name or None,
+        "department": None,
+    }
+
+
 def _extract_access_token(payload: dict[str, Any]) -> str | None:
     """Pull Tatva JWT from login/OTP payloads (`data.accessToken`)."""
     data = payload.get("data")
@@ -205,6 +240,13 @@ def _extract_employee_user(payload: dict[str, Any]) -> dict[str, Any]:
                 "department": dept_name or None,
             }
     return {"id": None, "name": "Team", "email": None, "phone": None}
+
+
+def extract_employee_user_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Public wrapper used by admin team-session after browser OTP verify."""
+    if not isinstance(payload, dict):
+        return {"id": None, "name": "Team", "email": None, "phone": None}
+    return _extract_employee_user(payload)
 
 
 def _normalize_otp_phone(phone_number: str) -> str:

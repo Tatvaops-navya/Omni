@@ -78,7 +78,7 @@ export default function Enquiries() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-200">Enquiries</h1>
+        <h1 className="page-title">Enquiries</h1>
         <p className="text-sm text-slate-500 mt-1">
           {enquiries.length} {scopedToAssignments || isTeamMember ? 'assigned ' : ''}lead{enquiries.length !== 1 ? 's' : ''}
         </p>
@@ -143,7 +143,7 @@ export default function Enquiries() {
                 </div>
 
                 {isOpen && (
-                  <div className="mt-3 pt-3 border-t border-slate-700/50">
+                  <div className="mt-3 pt-3 border-t border-slate-200/80 dark:border-slate-700/50">
                     <EnquiryDetailPanel
                       enquiry={e}
                       showFiles={showAttachments}

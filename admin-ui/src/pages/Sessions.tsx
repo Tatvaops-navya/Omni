@@ -30,7 +30,7 @@ export default function Sessions() {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-slate-200">Sessions</h1>
+          <h1 className="page-title">Sessions</h1>
           <p className="text-sm text-slate-500 mt-1">{sessions.length} total · refreshes every 10s</p>
         </div>
       </div>
@@ -61,7 +61,7 @@ export default function Sessions() {
               {/* Main info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm font-medium text-slate-200 truncate">
+                  <span className="text-sm font-medium text-theme-primary truncate">
                     {s.phone_number}
                   </span>
                   <span className={clsx('badge', STAGE_COLORS[s.conversation_stage] ?? '')}>

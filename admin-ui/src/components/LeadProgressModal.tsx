@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { format } from 'date-fns'
-import { Check, ChevronDown, ChevronUp, Plus, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp, Circle, Plus, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../api/client'
 import type { LeadCommentLogEntry } from './CommentLogModal'
@@ -23,126 +23,208 @@ function formatWhen(iso?: string): string {
   }
 }
 
-function MilestoneNode({ state, isCustom }: { state: TimelineMilestone['state']; isCustom?: boolean }) {
+function formatWhenShort(iso?: string): string {
+  if (!iso) return ''
+  try {
+    return format(new Date(iso), 'dd MMM yyyy')
+  } catch {
+    return iso
+  }
+}
+
+function stepAccent(milestone: TimelineMilestone) {
+  if (milestone.isCustom) {
+    return {
+      ring: 'ring-teal-500/40',
+      fill: 'bg-teal-500 border-teal-400',
+      activeBg: 'bg-teal-500/15 border-teal-500/30',
+      text: 'text-teal-300',
+      line: 'from-teal-500 to-teal-400',
+      dot: 'bg-teal-400',
+    }
+  }
+  return {
+    ring: 'ring-indigo-500/40',
+    fill: 'bg-indigo-500 border-indigo-400',
+    activeBg: 'bg-indigo-500/15 border-indigo-500/30',
+    text: 'text-indigo-300',
+    line: 'from-indigo-500 to-indigo-400',
+    dot: 'bg-indigo-400',
+  }
+}
+
+function StepNode({ milestone, index }: { milestone: TimelineMilestone; index: number }) {
+  const accent = stepAccent(milestone)
+  const { state } = milestone
+
   return (
     <div
       className={clsx(
-        'w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0 z-10',
-        state === 'done' && (isCustom ? 'bg-teal-500 border-teal-500 text-white' : 'bg-indigo-500 border-indigo-500 text-white'),
-        state === 'active' && (isCustom
-          ? 'bg-teal-500/20 border-teal-400 ring-2 ring-teal-500/40'
-          : 'bg-indigo-500/20 border-indigo-400 ring-2 ring-indigo-500/40'),
-        state === 'upcoming' && 'bg-navy-900 border-slate-600',
+        'relative flex items-center justify-center w-11 h-11 rounded-full border-2 transition-all duration-300',
+        state === 'done' && clsx(accent.fill, 'text-white shadow-lg shadow-indigo-500/20'),
+        state === 'active' && clsx(
+          'bg-white dark:bg-navy-800 border-indigo-400 ring-4',
+          accent.ring,
+          milestone.isCustom && 'border-teal-400 ring-teal-500/40',
+        ),
+        state === 'upcoming' && 'bg-slate-100 dark:bg-navy-900/80 border-slate-300 dark:border-slate-600 text-slate-500',
       )}
     >
-      {state === 'done' && <Check className="w-4 h-4" strokeWidth={2.5} />}
+      {state === 'done' && <Check className="w-5 h-5" strokeWidth={2.5} />}
       {state === 'active' && (
-        <span className={clsx('w-2.5 h-2.5 rounded-full', isCustom ? 'bg-teal-400' : 'bg-indigo-400')} />
+        <span className={clsx('w-3 h-3 rounded-full animate-pulse', accent.dot)} />
+      )}
+      {state === 'upcoming' && (
+        <span className="text-xs font-semibold tabular-nums">{index + 1}</span>
       )}
     </div>
   )
 }
 
-function MilestoneRow({
-  milestone,
-  isLast,
-  expanded,
+function StepConnector({
+  leftDone,
+  isCustom,
+}: {
+  leftDone: boolean
+  isCustom?: boolean
+}) {
+  return (
+    <div className="flex-1 min-w-[24px] max-w-[80px] h-11 flex items-center px-1">
+      <div
+        className={clsx(
+          'w-full h-1 rounded-full transition-colors duration-300',
+          leftDone
+            ? clsx('bg-gradient-to-r', isCustom ? 'from-teal-500 to-teal-400' : 'from-indigo-500 to-indigo-400')
+            : 'bg-slate-700/80',
+        )}
+      />
+    </div>
+  )
+}
+
+function HorizontalStepper({
+  milestones,
+  expandedKey,
   onToggle,
   onCompleteStage,
   completingStageId,
 }: {
-  milestone: TimelineMilestone
-  isLast: boolean
-  expanded: boolean
-  onToggle: () => void
+  milestones: TimelineMilestone[]
+  expandedKey: string | null
+  onToggle: (key: string) => void
   onCompleteStage?: (stageId: string) => void
   completingStageId?: string | null
 }) {
-  const hasSubEvents = (milestone.subEvents?.length ?? 0) > 0
-  const lineDone = milestone.state === 'done'
+  const activeMilestone = milestones.find(m => m.state === 'active')
 
   return (
-    <div className="relative flex gap-4 pb-8 last:pb-0">
-      {!isLast && (
-        <div
-          className={clsx(
-            'absolute left-[13px] top-7 bottom-0 w-0.5 -translate-x-1/2',
-            lineDone ? (milestone.isCustom ? 'bg-teal-500' : 'bg-indigo-500') : 'border-l-2 border-dashed border-slate-600',
-          )}
-        />
-      )}
+    <div className="rounded-xl border border-slate-200/80 bg-slate-50 dark:border-white/[0.06] dark:bg-navy-900/60 p-5 sm:p-6 space-y-5">
+      <div className="flex items-start w-full min-w-0">
+        {milestones.map((milestone, index) => {
+          const hasSubEvents = (milestone.subEvents?.length ?? 0) > 0
+          const isExpanded = expandedKey === milestone.key
+          const accent = stepAccent(milestone)
+          const isActive = milestone.state === 'active'
+          const isDone = milestone.state === 'done'
 
-      <MilestoneNode state={milestone.state} isCustom={milestone.isCustom} />
+          return (
+            <div key={milestone.key} className="flex items-start flex-1 min-w-0 last:flex-none">
+              <div className="flex flex-col items-center flex-1 min-w-[88px] max-w-[140px]">
+                <StepNode milestone={milestone} index={index} />
 
-      <div className="flex-1 min-w-0 pt-0.5">
-        <button
-          type="button"
-          className={clsx(
-            'w-full flex items-start justify-between gap-2 text-left',
-            hasSubEvents && 'cursor-pointer group',
-            !hasSubEvents && 'cursor-default',
-          )}
-          onClick={hasSubEvents ? onToggle : undefined}
-        >
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <p
-                className={clsx(
-                  'text-sm font-semibold',
-                  milestone.state === 'upcoming' ? 'text-slate-500' : 'text-slate-100',
-                )}
-              >
-                {milestone.title}
-              </p>
-              {milestone.isCustom && (
-                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-300 border border-teal-500/20">
-                  Custom
-                </span>
-              )}
-            </div>
-            {milestone.timestamp && milestone.state !== 'upcoming' && (
-              <p className={clsx('text-xs mt-0.5', milestone.isCustom ? 'text-teal-300/80' : 'text-indigo-300/80')}>
-                {formatWhen(milestone.timestamp)}
-              </p>
-            )}
-            {milestone.description && (
-              <p className="text-xs text-slate-500 mt-1">{milestone.description}</p>
-            )}
-          </div>
-          {hasSubEvents && (
-            <span className="text-slate-500 group-hover:text-slate-300 shrink-0 mt-0.5">
-              {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </span>
-          )}
-        </button>
+                <button
+                  type="button"
+                  className={clsx(
+                    'mt-3 w-full rounded-lg px-2 py-2 text-center transition-colors',
+                    isActive && clsx('border', accent.activeBg),
+                    hasSubEvents && 'hover:bg-white/[0.03] cursor-pointer',
+                    !hasSubEvents && 'cursor-default',
+                  )}
+                  onClick={hasSubEvents ? () => onToggle(milestone.key) : undefined}
+                >
+                  <p
+                    className={clsx(
+                      'text-[11px] font-semibold leading-snug line-clamp-2',
+                      isActive && 'text-slate-900 dark:text-slate-100',
+                      isDone && 'text-theme-secondary',
+                      milestone.state === 'upcoming' && 'text-slate-500',
+                    )}
+                  >
+                    {milestone.title}
+                  </p>
 
-        {milestone.isCustom && milestone.stageId && milestone.state === 'active' && onCompleteStage && (
-          <button
-            type="button"
-            className="mt-2 text-xs text-teal-400 hover:text-teal-300 disabled:opacity-50"
-            disabled={completingStageId === milestone.stageId}
-            onClick={() => onCompleteStage(milestone.stageId!)}
-          >
-            {completingStageId === milestone.stageId ? 'Saving...' : 'Mark stage complete'}
-          </button>
-        )}
+                  {milestone.isCustom && (
+                    <span className="inline-block mt-1 text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-teal-500/10 text-teal-300 border border-teal-500/20">
+                      Custom
+                    </span>
+                  )}
 
-        {hasSubEvents && expanded && (
-          <div className="mt-3 ml-1 space-y-3 border-l-2 border-indigo-500/30 pl-4">
-            {milestone.subEvents!.map((event, idx) => (
-              <div key={`${event.timestamp || 'e'}-${idx}`} className="relative">
-                <span className="absolute -left-[21px] top-1.5 w-2 h-2 rounded-full bg-indigo-400" />
-                {event.timestamp && (
-                  <p className="text-[11px] text-indigo-300/70">{formatWhen(event.timestamp)}</p>
-                )}
-                <p className="text-sm text-slate-300 mt-0.5 whitespace-pre-wrap break-words">{event.text}</p>
-                {event.author && (
-                  <p className="text-[11px] text-slate-500 mt-0.5">— {event.author}</p>
+                  {milestone.timestamp && milestone.state !== 'upcoming' && (
+                    <p className={clsx('text-[10px] mt-1 tabular-nums', accent.text)}>
+                      {formatWhenShort(milestone.timestamp)}
+                    </p>
+                  )}
+
+                  {hasSubEvents && (
+                    <span className="inline-flex items-center gap-0.5 mt-1 text-[10px] text-slate-500">
+                      {milestone.subEvents!.length} update{milestone.subEvents!.length !== 1 ? 's' : ''}
+                      {isExpanded
+                        ? <ChevronUp className="w-3 h-3" />
+                        : <ChevronDown className="w-3 h-3" />}
+                    </span>
+                  )}
+                </button>
+
+                {milestone.isCustom && milestone.stageId && isActive && onCompleteStage && (
+                  <button
+                    type="button"
+                    className="mt-1 text-[10px] font-medium text-teal-400 hover:text-teal-300 disabled:opacity-50"
+                    disabled={completingStageId === milestone.stageId}
+                    onClick={() => onCompleteStage(milestone.stageId!)}
+                  >
+                    {completingStageId === milestone.stageId ? 'Saving...' : 'Mark complete'}
+                  </button>
                 )}
               </div>
-            ))}
+
+              {index < milestones.length - 1 && (
+                <StepConnector leftDone={milestone.state === 'done'} isCustom={milestone.isCustom} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {activeMilestone?.description && (
+        <div className="flex items-start gap-2.5 rounded-lg border border-indigo-500/20 bg-indigo-500/[0.06] px-3.5 py-3">
+          <Circle className="w-3.5 h-3.5 text-indigo-400 mt-0.5 shrink-0 fill-indigo-400/30" />
+          <p className="text-xs text-slate-400 leading-relaxed">{activeMilestone.description}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SubEventsPanel({ milestone }: { milestone: TimelineMilestone }) {
+  if (!milestone.subEvents?.length) return null
+  return (
+    <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] p-4">
+      <p className="text-xs font-semibold text-indigo-300 mb-3">{milestone.title} — team updates</p>
+      <div className="space-y-3 max-h-52 overflow-y-auto pr-1">
+        {milestone.subEvents.map((event, idx) => (
+          <div
+            key={`${event.timestamp || 'e'}-${idx}`}
+            className="rounded-lg border border-slate-200/80 bg-slate-50 dark:border-slate-700/40 dark:bg-navy-900/50 px-3 py-2.5"
+          >
+            {event.timestamp && (
+              <p className="text-[11px] text-indigo-300/70 tabular-nums">{formatWhen(event.timestamp)}</p>
+            )}
+            <p className="text-sm text-theme-secondary mt-0.5 whitespace-pre-wrap break-words">{event.text}</p>
+            {event.author && (
+              <p className="text-[11px] text-slate-500 mt-1">— {event.author}</p>
+            )}
           </div>
-        )}
+        ))}
       </div>
     </div>
   )
@@ -223,7 +305,6 @@ export default function LeadProgressModal({
   const defaultExpanded = milestones.find(
     m => m.key === 'in_progress' && (m.subEvents?.length ?? 0) > 0,
   )?.key
-    || milestones.find(m => m.state === 'active')?.key
     || null
 
   const [expandedKey, setExpandedKey] = useState<string | null>(defaultExpanded)
@@ -237,6 +318,8 @@ export default function LeadProgressModal({
     completedAt,
     commentLog,
   )
+
+  const expandedMilestone = milestones.find(m => m.key === expandedKey)
 
   const applyStagesFromAssignment = (assignment: Record<string, unknown> | undefined) => {
     const stages = extractCustomProgressStages(assignment)
@@ -291,41 +374,44 @@ export default function LeadProgressModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
       onClick={onClose}
     >
       <div
-        className="card w-full max-w-md max-h-[90vh] overflow-y-auto"
+        className="card w-full max-w-3xl max-h-[90vh] overflow-y-auto shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3 mb-6">
+        <div className="flex items-start justify-between gap-3 mb-5">
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-slate-200">Lead progress</h2>
+            <h2 className="text-lg font-semibold text-theme-heading">Lead progress</h2>
             <p className="text-sm text-slate-400 mt-0.5 truncate">{leadName}</p>
-            <span className="inline-block mt-2 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+            <span className="inline-flex items-center gap-1.5 mt-2.5 text-[10px] uppercase tracking-[0.12em] font-semibold px-2.5 py-1 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/25">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
               Current · {stage}
             </span>
           </div>
-          <button type="button" className="btn-ghost p-1 shrink-0" onClick={onClose} aria-label="Close">
+          <button type="button" className="btn-ghost p-1.5 shrink-0 rounded-lg" onClick={onClose} aria-label="Close">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="pl-1">
-          {milestones.map((milestone, index) => (
-            <MilestoneRow
-              key={milestone.key}
-              milestone={milestone}
-              isLast={index === milestones.length - 1}
-              expanded={expandedKey === milestone.key}
-              onToggle={() => setExpandedKey(prev => (prev === milestone.key ? null : milestone.key))}
-              onCompleteStage={externalId ? handleCompleteStage : undefined}
-              completingStageId={completingStageId}
-            />
-          ))}
+        <div className="overflow-x-auto -mx-1 px-1">
+          <HorizontalStepper
+            milestones={milestones}
+            expandedKey={expandedKey}
+            onToggle={key => setExpandedKey(prev => (prev === key ? null : key))}
+            onCompleteStage={externalId ? handleCompleteStage : undefined}
+            completingStageId={completingStageId}
+          />
         </div>
 
-        <div className="mt-6 pt-4 border-t border-slate-700/50">
+        {expandedMilestone && (expandedMilestone.subEvents?.length ?? 0) > 0 && (
+          <div className="mt-4">
+            <SubEventsPanel milestone={expandedMilestone} />
+          </div>
+        )}
+
+        <div className="mt-6 pt-4 border-t border-slate-200/80 dark:border-slate-700/50">
           {!showAddForm ? (
             <button
               type="button"

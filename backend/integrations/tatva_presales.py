@@ -1,4 +1,4 @@
-﻿"""
+"""
 Submit presales lead after the create-project Yes/No step.
 POST /admin/api/admin/presales
 """
@@ -172,7 +172,7 @@ async def fetch_presales_records(
     utm_source: str | None = None,
     utm_medium: str | None = None,
 ) -> dict[str, Any]:
-    """GET presales list from Tatva admin API for Krsna admin panel."""
+    """GET presales list from Tatva admin API for CRM admin panel."""
     settings = get_settings()
     base_url = (settings.tatva_users_api_base_url or "").rstrip("/")
     if not base_url:

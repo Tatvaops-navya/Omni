@@ -40,7 +40,7 @@ export default function SessionDetail() {
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex-1">
-          <h1 className="text-lg font-semibold text-slate-200">{session.phone_number}</h1>
+          <h1 className="text-lg font-semibold text-theme-primary">{session.phone_number}</h1>
           <p className="text-xs text-slate-500">{session.channel} · {session.conversation_stage}</p>
         </div>
         <div className="flex gap-2">
@@ -133,7 +133,7 @@ export default function SessionDetail() {
                 )}
                 <div>
                   <span className="text-slate-500">Stage</span>
-                  <p className="text-slate-300 mt-0.5">{lastTrace.stage_after}</p>
+                  <p className="text-theme-secondary mt-0.5">{lastTrace.stage_after}</p>
                 </div>
                 {lastTrace.guardrail_triggered && (
                   <div className="text-amber-400">⚠ Guardrail triggered</div>

@@ -157,7 +157,7 @@ export default function MyProjects() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-200">My Projects</h1>
+        <h1 className="page-title">My Projects</h1>
         <p className="text-sm text-slate-500 mt-1">
           {total} assigned project{total !== 1 ? 's' : ''}
         </p>
@@ -167,9 +167,9 @@ export default function MyProjects() {
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
+          <table className="data-table w-full text-sm text-left">
             <thead>
-              <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
+              <tr className="">
                 <th className="px-4 py-3 font-medium">Project</th>
                 <th className="px-4 py-3 font-medium">Customer</th>
                 <th className="px-4 py-3 font-medium">Employee</th>
@@ -192,14 +192,14 @@ export default function MyProjects() {
                 projects.map(row => {
                   const status = projectField(row, 'status', 'stage')
                   return (
-                    <tr key={projectKey(row)} className="border-b border-slate-700/30 hover:bg-navy-700/30">
-                      <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
+                    <tr key={projectKey(row)} className="">
+                      <td className="px-4 py-3 text-theme-primary whitespace-nowrap">
                         {projectField(row, 'projectName', 'name', 'title', 'projectId', 'project_id')}
                       </td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap">
                         {projectCustomer(row)}
                       </td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap">
                         {projectEmployeeName(row, employeeName)}
                       </td>
                       <td className="px-4 py-3">
@@ -218,7 +218,7 @@ export default function MyProjects() {
           </table>
         </div>
 
-        <div ref={sentinelRef} className="px-4 py-3 border-t border-slate-700/50 text-center">
+        <div ref={sentinelRef} className="table-footer">
           {loadingMore ? (
             <span className="text-xs text-slate-500">Loading more...</span>
           ) : hasMore ? (

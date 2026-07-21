@@ -18,8 +18,8 @@ export const TATVA_EMPLOYEE_PROJECTS_PATH =
   `/admin/api/admin/employees/${TATVA_MY_PROJECTS_EMPLOYEE_ID}/projects`
 /** My Leads vendor tab — GET /admin/api/admin/vendor-leads/poc/{pocId} */
 export const TATVA_MY_VENDOR_LEADS_POC_ID = '69e06fca730c39ce2e45a266'
-/** My Leads user tab — GET /admin/api/admin/presales/poc/{pocId} */
-export const TATVA_MY_USER_LEADS_POC_ID = '69ef09be11db8baeba77b6cc'
+/** Fallback My Leads user tab POC — prefer logged-in Tatva employee id */
+export const TATVA_MY_USER_LEADS_POC_ID = '69ef0a0a11db8baeba77b711'
 
 let authToken: string | null = sessionStorage.getItem('aadhya_admin_token')
 /** Tatva JWT (`data.accessToken`) — Bearer for all `/tatva-api` calls */
@@ -29,7 +29,11 @@ export type CrmUser = {
   id?: string | null
   name?: string | null
   email?: string | null
-  role: 'admin' | 'presales' | 'rm' | string
+  role: 'admin' | 'presales' | 'rm' | 'campaign_owner' | string
+  /** Tatva employee role name (e.g. sales_manager, campaign_owner) */
+  tatvaRole?: string | null
+  department?: string | null
+  phone?: string | null
 }
 
 function loadStoredUser(): CrmUser | null {
@@ -75,6 +79,30 @@ export function getTatvaAccessToken(): string | null {
   return tatvaAccessToken || sessionStorage.getItem('aadhya_tatva_access_token')
 }
 
+/** Resolve Tatva employee Mongo id from session user id and/or JWT accessToken. */
+export function resolveLoggedInTatvaEmployeeId(): string | null {
+  const user = getUser()
+  const rawId = String(user?.id || '').trim()
+  if (rawId.startsWith('tatva:')) {
+    const id = rawId.slice('tatva:'.length).trim()
+    if (id) return id
+  }
+  if (/^[a-f0-9]{24}$/i.test(rawId)) return rawId
+
+  const token = getTatvaAccessToken()
+  if (!token) return null
+  try {
+    const part = token.split('.')[1]
+    if (!part) return null
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'))
+    const payload = JSON.parse(json) as Record<string, unknown>
+    const id = String(payload._id || payload.id || '').trim()
+    return id || null
+  } catch {
+    return null
+  }
+}
+
 export function setToken(
   token: string,
   user?: CrmUser | null,
@@ -82,12 +110,42 @@ export function setToken(
 ) {
   authToken = token
   sessionStorage.setItem('aadhya_admin_token', token)
-  if (user) {
-    crmUser = user
-    sessionStorage.setItem('aadhya_crm_user', JSON.stringify(user))
-  }
-  if (options && 'tatvaAccessToken' in options) {
+  let nextUser = user || null
+  const access = options?.tatvaAccessToken
+  if (access) {
+    setTatvaAccessToken(access)
+    nextUser = enrichUserFromTatvaToken(nextUser, access)
+  } else if (options && 'tatvaAccessToken' in (options || {})) {
     setTatvaAccessToken(options.tatvaAccessToken)
+  }
+  if (nextUser) {
+    crmUser = nextUser
+    sessionStorage.setItem('aadhya_crm_user', JSON.stringify(nextUser))
+  }
+}
+
+/** Pull Tatva role / department hints from JWT for incentive matching. */
+export function enrichUserFromTatvaToken(
+  user: CrmUser | null | undefined,
+  accessToken?: string | null,
+): CrmUser | null {
+  if (!user) return user || null
+  const token = accessToken || getTatvaAccessToken()
+  if (!token) return user
+  try {
+    const part = token.split('.')[1]
+    if (!part) return user
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'))
+    const payload = JSON.parse(json) as Record<string, unknown>
+    const tatvaRole = String(payload.role || payload.roleName || user.tatvaRole || '').trim() || null
+    const department = String(payload.department || user.department || '').trim() || null
+    return {
+      ...user,
+      tatvaRole: tatvaRole || user.tatvaRole || null,
+      department: department || user.department || null,
+    }
+  } catch {
+    return user
   }
 }
 
@@ -120,13 +178,58 @@ export function isRmUser(): boolean {
   return getUser()?.role === 'rm'
 }
 
+export function isCampaignOwnerUser(): boolean {
+  return getUser()?.role === 'campaign_owner'
+}
+
 export function isStaffUser(): boolean {
   const role = getUser()?.role
-  return role === 'admin' || role === 'presales' || role === 'rm'
+  return role === 'admin'
+    || role === 'presales'
+    || role === 'rm'
+    || role === 'campaign_owner'
 }
 
 export function canViewEnquiryAttachments(): boolean {
   return isStaffUser()
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 15000,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        'Session setup timed out. Start the backend: python -m backend (port 8000).',
+      )
+    }
+    throw err
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
+function extractTatvaEmployeeFromLogin(payload: Record<string, unknown>) {
+  const data = payload.data
+  if (!data || typeof data !== 'object') return null
+  const employee = (data as Record<string, unknown>).employee
+  if (!employee || typeof employee !== 'object') return null
+  const emp = employee as Record<string, unknown>
+  const role = emp.role
+  const roleName = role && typeof role === 'object' && !Array.isArray(role)
+    ? String((role as { name?: string }).name || '')
+    : String(role || '')
+  return {
+    userId: String(emp._id || emp.id || '').trim() || undefined,
+    name: String(emp.fullName || emp.name || '').trim() || undefined,
+    roleName: roleName || undefined,
+  }
 }
 
 async function fetchAdmin(path: string, options: RequestInit = {}) {
@@ -316,11 +419,24 @@ export type PresalesItem = {
   project_id?: string
   assignee?: string
   assigneeName?: string
-  assignedTo?: string | { fullName?: string; name?: string; email?: string }
+  assignedTo?: string | {
+    _id?: string
+    id?: string
+    fullName?: string
+    name?: string
+    email?: string
+  }
   utm_source?: string
   utm_medium?: string
+  utm_campaign?: string
   utmSource?: string
   utmMedium?: string
+  utmCampaign?: string
+  source?: string
+  medium?: string
+  campaign?: string
+  campaignOwner?: string | { fullName?: string; name?: string; email?: string }
+  campaign_owner?: string | { fullName?: string; name?: string; email?: string }
   createdAt?: string
   updatedAt?: string
   assignment?: LeadAssignmentMeta
@@ -635,8 +751,9 @@ function normalizeEmployeeProjects(payload: Record<string, unknown>): EmployeePr
 
 export const api = {
   /**
-   * Admin password login — browser calls Tatva employees auth, then mints a
-   * local panel session (CRM/dashboard still need our Bearer token).
+   * Admin password login — browser calls Tatva
+   * POST https://devopsapi.withtatva.ai/admin/api/admin/employees/auth/login
+   * body: { email, password }, then mints a local panel session.
    */
   login: async (email: string, password: string) => {
     const normalizedEmail = email.trim().toLowerCase()
@@ -654,7 +771,7 @@ export const api = {
         (typeof tatvaPayload.message === 'string' && tatvaPayload.message) ||
         (typeof tatvaPayload.detail === 'string' && tatvaPayload.detail) ||
         (typeof tatvaPayload.error === 'string' && tatvaPayload.error) ||
-        'Invalid credentials'
+        `Login failed (${tatvaRes.status})`
       throw new Error(detail)
     }
 
@@ -663,12 +780,33 @@ export const api = {
       throw new Error('Tatva login did not return an accessToken')
     }
 
-    // Local session for /admin/* panel APIs (not /admin/login)
-    const sessionRes = await fetch(`${BASE_URL}/admin/session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: normalizedEmail, password }),
-    })
+    const employee = extractTatvaEmployeeFromLogin(tatvaPayload)
+
+    // Local session for /admin/* — lightweight body, 15s timeout
+    let sessionRes: Response
+    try {
+      sessionRes = await fetchWithTimeout(`${BASE_URL}/admin/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          accessToken,
+          name: employee?.name,
+          userId: employee?.userId,
+        }),
+      })
+    } catch (sessionErr) {
+      // Fallback if token-only session fails — backend re-verifies password
+      sessionRes = await fetchWithTimeout(`${BASE_URL}/admin/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normalizedEmail, password }),
+      })
+      if (!sessionRes.ok) {
+        throw sessionErr instanceof Error ? sessionErr : new Error('Session setup failed')
+      }
+    }
+
     const data = await sessionRes.json().catch(() => ({} as Record<string, unknown>))
     if (!sessionRes.ok) {
       const detail = typeof data.detail === 'string' ? data.detail : 'Session setup failed'
@@ -717,7 +855,11 @@ export const api = {
     return payload
   },
 
-  /** Team OTP verify — Tatva verify + local session token via omnichannel backend */
+  /**
+   * Team OTP verify — browser calls Tatva exact endpoint
+   * POST /admin/api/admin/employees/auth/otp/verify
+   * then mints a local panel session (OTP is single-use; do not re-verify).
+   */
   verifyTeamOtp: async (phoneNumber: string, otp: string) => {
     const digits = normalizePhone(phoneNumber)
     const code = String(otp || '').trim()
@@ -727,17 +869,49 @@ export const api = {
     if (!code) {
       throw new Error('Enter the OTP')
     }
-    const res = await fetch(`${BASE_URL}/admin/team-otp/verify`, {
+
+    const tatvaRes = await fetch(`${TATVA_API_BASE}/admin/api/admin/employees/auth/otp/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ phoneNumber: digits, otp: code }),
     })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const detail = typeof data.detail === 'string' ? data.detail : 'Invalid OTP'
+    const tatvaPayload = await tatvaRes.json().catch(() => ({} as Record<string, unknown>))
+    if (!tatvaRes.ok || tatvaPayload.success === false) {
+      const detail =
+        (typeof tatvaPayload.message === 'string' && tatvaPayload.message) ||
+        (typeof tatvaPayload.detail === 'string' && tatvaPayload.detail) ||
+        (typeof tatvaPayload.error === 'string' && tatvaPayload.error) ||
+        'Invalid OTP'
       throw new Error(detail)
     }
-    return data
+
+    const accessToken = extractTatvaAccessToken(tatvaPayload)
+    if (!accessToken) {
+      throw new Error('Tatva OTP verify did not return an accessToken')
+    }
+
+    const sessionRes = await fetch(`${BASE_URL}/admin/team-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phoneNumber: digits,
+        accessToken,
+        tatvaPayload,
+      }),
+    })
+    const data = await sessionRes.json().catch(() => ({} as Record<string, unknown>))
+    if (!sessionRes.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : 'Session setup failed'
+      throw new Error(detail)
+    }
+    return {
+      ...data,
+      tatvaAccessToken: accessToken,
+      accessToken,
+    }
   },
 
   me: () => fetchAdmin('/admin/me'),
@@ -936,7 +1110,7 @@ export const api = {
 
   saveMyLeadComment: (externalId: string, notes: string, leadType: 'user' | 'vendor' = 'user') =>
     fetchAdmin(`/admin/my-leads/${externalId}/notes?lead_type=${leadType}`, {
-      method: 'PATCH',
+      method: 'PUT',
       body: JSON.stringify({ notes }),
     }),
 

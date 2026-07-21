@@ -1,4 +1,4 @@
-"""Krsna CRM API ΓÇö team users, lead assignment, my leads."""
+"""CRM admin panel API — team users, lead assignment, my leads."""
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -476,7 +476,7 @@ async def get_my_projects(
     return await fetch_employee_projects(emp_id)
 
 
-@router.patch("/my-leads/{external_id}/notes")
+@router.put("/my-leads/{external_id}/notes")
 async def update_my_lead_notes(
     external_id: str,
     body: LeadNotesRequest,

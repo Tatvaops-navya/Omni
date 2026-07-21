@@ -1,4 +1,4 @@
-"""Tatva meet-link schedules for Krsna admin Users page."""
+"""Tatva meet-link schedules for CRM admin panel Users page."""
 from __future__ import annotations
 
 from typing import Any

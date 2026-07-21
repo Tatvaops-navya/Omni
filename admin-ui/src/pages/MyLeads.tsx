@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   api,
+  resolveLoggedInTatvaEmployeeId,
   resolveMeetSlotId,
   TATVA_MY_USER_LEADS_POC_ID,
   TATVA_MY_VENDOR_LEADS_POC_ID,
@@ -87,7 +88,7 @@ function vendorLeadToMyLeadRow(lead: VendorLeadItem): MyLeadRow {
     assigned_at: String(
       lead.assignment?.assigned_at || lead.createdAt || lead.created_at || lead.updatedAt || '',
     ),
-    presales_completed_at: lead.assignment?.presales_completed_at,
+    presales_completed_at: lead.assignment?.presales_completed_at ?? undefined,
     notes: notes || undefined,
     comment_log: commentLog,
     custom_progress_stages: extractCustomProgressStages(assignment),
@@ -203,7 +204,8 @@ export default function MyLeads() {
         setTotalPages(data.data?.totalPages ?? 1)
         setMeetRecords([])
       } else {
-        const data = await api.presalesByPoc(TATVA_MY_USER_LEADS_POC_ID, { page, limit: 20 })
+        const pocId = resolveLoggedInTatvaEmployeeId() || TATVA_MY_USER_LEADS_POC_ID
+        const data = await api.presalesByPoc(pocId, { page, limit: 20 })
         if (!data.success && data.message) {
           setError(data.message)
         }
@@ -301,7 +303,7 @@ export default function MyLeads() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-200">My Leads</h1>
+        <h1 className="page-title">My Leads</h1>
         <p className="text-sm text-slate-500 mt-1">
           {tab === 'meet'
             ? `${total} meet schedule${total !== 1 ? 's' : ''}`
@@ -309,7 +311,7 @@ export default function MyLeads() {
         </p>
       </div>
 
-      <div className="flex gap-2 border-b border-slate-700/50">
+      <div className="flex gap-2 border-b border-slate-200/80 dark:border-slate-700/50">
         {([
           { key: 'user' as const, label: 'User Leads' },
           { key: 'vendor' as const, label: 'Vendor Leads' },
@@ -323,7 +325,7 @@ export default function MyLeads() {
               'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
               tab === key
                 ? 'border-indigo-500 text-indigo-300'
-                : 'border-transparent text-slate-500 hover:text-slate-300',
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300',
             )}
           >
             {label}
@@ -336,9 +338,9 @@ export default function MyLeads() {
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
           {tab === 'meet' ? (
-            <table className="w-full text-sm text-left">
+            <table className="data-table w-full text-sm text-left">
               <thead>
-                <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
+                <tr className="">
                   <th className="px-4 py-3 font-medium">Customer</th>
                   <th className="px-4 py-3 font-medium">Phone</th>
                   <th className="px-4 py-3 font-medium">Email</th>
@@ -369,18 +371,18 @@ export default function MyLeads() {
                     return (
                       <tr
                         key={slotId || `${record._id}-${slot.scheduledAt}`}
-                        className="border-b border-slate-700/30 hover:bg-navy-700/30"
+                        className=""
                       >
-                        <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
+                        <td className="px-4 py-3 text-theme-primary whitespace-nowrap">
                           {meetCustomerName(record)}
                         </td>
-                        <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                        <td className="px-4 py-3 text-theme-secondary whitespace-nowrap">
                           {user?.phoneNumber || '—'}
                         </td>
                         <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
                           {user?.email || '—'}
                         </td>
-                        <td className="px-4 py-3 text-slate-300 whitespace-nowrap text-xs">
+                        <td className="px-4 py-3 text-theme-secondary whitespace-nowrap text-xs">
                           {formatSlotWhen(slot.scheduledAt)}
                         </td>
                         <td className="px-4 py-3">
@@ -433,9 +435,9 @@ export default function MyLeads() {
               </tbody>
             </table>
           ) : tab === 'user' ? (
-            <table className="w-full text-sm text-left">
+            <table className="data-table w-full text-sm text-left">
               <thead>
-                <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
+                <tr className="">
                   <th className="px-4 py-3 font-medium">Name</th>
                   <th className="px-4 py-3 font-medium">Phone</th>
                   <th className="px-4 py-3 font-medium">Flag</th>
@@ -458,7 +460,7 @@ export default function MyLeads() {
                   </tr>
                 ) : (
                   items.map(row => (
-                    <tr key={row.external_id} className="border-b border-slate-700/30 hover:bg-navy-700/30">
+                    <tr key={row.external_id} className="">
                       <td className="px-4 py-3 text-slate-200">{snap(row, 'name')}</td>
                       <td className="px-4 py-3 text-slate-300">{snap(row, 'phoneNumber', 'phone')}</td>
                       <td className="px-4 py-3">
@@ -525,9 +527,9 @@ export default function MyLeads() {
               </tbody>
             </table>
           ) : (
-            <table className="w-full text-sm text-left">
+            <table className="data-table w-full text-sm text-left">
               <thead>
-                <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
+                <tr className="">
                   <th className="px-4 py-3 font-medium">Vendor</th>
                   <th className="px-4 py-3 font-medium">Company</th>
                   <th className="px-4 py-3 font-medium">Phone</th>
@@ -556,14 +558,14 @@ export default function MyLeads() {
                     const canReview = canReviewVendorLead(approvalStatus)
                     const busy = busyVendorLeadId === row.external_id
                     return (
-                    <tr key={row.external_id} className="border-b border-slate-700/30 hover:bg-navy-700/30">
-                      <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
+                    <tr key={row.external_id} className="">
+                      <td className="px-4 py-3 text-theme-primary whitespace-nowrap">
                         {snap(row, 'name', 'fullName', 'contactName', 'vendorName')}
                       </td>
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
                         {snap(row, 'companyName', 'businessName', 'company', 'vendorName')}
                       </td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap">
                         {snap(row, 'phoneNumber', 'phone', 'mobile')}
                       </td>
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
@@ -595,7 +597,7 @@ export default function MyLeads() {
                         <div className="flex items-center gap-2.5">
                           <button
                             type="button"
-                            className="relative h-8 w-8 shrink-0 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 transition-colors"
+                            className="relative h-8 w-8 shrink-0 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
                             title="Comment log"
                             onClick={() => setLogModal({
                               externalId: row.external_id,
@@ -654,7 +656,7 @@ export default function MyLeads() {
           )}
         </div>
 
-        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
+        <div className="table-footer flex items-center justify-between">
           <span className="text-xs text-slate-500">Page {page} of {totalPages}</span>
           <div className="flex gap-2">
             <button type="button" className="btn-ghost disabled:opacity-40" disabled={page <= 1 || loading} onClick={() => setPage(p => p - 1)}>Previous</button>

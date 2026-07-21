@@ -84,11 +84,14 @@ function RmAssignDropdown({
 }) {
   const currentRm = assignedRmId(row)
   if (employees.length === 0) {
-    return <span className="text-xs text-slate-600">—</span>
+    return <span className="text-xs text-theme-muted">—</span>
   }
   return (
     <select
-      className="input text-xs py-1.5 min-w-[160px]"
+      className={clsx(
+        'input text-xs py-1.5 min-w-[160px]',
+        currentRm ? 'input-assigned' : 'input-unassigned',
+      )}
       value={currentRm}
       disabled={assigningId === row._id}
       onChange={e => onAssign(row, e.target.value)}
@@ -149,6 +152,69 @@ function rowVendorName(row: PresalesItem): string {
   return String(row.vendor_assignment?.vendor_name || '').trim() || '—'
 }
 
+function nestedMarketing(row: PresalesItem): Record<string, unknown> | null {
+  const record = row as Record<string, unknown>
+  for (const key of ['utm', 'marketing']) {
+    const nested = record[key]
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>
+    }
+  }
+  return null
+}
+
+function displayAttr(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    const name = String(obj.fullName || obj.name || obj.email || '').trim()
+    return name || '—'
+  }
+  const text = String(value).trim()
+  return text || '—'
+}
+
+function rowSource(_row: PresalesItem): string {
+  // Temporary placeholder until Tatva source API is wired
+  return 'Whatsapp'
+}
+
+function rowMedium(row: PresalesItem): string {
+  const nested = nestedMarketing(row)
+  return displayAttr(
+    row.utm_medium || row.utmMedium || row.medium || nested?.utm_medium || nested?.utmMedium || nested?.medium,
+  )
+}
+
+function rowCampaign(row: PresalesItem): string {
+  const nested = nestedMarketing(row)
+  return displayAttr(
+    row.utm_campaign
+    || row.utmCampaign
+    || row.campaign
+    || nested?.utm_campaign
+    || nested?.utmCampaign
+    || nested?.campaign,
+  )
+}
+
+function rowCampaignOwner(row: PresalesItem): string {
+  const record = row as Record<string, unknown>
+  const nested = nestedMarketing(row)
+  for (const key of [
+    'campaignOwner',
+    'campaign_owner',
+    'campaignOwnerName',
+    'campaign_owner_name',
+    'campaignOwnerId',
+  ]) {
+    const value = record[key] ?? nested?.[key]
+    const label = displayAttr(value)
+    if (label !== '—') return label
+  }
+  return '—'
+}
+
 function AssignDropdown({
   row,
   employees,
@@ -162,11 +228,14 @@ function AssignDropdown({
 }) {
   const currentAssignee = assignedEmployeeId(row)
   if (employees.length === 0) {
-    return <span className="text-xs text-slate-600">—</span>
+    return <span className="text-xs text-theme-muted">—</span>
   }
   return (
     <select
-      className="input text-xs py-1.5 min-w-[160px]"
+      className={clsx(
+        'input text-xs py-1.5 min-w-[160px]',
+        currentAssignee ? 'input-assigned' : 'input-unassigned',
+      )}
       value={currentAssignee}
       disabled={assigningId === row._id}
       onChange={e => onAssign(row, e.target.value)}
@@ -200,7 +269,7 @@ export default function Presales() {
   const [assigningId, setAssigningId] = useState<string | null>(null)
   const [assigningRmId, setAssigningRmId] = useState<string | null>(null)
   const [viewLead, setViewLead] = useState<{ name?: string; phone?: string } | null>(null)
-  const columnCount = 12
+  const columnCount = 15
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const loadingRef = useRef(false)
   const pageRef = useRef(1)
@@ -410,7 +479,7 @@ export default function Presales() {
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-200">Pre-sales</h1>
+          <h1 className="page-title">Pre-sales</h1>
           <p className="text-sm text-slate-500 mt-1">
             {total} record{total !== 1 ? 's' : ''} from Tatva
             {employees.length > 0 ? ` · ${employees.length} sales team member${employees.length !== 1 ? 's' : ''}` : ''}
@@ -432,15 +501,18 @@ export default function Presales() {
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
+          <table className="data-table w-full text-sm text-left">
             <thead>
-              <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
+              <tr>
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
                 <th className="px-4 py-3 font-medium">Flag</th>
+                <th className="px-4 py-3 font-medium whitespace-nowrap">Source</th>
+                <th className="px-4 py-3 font-medium whitespace-nowrap">Medium</th>
+                <th className="px-4 py-3 font-medium whitespace-nowrap">Campaign</th>
+                <th className="px-4 py-3 font-medium whitespace-nowrap">Campaign Owner</th>
                 <th className="px-4 py-3 font-medium min-w-[180px]">Location</th>
                 <th className="px-4 py-3 font-medium min-w-[280px]">Property location</th>
-                <th className="px-4 py-3 font-medium whitespace-nowrap">Assignee</th>
                 <th className="px-4 py-3 font-medium">Track</th>
                 <th className="px-4 py-3 font-medium">Assign sales</th>
                 <th className="px-4 py-3 font-medium">Assign RM</th>
@@ -467,36 +539,40 @@ export default function Presales() {
                   const assignment = row.assignment
                   const isLowIntent = row.flag === 'low'
                   return (
-                    <tr
-                      key={row._id}
-                      className="border-b border-slate-700/30 hover:bg-navy-700/30"
-                    >
-                      <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
+                    <tr key={row._id}>
+                      <td className="px-4 py-3 text-theme-primary whitespace-nowrap">
                         {displayName(row.name)}
                       </td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap">
                         {row.phoneNumber || '—'}
                       </td>
                       <td className="px-4 py-3">
                         <span
                           className={clsx(
                             'badge uppercase',
-                            row.flag === 'high'
-                              ? 'bg-teal-600/20 text-teal-300'
-                              : 'bg-amber-600/20 text-amber-300',
+                            row.flag === 'high' ? 'badge-danger' : 'badge-warning',
                           )}
                         >
                           {row.flag || '—'}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap max-w-[140px] truncate" title={rowSource(row)}>
+                        {rowSource(row)}
+                      </td>
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap max-w-[140px] truncate" title={rowMedium(row)}>
+                        {rowMedium(row)}
+                      </td>
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap max-w-[160px] truncate" title={rowCampaign(row)}>
+                        {rowCampaign(row)}
+                      </td>
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap max-w-[160px] truncate" title={rowCampaignOwner(row)}>
+                        {rowCampaignOwner(row)}
                       </td>
                       <td className="px-4 py-3 text-slate-400 min-w-[180px] max-w-[220px] whitespace-normal break-words align-top">
                         {row.location || '—'}
                       </td>
                       <td className="px-4 py-3 text-slate-400 min-w-[280px] max-w-[360px] whitespace-normal break-words align-top">
                         {row.propertyLocation || '—'}
-                      </td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                        {rowAssigneeName(row, employees)}
                       </td>
                       <td className="px-4 py-3">
                         <LeadProgressButton
@@ -530,7 +606,7 @@ export default function Presales() {
                           onAssign={handleAssignRm}
                         />
                       </td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap max-w-[180px] truncate">
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap max-w-[180px] truncate">
                         {rowVendorName(row)}
                       </td>
                       <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
@@ -559,7 +635,7 @@ export default function Presales() {
           </table>
         </div>
 
-        <div ref={sentinelRef} className="px-4 py-3 border-t border-slate-700/50 text-center">
+        <div ref={sentinelRef} className="table-footer">
           {loadingMore ? (
             <span className="text-xs text-slate-500">Loading more...</span>
           ) : hasMore ? (

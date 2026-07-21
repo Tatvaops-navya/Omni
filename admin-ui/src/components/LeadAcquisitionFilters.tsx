@@ -34,7 +34,7 @@ export default function LeadAcquisitionFilters({
   return (
     <section className="space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+        <h2 className="section-title flex items-center gap-2">
           <Filter className="w-4 h-4 text-indigo-400" />
           Lead Acquisition
         </h2>
@@ -99,7 +99,7 @@ export default function LeadAcquisitionFilters({
         </div>
 
         {hasFilters && (
-          <div className="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-slate-700/50">
+          <div className="flex flex-wrap items-center gap-2 mt-4 pt-4 border-t border-slate-200/80 dark:border-slate-700/50">
             <span className="text-xs text-slate-500">Active filters:</span>
             {selectedSource && (
               <span className="badge bg-indigo-600/20 text-indigo-300 border border-indigo-500/30">

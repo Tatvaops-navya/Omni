@@ -1,4 +1,4 @@
-﻿"""Supabase client for Krsna CRM (lead assignments, CRM users)."""
+"""Supabase client for CRM admin panel (lead assignments, CRM users)."""
 from __future__ import annotations
 
 from functools import lru_cache

@@ -1,1 +1,1 @@
-﻿"""Krsna CRM ΓÇö lead assignment and team users (Supabase)."""
+"""CRM admin panel — lead assignment and team users (Supabase)."""

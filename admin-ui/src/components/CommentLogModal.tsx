@@ -92,9 +92,9 @@ export default function CommentLogModal({
         className="card w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-700/50">
+        <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-200/80 dark:border-slate-700/50">
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-slate-200">Comment log</h2>
+            <h2 className="text-lg font-semibold text-theme-primary">Comment log</h2>
             <p className="text-xs text-slate-500 mt-1 truncate">{leadName}</p>
           </div>
           <button type="button" className="btn-ghost p-1 shrink-0" onClick={onClose} aria-label="Close">
@@ -109,7 +109,7 @@ export default function CommentLogModal({
             sorted.map((entry, idx) => (
               <div
                 key={`${entry.created_at || 'entry'}-${idx}`}
-                className="rounded-lg border border-slate-700/50 bg-navy-800/40 px-3 py-2.5"
+                className="rounded-lg border border-slate-200/80 bg-white dark:border-slate-700/50 dark:bg-navy-800/40 px-3 py-2.5"
               >
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-500 mb-1.5">
                   <span>{formatLogWhen(entry.created_at)}</span>
@@ -126,7 +126,7 @@ export default function CommentLogModal({
           )}
         </div>
 
-        <div className="pt-4 border-t border-slate-700/50 space-y-2">
+        <div className="pt-4 border-t border-slate-200/80 dark:border-slate-700/50 space-y-2">
           <textarea
             className="input text-sm py-2 min-h-[72px] resize-y w-full"
             value={draft}

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tatva user registration via withtatva.ai API.
 """
 from __future__ import annotations
@@ -611,7 +611,7 @@ async def fetch_tatva_users(
     utm_source: str | None = None,
     utm_medium: str | None = None,
 ) -> dict[str, Any]:
-    """GET registered Tatva users for Krsna admin panel."""
+    """GET registered Tatva users for CRM admin panel."""
     settings = get_settings()
     base_url = (settings.tatva_users_api_base_url or "").rstrip("/")
     if not base_url:

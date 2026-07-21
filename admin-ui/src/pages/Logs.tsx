@@ -29,7 +29,7 @@ export default function Logs() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-200">Logs</h1>
+        <h1 className="page-title">Logs</h1>
         <p className="text-sm text-slate-500 mt-1">{logs.length} entries · refreshes every 6s</p>
       </div>
 
@@ -58,7 +58,7 @@ export default function Logs() {
             <div className="p-6 text-center text-slate-500">No logs yet.</div>
           ) : (
             logs.map((log, i) => (
-              <div key={i} className="px-4 py-2 border-b border-slate-700/30 hover:bg-navy-700/30 flex gap-3">
+              <div key={i} className="px-4 py-2  flex gap-3">
                 <span className="text-slate-600 flex-shrink-0 w-20">
                   {new Date(log.timestamp).toLocaleTimeString()}
                 </span>

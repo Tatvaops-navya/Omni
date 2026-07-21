@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Flower2, Eye, EyeOff } from 'lucide-react'
 import { api, setToken } from '../api/client'
+import ThemeToggle from '../components/ThemeToggle'
 import { normalizePhone } from '../utils/phone'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
@@ -86,7 +87,11 @@ export default function Login() {
           (typeof res.accessToken === 'string' && res.accessToken) ||
           null
         setToken(res.token, res.user, { tatvaAccessToken })
-        navigate('/krsna/dashboard')
+        navigate(
+          res.user?.role === 'campaign_owner'
+            ? '/krsna/campaign-leads'
+            : '/krsna/dashboard',
+        )
       } else {
         toast.error('Login failed')
       }
@@ -99,13 +104,16 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-navy-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-slate-50 dark:bg-navy-900 flex items-center justify-center p-4 relative transition-colors duration-300">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-indigo-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4 ring-1 ring-indigo-500/30">
-            <Flower2 className="w-8 h-8 text-indigo-400" />
+          <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4 ring-1 ring-indigo-200 dark:ring-indigo-500/30">
+            <Flower2 className="w-8 h-8 text-indigo-600 dark:text-indigo-400" />
           </div>
-          <h1 className="text-2xl font-semibold text-slate-200">Krsna Panel</h1>
+          <h1 className="text-2xl font-semibold text-slate-800 dark:text-slate-200">CRM admin panel</h1>
           <p className="text-slate-500 text-sm mt-1">EVA AI Operations_TatvaOps</p>
         </div>
 
@@ -118,8 +126,8 @@ export default function Login() {
               className={clsx(
                 'flex-1 py-2 text-sm rounded-lg border transition-colors',
                 mode === key
-                  ? 'border-indigo-500 bg-indigo-600/10 text-indigo-300'
-                  : 'border-slate-700 text-slate-500 hover:text-slate-300',
+                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-600/10 dark:text-indigo-300'
+                  : 'border-slate-200 text-slate-500 hover:text-slate-700 dark:border-slate-700 dark:text-slate-500 dark:hover:text-slate-300',
               )}
             >
               {key === 'admin' ? 'Admin' : 'Team'}
@@ -156,7 +164,7 @@ export default function Login() {
                   <button
                     type="button"
                     onClick={() => setShow(s => !s)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                   >
                     {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>

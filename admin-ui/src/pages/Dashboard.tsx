@@ -3,35 +3,35 @@ import {
   api,
   TatvaEmployee,
   tatvaEmployeeId,
-  tatvaEmployeeLabel,
   tatvaEmployeeName,
 } from '../api/client'
 import LeadAcquisitionDashboard from '../components/LeadAcquisitionDashboard'
 import {
-  PERIOD_OPTIONS,
   PeriodKey,
   TeamPerformanceData,
-  TeamPerformancePanel,
+  TeamPerformanceSection,
 } from '../components/TeamPerformancePanel'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell,
   ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import {
-  MessageSquare, Mic, FileText, CheckCircle, Activity, Users,
+  MessageSquare, Mic, FileText, CheckCircle, Activity,
   BarChart3, Radio, Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { useTheme } from '../theme/ThemeProvider'
 
-const PIE_COLORS = ['#6366f1', '#14b8a6']
+const CAT_COLORS_LIGHT = ['#7B6EF6', '#F4B740', '#B4E44F', '#4FC4E8', '#F49097']
+const CAT_COLORS_DARK = ['#6366f1', '#14b8a6', '#34d399', '#22d3ee', '#fb7185']
 
-const STAT_ACCENTS: Record<string, { gradient: string; glow: string; iconBg: string }> = {
-  'Active Sessions': { gradient: 'from-indigo-500/20', glow: 'shadow-indigo-500/10', iconBg: 'bg-indigo-500/15 text-indigo-400' },
-  'Completed Enquiries': { gradient: 'from-teal-500/20', glow: 'shadow-teal-500/10', iconBg: 'bg-teal-500/15 text-teal-400' },
-  'Summaries Generated': { gradient: 'from-violet-500/20', glow: 'shadow-violet-500/10', iconBg: 'bg-violet-500/15 text-violet-400' },
-  'WhatsApp Today': { gradient: 'from-emerald-500/20', glow: 'shadow-emerald-500/10', iconBg: 'bg-emerald-500/15 text-emerald-400' },
-  'Voice Calls Today': { gradient: 'from-sky-500/20', glow: 'shadow-sky-500/10', iconBg: 'bg-sky-500/15 text-sky-400' },
-  'Total Sessions': { gradient: 'from-slate-500/20', glow: 'shadow-slate-500/10', iconBg: 'bg-slate-500/15 text-slate-400' },
+const STAT_PASTELS: Record<string, { pastel: string; iconBg: string }> = {
+  'Active Sessions': { pastel: 'pastel-mint', iconBg: 'bg-indigo-500/15 text-indigo-400' },
+  'Completed Enquiries': { pastel: 'pastel-lilac', iconBg: 'bg-teal-500/15 text-teal-400' },
+  'Summaries Generated': { pastel: 'pastel-peach', iconBg: 'bg-violet-500/15 text-violet-400' },
+  'WhatsApp Today': { pastel: 'pastel-sky', iconBg: 'bg-emerald-500/15 text-emerald-400' },
+  'Voice Calls Today': { pastel: 'pastel-butter', iconBg: 'bg-sky-500/15 text-sky-400' },
+  'Total Sessions': { pastel: 'pastel-violet', iconBg: 'bg-slate-500/15 text-slate-400' },
 }
 
 type StaffFilterType = '' | 'sales' | 'rm'
@@ -65,7 +65,7 @@ function DashboardSkeleton() {
 function EmptyChart({ icon: Icon, message }: { icon: typeof BarChart3; message: string }) {
   return (
     <div className="h-[200px] flex flex-col items-center justify-center gap-3 text-slate-600">
-      <div className="p-3 rounded-xl bg-navy-700/40 border border-slate-700/30">
+      <div className="p-3 rounded-xl bg-slate-100 dark:bg-navy-700/40 border border-slate-200/80 dark:border-slate-700/30">
         <Icon className="w-5 h-5 text-slate-500" />
       </div>
       <p className="text-sm text-slate-500">{message}</p>
@@ -74,6 +74,28 @@ function EmptyChart({ icon: Icon, message }: { icon: typeof BarChart3; message: 
 }
 
 export default function Dashboard() {
+  const { theme } = useTheme()
+  const isLight = theme === 'light'
+  const catColors = isLight ? CAT_COLORS_LIGHT : CAT_COLORS_DARK
+  const chartGrid = isLight ? '#EDEEF3' : '#1e293b'
+  const chartTick = isLight ? '#9496A2' : '#64748b'
+  const barColor = isLight ? '#F4B740' : '#F59E0B'
+  const barHover = isLight ? '#E0A52E' : '#FBBF24'
+  const tooltipStyle = isLight
+    ? {
+        background: '#FFFFFF',
+        border: '1px solid #EDEEF3',
+        borderRadius: 10,
+        boxShadow: '0 8px 20px rgba(31,33,48,0.08)',
+        color: '#1F2130',
+      }
+    : {
+        background: 'rgba(17, 29, 53, 0.95)',
+        border: '1px solid rgba(99, 102, 241, 0.3)',
+        borderRadius: 10,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+      }
+
   const [data, setData] = useState<any>(null)
   const [error, setError] = useState('')
   const [salesEmployees, setSalesEmployees] = useState<TatvaEmployee[]>([])
@@ -210,7 +232,7 @@ export default function Dashboard() {
               <Sparkles className="w-4 h-4 text-indigo-400" />
               <span className="section-label">Operations Overview</span>
             </div>
-            <h1 className="text-2xl font-bold text-slate-100 tracking-tight">Dashboard</h1>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">Dashboard</h1>
             <div className="flex items-center gap-2.5 mt-2">
               <span className="live-pulse" />
               <p className="text-sm text-slate-400">
@@ -218,12 +240,12 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-navy-900/60 border border-slate-700/40">
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl panel-muted border border-slate-200/80 dark:border-slate-700/40">
             <div className="text-right">
               <p className="text-[10px] uppercase tracking-wider text-slate-500">Active now</p>
               <p className="text-xl font-bold text-indigo-300 tabular-nums">{stats.active_sessions}</p>
             </div>
-            <div className="w-px h-8 bg-slate-700/60" />
+            <div className="w-px h-8 bg-slate-300 dark:bg-slate-700/60" />
             <div className="text-right">
               <p className="text-[10px] uppercase tracking-wider text-slate-500">Today</p>
               <p className="text-xl font-bold text-teal-300 tabular-nums">
@@ -239,21 +261,21 @@ export default function Dashboard() {
         <p className="section-label mb-4">Key Metrics</p>
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {statCards.map(({ label, value, icon: Icon }, i) => {
-            const accent = STAT_ACCENTS[label] || STAT_ACCENTS['Total Sessions']
+            const accent = STAT_PASTELS[label] || STAT_PASTELS['Total Sessions']
             return (
               <div
                 key={label}
-                className={clsx('stat-card shadow-lg', accent.glow)}
+                className={clsx('stat-card pastel', accent.pastel)}
                 style={{ animationDelay: `${i * 60}ms` }}
               >
                 <div className="stat-card-accent" />
-                <div className={clsx('absolute inset-0 bg-gradient-to-br to-transparent opacity-60 pointer-events-none', accent.gradient)} />
+                <div className={clsx('stat-card-gradient absolute inset-0 bg-gradient-to-br to-transparent opacity-60 pointer-events-none dark:from-indigo-500/10', isLight ? 'hidden' : '')} />
                 <div className="relative flex items-start justify-between">
                   <div>
-                    <p className="text-xs font-medium text-slate-400 mb-1.5">{label}</p>
-                    <p className="text-3xl font-bold text-slate-100 tabular-nums tracking-tight">{value}</p>
+                    <p className="stat-label text-xs font-medium text-slate-400 mb-1.5">{label}</p>
+                    <p className="stat-value text-3xl font-bold text-slate-900 dark:text-slate-100 tabular-nums tracking-tight">{value}</p>
                   </div>
-                  <div className={clsx('p-2.5 rounded-xl border border-white/5', accent.iconBg)}>
+                  <div className={clsx('stat-icon-wrap p-2.5 rounded-xl border border-white/5', accent.iconBg)}>
                     <Icon className="w-4 h-4" />
                   </div>
                 </div>
@@ -264,120 +286,21 @@ export default function Dashboard() {
       </section>
 
       {/* Team performance */}
-      <section className="glass-card space-y-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2.5">
-              <span className="p-1.5 rounded-lg bg-indigo-500/15 border border-indigo-500/20">
-                <Users className="w-4 h-4 text-indigo-400" />
-              </span>
-              Team Performance
-            </h2>
-            <p className="text-xs text-slate-500 mt-1.5 max-w-md">
-              Filter by sales person or RM to view closed vs pending leads and sales targets
-            </p>
-          </div>
-        </div>
-
-        <div className="filter-bar">
-          <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Role</label>
-            <select
-              className="input w-36"
-              value={staffType}
-              onChange={e => handleStaffTypeChange(e.target.value as StaffFilterType)}
-            >
-              <option value="">All (overview)</option>
-              <option value="sales">Sales</option>
-              <option value="rm">RM</option>
-            </select>
-          </div>
-          {staffType === 'sales' && (
-            <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Sales person</label>
-              <select
-                className="input w-56"
-                value={staffId}
-                onChange={e => setStaffId(e.target.value)}
-              >
-                <option value="">Select sales person...</option>
-                {salesEmployees.map(emp => {
-                  const id = tatvaEmployeeId(emp)
-                  if (!id) return null
-                  return (
-                    <option key={id} value={id}>
-                      {tatvaEmployeeLabel(emp)}
-                    </option>
-                  )
-                })}
-              </select>
-            </div>
-          )}
-          {staffType === 'rm' && (
-            <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">RM</label>
-              <select
-                className="input w-56"
-                value={staffId}
-                onChange={e => setStaffId(e.target.value)}
-              >
-                <option value="">Select RM...</option>
-                {rmEmployees.map(emp => {
-                  const id = tatvaEmployeeId(emp)
-                  if (!id) return null
-                  return (
-                    <option key={id} value={id}>
-                      {tatvaEmployeeLabel(emp)}
-                    </option>
-                  )
-                })}
-              </select>
-            </div>
-          )}
-          {staffType && staffId && (
-            <div>
-              <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Period</label>
-              <select
-                className="input w-40"
-                value={period}
-                onChange={e => setPeriod(e.target.value as PeriodKey)}
-              >
-                {PERIOD_OPTIONS.map(opt => (
-                  <option key={opt.key} value={opt.key}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-
-        {!staffType || !staffId ? (
-          <div className="flex flex-col items-center justify-center py-10 px-4 rounded-xl border border-dashed border-slate-700/50 bg-navy-900/30">
-            <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 mb-3">
-              <Users className="w-5 h-5 text-indigo-400" />
-            </div>
-            <p className="text-sm text-slate-400 text-center max-w-sm">
-              Choose a sales person or RM to see their closed leads, pending work, and target progress.
-            </p>
-          </div>
-        ) : teamLoading && !teamData ? (
-          <div className="py-10 flex flex-col items-center gap-3">
-            <div className="w-6 h-6 border-2 border-indigo-500/30 border-t-indigo-400 rounded-full animate-spin" />
-            <p className="text-sm text-slate-500">Loading performance...</p>
-          </div>
-        ) : teamError ? (
-          <div className="py-4 px-4 rounded-xl bg-red-950/20 border border-red-500/20 text-sm text-red-300">
-            {teamError}
-          </div>
-        ) : teamData ? (
-          <TeamPerformancePanel
-            data={teamData}
-            editableTarget
-            staffType={staffType}
-            staffId={staffId}
-            onTargetSaved={loadTeamPerformance}
-          />
-        ) : null}
-      </section>
+      <TeamPerformanceSection
+        staffType={staffType}
+        staffId={staffId}
+        period={period}
+        salesEmployees={salesEmployees}
+        rmEmployees={rmEmployees}
+        onStaffTypeChange={handleStaffTypeChange}
+        onStaffIdChange={setStaffId}
+        onPeriodChange={setPeriod}
+        data={teamData}
+        loading={teamLoading}
+        error={teamError || null}
+        editableTarget
+        onTargetSaved={loadTeamPerformance}
+      />
 
       <LeadAcquisitionDashboard />
 
@@ -388,7 +311,7 @@ export default function Dashboard() {
           <div className="chart-card lg:col-span-2">
             <div className="flex items-center justify-between mb-5">
               <div>
-                <h3 className="text-sm font-semibold text-slate-200">Messages Per Hour</h3>
+                <h3 className="section-title">Messages Per Hour</h3>
                 <p className="text-xs text-slate-500 mt-0.5">Conversation volume throughout the day</p>
               </div>
               <BarChart3 className="w-4 h-4 text-indigo-400/60" />
@@ -396,27 +319,22 @@ export default function Dashboard() {
             {hourlyData.length > 0 ? (
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={hourlyData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#818cf8" />
-                      <stop offset="100%" stopColor="#6366f1" />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis dataKey="hour" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <CartesianGrid strokeDasharray="0" stroke={chartGrid} vertical={false} />
+                  <XAxis dataKey="hour" tick={{ fill: chartTick, fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: chartTick, fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip
-                    contentStyle={{
-                      background: 'rgba(17, 29, 53, 0.95)',
-                      border: '1px solid rgba(99, 102, 241, 0.3)',
-                      borderRadius: 10,
-                      boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                    }}
-                    labelStyle={{ color: '#94a3b8', fontSize: 12 }}
-                    itemStyle={{ color: '#c7d2fe' }}
-                    cursor={{ fill: 'rgba(99, 102, 241, 0.08)' }}
+                    contentStyle={tooltipStyle}
+                    labelStyle={{ color: chartTick, fontSize: 12 }}
+                    itemStyle={{ color: isLight ? '#1F2130' : '#c7d2fe' }}
+                    cursor={{ fill: isLight ? 'rgba(244, 183, 64, 0.12)' : 'rgba(245, 158, 11, 0.12)' }}
                   />
-                  <Bar dataKey="count" fill="url(#barGradient)" radius={[6, 6, 0, 0]} maxBarSize={40} />
+                  <Bar
+                    dataKey="count"
+                    fill={barColor}
+                    radius={[6, 6, 0, 0]}
+                    maxBarSize={40}
+                    activeBar={{ fill: barHover }}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -427,7 +345,7 @@ export default function Dashboard() {
           <div className="chart-card">
             <div className="flex items-center justify-between mb-5">
               <div>
-                <h3 className="text-sm font-semibold text-slate-200">Channel Split</h3>
+                <h3 className="section-title">Channel Split</h3>
                 <p className="text-xs text-slate-500 mt-0.5">WhatsApp vs Voice</p>
               </div>
               {totalChannel > 0 && (
@@ -445,20 +363,15 @@ export default function Dashboard() {
                     outerRadius={78}
                     dataKey="value"
                     paddingAngle={3}
+                    strokeWidth={0}
                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                     labelLine={false}
                   >
                     {channelData.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} stroke="transparent" />
+                      <Cell key={i} fill={catColors[i % catColors.length]} stroke="transparent" />
                     ))}
                   </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      background: 'rgba(17, 29, 53, 0.95)',
-                      border: '1px solid rgba(99, 102, 241, 0.3)',
-                      borderRadius: 10,
-                    }}
-                  />
+                  <Tooltip contentStyle={tooltipStyle} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
@@ -468,7 +381,7 @@ export default function Dashboard() {
               <div className="flex justify-center gap-5 mt-2">
                 {channelData.map((d, i) => (
                   <div key={d.name} className="flex items-center gap-2 text-xs text-slate-400">
-                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: PIE_COLORS[i] }} />
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ background: catColors[i % catColors.length] }} />
                     {d.name}
                   </div>
                 ))}

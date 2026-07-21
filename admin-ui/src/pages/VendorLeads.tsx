@@ -202,7 +202,7 @@ export default function VendorLeads() {
     <div className="p-6 space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-200">Vendor Leads</h1>
+          <h1 className="page-title">Vendor Leads</h1>
           <p className="text-sm text-slate-500 mt-1">
             {total} record{total !== 1 ? 's' : ''} from Tatva
             {isRejectedView
@@ -226,9 +226,9 @@ export default function VendorLeads() {
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
+          <table className="data-table w-full text-sm text-left">
             <thead>
-              <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
+              <tr className="">
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Company</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
@@ -278,11 +278,11 @@ export default function VendorLeads() {
                   return (
                     <tr
                       key={rowKey}
-                      className="border-b border-slate-700/30 hover:bg-navy-700/30"
+                      className=""
                     >
-                      <td className="px-4 py-3 text-slate-200 whitespace-nowrap">{name}</td>
+                      <td className="px-4 py-3 text-theme-primary whitespace-nowrap">{name}</td>
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{company}</td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{phone}</td>
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap">{phone}</td>
                       <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{email}</td>
                       <td className="px-4 py-3 text-slate-400 max-w-[160px] truncate" title={location}>
                         {location}
@@ -291,7 +291,7 @@ export default function VendorLeads() {
                       <td className="px-4 py-3">
                         <span className={vendorStatusBadge(leadStatus)}>{leadStatus}</span>
                       </td>
-                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                      <td className="px-4 py-3 text-theme-secondary whitespace-nowrap">
                         {assignee}
                       </td>
                       <td className="px-4 py-3 align-top min-w-[200px]">
@@ -333,7 +333,7 @@ export default function VendorLeads() {
           </table>
         </div>
 
-        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700/50">
+        <div className="table-footer flex items-center justify-between">
           <span className="text-xs text-slate-500">
             Page {page} of {totalPages} · {total} total
           </span>

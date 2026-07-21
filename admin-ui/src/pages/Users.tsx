@@ -22,10 +22,10 @@ function displayName(user: TatvaUserItem): string {
 }
 
 function UtmCell({ value }: { value: string | null | undefined }) {
-  if (value === null || value === undefined) {
-    return <span className="text-slate-500">null</span>
+  if (value === null || value === undefined || String(value).trim() === '' || String(value).toLowerCase() === 'null') {
+    return <span className="text-theme-muted">—</span>
   }
-  return <span className="text-slate-400">{value}</span>
+  return <span className="text-theme-secondary">{value}</span>
 }
 
 export default function Users() {
@@ -117,7 +117,7 @@ export default function Users() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-200">Users</h1>
+        <h1 className="page-title">Users</h1>
         <p className="text-sm text-slate-500 mt-1">
           {total} registered user{total !== 1 ? 's' : ''} from Tatva · refreshes every 30s
         </p>
@@ -129,9 +129,9 @@ export default function Users() {
 
       <div className="card p-0 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
+          <table className="data-table w-full text-sm text-left">
             <thead>
-              <tr className="border-b border-slate-700/50 text-xs text-slate-500 uppercase tracking-wide">
+              <tr className="">
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Username</th>
                 <th className="px-4 py-3 font-medium">Phone</th>
@@ -164,15 +164,15 @@ export default function Users() {
                 users.map(row => (
                   <tr
                     key={row._id}
-                    className="border-b border-slate-700/30 hover:bg-navy-700/30"
+                    className=""
                   >
-                    <td className="px-4 py-3 text-slate-200 whitespace-nowrap">
+                    <td className="px-4 py-3 text-theme-primary whitespace-nowrap">
                       {displayName(row)}
                     </td>
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
                       {row.userName || '—'}
                     </td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                    <td className="px-4 py-3 text-theme-secondary whitespace-nowrap">
                       {row.phoneNumber || '—'}
                     </td>
                     <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
@@ -191,9 +191,7 @@ export default function Users() {
                       <span
                         className={clsx(
                           'badge capitalize',
-                          row.status === 'active'
-                            ? 'bg-teal-600/20 text-teal-300'
-                            : 'bg-slate-600/30 text-slate-400',
+                          row.status === 'active' ? 'badge-success' : 'badge-info',
                         )}
                       >
                         {row.status || '—'}
@@ -209,9 +207,7 @@ export default function Users() {
                       <span
                         className={clsx(
                           'badge',
-                          row.isEmailVerified
-                            ? 'bg-teal-600/20 text-teal-300'
-                            : 'bg-slate-600/30 text-slate-500',
+                          row.isEmailVerified ? 'badge-success' : 'badge-warning',
                         )}
                       >
                         {row.isEmailVerified ? 'Yes' : 'No'}
@@ -238,7 +234,7 @@ export default function Users() {
           </table>
         </div>
 
-        <div ref={sentinelRef} className="px-4 py-3 border-t border-slate-700/50 text-center">
+        <div ref={sentinelRef} className="table-footer">
           {loadingMore ? (
             <span className="text-xs text-slate-500">Loading more...</span>
           ) : hasMore ? (

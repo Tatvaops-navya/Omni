@@ -15,7 +15,7 @@ export default function Files() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-xl font-semibold text-slate-200 flex items-center gap-2">
+        <h1 className="page-title flex items-center gap-2">
           <Paperclip className="w-5 h-5" /> Uploaded Files
         </h1>
         <p className="text-sm text-slate-500 mt-1">Floor plans, photos, and documents from WhatsApp</p>
@@ -26,9 +26,9 @@ export default function Files() {
         <p className="text-slate-500">No files uploaded yet.</p>
       ) : (
         <div className="card overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="data-table w-full text-sm">
             <thead>
-              <tr className="text-left text-slate-500 border-b border-slate-700/50">
+              <tr className="text-left text-slate-500 border-b border-slate-200/80 dark:border-slate-700/50">
                 <th className="py-2 pr-4">File</th>
                 <th className="py-2 pr-4">Session</th>
                 <th className="py-2 pr-4">Service</th>

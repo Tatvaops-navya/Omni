@@ -68,9 +68,9 @@ function StatCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs text-slate-500 mb-1">{label}</p>
-          <p className="text-3xl font-bold text-slate-200">{value}</p>
+          <p className="text-3xl font-bold text-slate-800 dark:text-slate-200">{value}</p>
         </div>
-        <div className={clsx('p-2 bg-navy-700 rounded-lg', color)}>
+        <div className={clsx('p-2 bg-slate-200 dark:bg-navy-700 rounded-lg', color)}>
           <Icon className="w-4 h-4" />
         </div>
       </div>
@@ -96,7 +96,7 @@ function LeadSection({
           <Icon className="w-4 h-4" />
         </div>
         <div>
-          <h2 className="text-sm font-semibold text-slate-200">{title}</h2>
+          <h2 className="section-title">{title}</h2>
           <p className="text-xs text-slate-500">{subtitle}</p>
         </div>
       </div>
@@ -140,7 +140,7 @@ export default function TeamDashboard() {
     <div className="p-6 space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-200 flex items-center gap-2">
+          <h1 className="page-title flex items-center gap-2">
             <LayoutDashboard className="w-5 h-5 text-indigo-400" />
             Dashboard
           </h1>
@@ -188,7 +188,7 @@ export default function TeamDashboard() {
               icon={Users}
               stats={data.user_leads}
             />
-            <div className="border-t border-slate-700/50" />
+            <div className="border-t border-slate-200/80 dark:border-slate-700/50" />
             <LeadSection
               title="Vendor leads"
               subtitle="Vendor leads assigned to you"

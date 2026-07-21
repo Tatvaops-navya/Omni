@@ -44,15 +44,34 @@ export default defineConfig(({ mode }) => {
         '/tatva-api': {
           target: tatvaApiOrigin,
           changeOrigin: true,
+          secure: true,
           rewrite: reqPath => reqPath.replace(/^\/tatva-api/, ''),
           configure: proxy => {
             proxy.on('proxyReq', (proxyReq, req) => {
-              if (adminApiKey) {
+              const url = String(req.url || '')
+              // Auth endpoints: do not attach local panel Bearer or X-Admin-Key
+              const isAuthPath = /\/employees\/auth\//.test(url)
+              if (!isAuthPath && adminApiKey) {
                 proxyReq.setHeader('X-Admin-Key', adminApiKey)
               }
-              const auth = req.headers.authorization
-              if (auth) {
-                proxyReq.setHeader('Authorization', auth)
+              if (!isAuthPath) {
+                const auth = req.headers.authorization
+                if (auth) {
+                  proxyReq.setHeader('Authorization', auth)
+                }
+              } else {
+                proxyReq.removeHeader('Authorization')
+                proxyReq.removeHeader('X-Admin-Key')
+              }
+            })
+            proxy.on('error', (err, _req, res) => {
+              console.error('[tatva-api proxy]', err.message)
+              if (res && !res.headersSent) {
+                res.writeHead(502, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({
+                  success: false,
+                  message: `Tatva proxy error: ${err.message}`,
+                }))
               }
             })
           },
