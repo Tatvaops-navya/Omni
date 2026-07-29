@@ -669,6 +669,7 @@ async def get_enquiries(auth=Depends(require_staff)):
         assigned_phones = crm_store.assigned_phones_for_staff(
             str(user_id),
             str(role),
+            staff_email=str(auth.get("email") or "") or None,
         )
         enquiries = [
             row for row in enquiries

@@ -203,7 +203,6 @@ def build_client_details_steps() -> list[dict]:
     return [
         {"id": "cd_name", "stage": "client_details", "type": "descriptive", "field": "client_name", "prompt": "What is your full name?"},
         {"id": "cd_email", "stage": "client_details", "type": "descriptive", "field": "email", "prompt": "Email address (optional).", "optional": True},
-        {"id": "cd_city", "stage": "client_details", "type": "descriptive", "field": "city", "prompt": "Which city are you located in?"},
         {"id": "cd_property_loc", "stage": "client_details", "type": "descriptive", "field": "property_location", "prompt": "Where is your property located? (Locality,City)"},
         _enrich_mcq_step({
             "id": "cd_create_project",

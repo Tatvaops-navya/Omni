@@ -495,9 +495,6 @@ async def register_new_tatva_user_for_session(session: Session) -> Optional[str]
     if not se.field_is_complete(session, "email"):
         return None
 
-    if not se.field_is_complete(session, "city"):
-        return None
-
     if not se.field_is_complete(session, "property_location"):
         return None
 

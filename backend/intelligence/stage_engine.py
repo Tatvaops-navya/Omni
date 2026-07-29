@@ -36,7 +36,7 @@ STAGE_TITLES: dict[str, str] = {
 STAGE_REQUIRED_FIELDS: dict[str, list[str]] = {
     "ava_intro": ["ava_intro_shown"],
     "client_details": [
-        "client_name", "phone_number", "city", "property_location",
+        "client_name", "phone_number", "property_location",
         "willing_to_create_project",
     ],
     "service_selection": ["service_category"],

@@ -18,7 +18,6 @@ _SKIP_WORDS = frozenset({"skip", "none", "nil", "-"})
 
 _CLIENT_FIELDS: list[tuple[str, str]] = [
     ("client_name", "Name"),
-    ("city", "City"),
     ("property_location", "Property Location"),
     ("willing_to_create_project", "Willing to Create Project"),
     ("email", "Email"),

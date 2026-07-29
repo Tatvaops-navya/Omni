@@ -75,7 +75,7 @@ class Session(BaseModel):
         if self.service_category:
             return required_fields_for_summary(self)
         return [
-            "client_name", "phone_number", "city", "property_location",
+            "client_name", "phone_number", "property_location",
             "preferred_contact_time", "willing_to_create_project", "overview_property_type",
         ]
 
