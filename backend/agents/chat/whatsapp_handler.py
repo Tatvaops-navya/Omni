@@ -662,7 +662,7 @@ async def _send_client_detail_step_prompt(
     phone_number: str,
     step: dict,
 ) -> None:
-    """Send the next client-details question (city, property, contact time, or project)."""
+    """Send the next client-details question (property location or project)."""
     _touch_session_activity(session)
     field = str(step.get("field") or "")
     prompt = str(step.get("prompt") or "").strip()
@@ -1304,6 +1304,9 @@ async def _handle_whatsapp_message_impl(
                 )
                 return
             se.mark_field_validated(session, "property_location", text)
+            from backend.integrations.returning_user_flow import sync_city_from_property_location
+
+            sync_city_from_property_location(session)
         session.flow_state.pop("awaiting_returning_profile_value", None)
         session.flow_state.pop("returning_profile_edit_field", None)
         session.flow_state["awaiting_returning_profile_field"] = True

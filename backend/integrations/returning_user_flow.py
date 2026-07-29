@@ -304,14 +304,11 @@ def collect_returning_user_preserved_profile(session: Session) -> dict[str, str]
 
 
 def location_fields_complete(session: Session) -> bool:
-    """True when city (location) and property_location are collected for this enquiry."""
-    for field in ("city", "property_location"):
-        value = str(session.extracted_fields.get(field) or "").strip()
-        if not value or value == RETURNING_MISSING_LOCATION_PLACEHOLDER:
-            return False
-        if not se.field_is_complete(session, field):
-            return False
-    return True
+    """True when property_location is collected for this enquiry."""
+    value = str(session.extracted_fields.get("property_location") or "").strip()
+    if not value or value == RETURNING_MISSING_LOCATION_PLACEHOLDER:
+        return False
+    return se.field_is_complete(session, "property_location")
 
 
 def clear_returning_location_fields(session: Session) -> None:
@@ -319,6 +316,30 @@ def clear_returning_location_fields(session: Session) -> None:
         session.extracted_fields.pop(field, None)
         session.completed_fields = [f for f in session.completed_fields if f != field]
     session.flow_state.pop("selected_tatva_address_id", None)
+
+
+def _derive_city_from_property_location(property_location: str) -> str:
+    prop = (property_location or "").strip()
+    if not prop:
+        return ""
+    if "," in prop:
+        # Prefer the city segment after the last comma: "Locality, City"
+        return prop.rsplit(",", 1)[-1].strip() or prop
+    return prop
+
+
+def sync_city_from_property_location(session: Session) -> None:
+    """Keep optional city populated from property location when city is not asked."""
+    prop = str(session.extracted_fields.get("property_location") or "").strip()
+    if not prop or prop == RETURNING_MISSING_LOCATION_PLACEHOLDER:
+        return
+    if se.field_is_complete(session, "city"):
+        city_val = str(session.extracted_fields.get("city") or "").strip()
+        if city_val and city_val != RETURNING_MISSING_LOCATION_PLACEHOLDER:
+            return
+    city = _derive_city_from_property_location(prop)
+    if city:
+        se.mark_field_validated(session, "city", city)
 
 
 def complete_returning_user_identity_fields(
@@ -404,8 +425,9 @@ def next_client_detail_step_before_project(session: Session) -> dict[str, Any] |
 
 
 def position_session_at_next_client_detail(session: Session) -> dict[str, Any] | None:
-    """Point the session at city, property location, or create-project."""
+    """Point the session at property location or create-project."""
     ensure_returning_reenquiry_prepared(session)
+    sync_city_from_property_location(session)
     step = next_client_detail_step_before_project(session)
     if not step:
         return None
@@ -433,16 +455,16 @@ def complete_known_client_details_for_returning_user(
 ) -> None:
     """Mark all client_details complete when skipping straight to service selection."""
     complete_returning_user_identity_fields(session, preserved)
-    city = preserved.get("city", "")
     prop = preserved.get("property_location", "")
+    city = preserved.get("city", "")
     if not city and prop:
-        city = prop.split(",")[0].strip()
-    if not city:
-        city = RETURNING_MISSING_LOCATION_PLACEHOLDER
-    se.mark_field_validated(session, "city", city)
+        city = _derive_city_from_property_location(prop)
     if not prop:
         prop = RETURNING_MISSING_LOCATION_PLACEHOLDER
     se.mark_field_validated(session, "property_location", prop)
+    if not city:
+        city = _derive_city_from_property_location(prop) or RETURNING_MISSING_LOCATION_PLACEHOLDER
+    se.mark_field_validated(session, "city", city)
 
 
 def advance_returning_user_to_service_selection(session: Session) -> None:

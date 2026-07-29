@@ -163,6 +163,11 @@ def _complete_field(session: Session, field: str, value: Any) -> Optional[str]:
             return format_step_message(step) + "\n\nPlease provide a valid answer."
         return "Please provide a valid answer before we continue."
 
+    if field == "property_location":
+        from backend.integrations.returning_user_flow import sync_city_from_property_location
+
+        sync_city_from_property_location(session)
+
     answers = session.flow_state.setdefault("answers", {})
     answers[field] = value
     completed_q = session.flow_state.setdefault("completed_questions", [])
